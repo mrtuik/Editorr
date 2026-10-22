@@ -1,5 +1,6 @@
 import { app } from '../app';
 import { peaks } from '../core/audio';
+import { detectSpeakers, lastSeparationDb } from '../core/speaker';
 import { History, runtime, saveProject } from '../core/store';
 import { EditorrNative, fileSrc, isNative, tick } from '../core/native';
 import { deleteSegment, mergeWithPrev, moveBoundary, segmentAt, splitAt, updateSegment } from '../core/timeline';
@@ -334,6 +335,12 @@ export function editorScreen() {
   }
   function patch(pt: Partial<Segment>) { const s = selected(); if (s) edit(updateSegment(p.segments, s.id, pt)); }
 
+  function doAutoSwitch() {
+    const segs = detectSpeakers(runtime.hostPcm!, runtime.constPcm!, p.offsetMs, p.durationMs, app.settings);
+    edit(segs); selectedId = segs[0]?.id ?? null; afterEdit();
+    if (segs.length <= 1) toast('Could not tell speakers apart. Both mics sound almost the same.');
+    else toast(`Auto switch done: ${segs.length} segments (separation ${lastSeparationDb.toFixed(1)} dB). Undo to go back.`);
+  }
   function doSplit() { edit(splitAt(p.segments, playMs)); selectedId = segmentAt(p.segments, playMs)?.id ?? null; tick(); }
   function doMerge() { const s = selected(); if (s) { edit(mergeWithPrev(p.segments, s.id)); selectedId = null; afterEdit(); } }
   async function doDelete() {
@@ -360,6 +367,7 @@ export function editorScreen() {
   function renderOpts() {
     const s = selected();
     const rows: Node[] = [
+      optBtn('Auto switch', false, doAutoSwitch, 'Detect speakers and switch automatically'),
       optBtn('Sound: Host', p.mainAudio === 'host', () => setAudio('host'), 'Use Host audio'),
       optBtn('Sound: Const', p.mainAudio === 'constant', () => setAudio('constant'), 'Use Constant audio'),
       optBtn('Split', false, doSplit, 'Split at playhead'),

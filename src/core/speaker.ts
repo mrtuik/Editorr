@@ -3,7 +3,6 @@ import type { Role, Segment, Sensitivity, Settings } from './types';
 
 const HOP_MS = 100;
 
-const MARGIN_DB: Record<Sensitivity, number> = { low: 14, medium: 10, high: 6 };
 
 function toDb(env: Float32Array): Float32Array {
   const out = new Float32Array(env.length);
@@ -19,8 +18,29 @@ function percentile(arr: Float32Array, p: number): number {
 let _id = 0;
 export const uid = () => `s${Date.now().toString(36)}${(_id++).toString(36)}`;
 
+/** How far apart the two speakers sit in the loudness difference (dB). Low = mics hear almost the same thing. */
+export let lastSeparationDb = 0;
+
+const DEAD_ZONE: Record<Sensitivity, number> = { low: 0.3, medium: 0.2, high: 0.1 };
+
+function median5(a: Float32Array): Float32Array {
+  const out = new Float32Array(a.length);
+  const w: number[] = [];
+  for (let i = 0; i < a.length; i++) {
+    w.length = 0;
+    for (let k = -2; k <= 2; k++) w.push(a[Math.min(a.length - 1, Math.max(0, i + k))]);
+    w.sort((x, y) => x - y);
+    out[i] = w[2];
+  }
+  return out;
+}
+
 /**
- * Energy-based VAD + loudness compare.
+ * Two phones, each hears BOTH people (mic bleed). The person closest to a phone is
+ * louder on that phone, so we look at the DIFFERENCE between the two mics:
+ *   d = host loudness (dB) - const loudness (dB)
+ * d is high when the Host person talks, low when the Constant person talks.
+ * The two "modes" of d are found automatically (2-means), so different mic gains do not matter.
  * Timeline time = host time. Constant audio is shifted by offsetMs.
  */
 export function detectSpeakers(
@@ -37,35 +57,51 @@ export function detectSpeakers(
 
   const hostFloor = percentile(hostDb, 0.1);
   const constFloor = percentile(constDbRaw, 0.1);
-  const margin = MARGIN_DB[settings.sensitivity];
+  const margin = 4; // only skip true silence; speaker choice comes from the mic difference
 
-  const labels: (Role | 'both' | 'none')[] = [];
-  let prev: Role = 'host';
+  const dRaw = new Float32Array(frames);
+  const active: boolean[] = [];
+  const act: number[] = [];
   for (let f = 0; f < frames; f++) {
     const h = hostDb[f] ?? -90;
     const c = constDbRaw[f + shift] ?? -90;
-    const hv = h > hostFloor + margin;
-    const cv = c > constFloor + margin;
-    let l: Role | 'both' | 'none';
-    if (hv && !cv) l = 'host';
-    else if (cv && !hv) l = 'constant';
-    else if (hv && cv) {
-      // compare loudness relative to each mic's own floor
-      const dh = h - hostFloor, dc = c - constFloor;
-      l = Math.abs(dh - dc) > 6 ? (dh > dc ? 'host' : 'constant') : 'both';
-    } else l = 'none';
-    labels.push(l);
-    if (l === 'host' || l === 'constant') prev = l;
+    dRaw[f] = h - c; // dB difference; mic gain offset is removed by the 2-means threshold
+    const a = h > hostFloor + margin || c > constFloor + margin;
+    active.push(a);
+    if (a) act.push(dRaw[f]);
   }
+  const d = median5(dRaw);
 
-  // Resolve none/both by holding previous speaker (or side-by-side).
+  // 2-means on active frames
+  lastSeparationDb = 0;
+  let thresh = 0;
+  let ok = false;
+  if (act.length > 20) {
+    const s = Float32Array.from(act).sort();
+    let lo = s[Math.floor(0.15 * s.length)], hi = s[Math.floor(0.85 * s.length)];
+    for (let it = 0; it < 12; it++) {
+      const mid = (lo + hi) / 2;
+      let ls = 0, ln = 0, hs = 0, hn = 0;
+      for (const v of s) { if (v < mid) { ls += v; ln++; } else { hs += v; hn++; } }
+      if (ln) lo = ls / ln;
+      if (hn) hi = hs / hn;
+    }
+    thresh = (lo + hi) / 2;
+    lastSeparationDb = hi - lo;
+    ok = lastSeparationDb >= 2;
+  }
+  if (!ok) return mergeShort([], settings.minSegmentMs, durationMs);
+
+  const dead = lastSeparationDb * DEAD_ZONE[settings.sensitivity];
   type Cell = { role: Role; side: boolean };
   const cells: Cell[] = [];
-  let cur: Cell = { role: 'host', side: false };
-  for (const l of labels) {
-    if (l === 'host' || l === 'constant') cur = { role: l, side: false };
-    else if (l === 'both' && settings.bothSpeaking === 'side') cur = { role: cur.role, side: true };
-    // 'none' or 'both'+hold: stay on current
+  let cur: Cell = { role: d[0] >= thresh ? 'host' : 'constant', side: false };
+  for (let f = 0; f < frames; f++) {
+    if (active[f]) {
+      if (d[f] > thresh + dead) cur = { role: 'host', side: false };
+      else if (d[f] < thresh - dead) cur = { role: 'constant', side: false };
+      else if (settings.bothSpeaking === 'side') cur = { role: cur.role, side: true };
+    }
     cells.push(cur);
   }
 
