@@ -24,9 +24,10 @@ import androidx.media3.common.Effect;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.Size;
-import androidx.media3.effect.OverlaySettings;
+import androidx.media3.common.OverlaySettings;
+import androidx.media3.common.VideoCompositorSettings;
+import androidx.media3.effect.StaticOverlaySettings;
 import androidx.media3.effect.Presentation;
-import androidx.media3.effect.VideoCompositorSettings;
 import androidx.media3.transformer.Composition;
 import androidx.media3.transformer.EditedMediaItem;
 import androidx.media3.transformer.EditedMediaItemSequence;
@@ -376,7 +377,7 @@ public class EditorrNativePlugin extends Plugin {
     private static OverlaySettings overlayFor(List<Seg> segs, long tMs, boolean isHost) {
         Seg s = segs.get(segs.size() - 1);
         for (Seg x : segs) if (tMs >= x.start && tMs < x.end) { s = x; break; }
-        OverlaySettings.Builder b = new OverlaySettings.Builder();
+        StaticOverlaySettings.Builder b = new StaticOverlaySettings.Builder();
         boolean mainIsHost = "host".equals(s.main);
         switch (s.style) {
             case "side":
