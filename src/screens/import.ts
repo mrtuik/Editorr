@@ -3,6 +3,7 @@ import { probeVideo } from '../core/audio';
 import { runtime, saveProject } from '../core/store';
 import type { Role, VideoRef } from '../core/types';
 import { EditorrNative, fileSrc, isNative } from '../core/native';
+import { projectVideoPaths } from '../core/media';
 import { fmtTime, h, icon, iconButton, toast } from '../ui';
 
 const MAX_MS = 15 * 60 * 1000;
@@ -92,14 +93,22 @@ export function importScreen() {
     cont.disabled = !(host && constant);
   }
 
-  function next() {
+  async function next() {
     const { host, constant } = info;
     if (!host || !constant) return;
     const { url: _a, ...hostMeta } = host;
     const { url: _b, ...constMeta } = constant;
+    const before = projectVideoPaths(p);
     p.host = hostMeta; p.constant = constMeta;
     p.segments = []; p.offsetMs = 0;
-    saveProject(p);
+    runtime.projectId = p.id;
+    await saveProject(p);
+    // a video that was replaced is no longer used: free its space
+    if (isNative()) {
+      const now = projectVideoPaths(p);
+      const old = before.filter((x) => !now.includes(x));
+      if (old.length) EditorrNative.deleteVideos({ paths: old }).catch(() => {});
+    }
     app.go('sync');
   }
 

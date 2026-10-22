@@ -76,4 +76,33 @@ if "largeHeap" not in txt:
     txt = txt.replace("<application", '<application android:largeHeap="true"', 1)
     manifest.write_text(txt)
 
+# 6. Stable signing + version numbers (so a new APK installs as an UPDATE, no uninstall).
+#    CI passes KS_FILE, KS_PASS, KS_ALIAS, KEY_PASS, VERSION_CODE, VERSION_NAME as environment variables.
+txt = app_gradle.read_text()
+if "signingConfigs.editorr" not in txt:
+    signing = (
+        "    signingConfigs {\n"
+        "        editorr {\n"
+        "            if (System.getenv('KS_FILE')) {\n"
+        "                storeFile file(System.getenv('KS_FILE'))\n"
+        "                storePassword System.getenv('KS_PASS')\n"
+        "                keyAlias System.getenv('KS_ALIAS')\n"
+        "                keyPassword System.getenv('KEY_PASS')\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+    )
+    txt = re.sub(r"(\nandroid\s*\{\n)", lambda m: m.group(1) + signing, txt, count=1)
+    use = "signingConfig System.getenv('KS_FILE') ? signingConfigs.editorr : null"
+    # release: add signingConfig; debug: create the block if the template has none
+    if re.search(r"buildTypes\s*\{[^}]*?debug\s*\{", txt, re.S):
+        txt = re.sub(r"(debug\s*\{\n)", lambda m: m.group(1) + "            " + use + "\n", txt, count=1)
+    else:
+        txt = re.sub(r"(buildTypes\s*\{\n)", lambda m: m.group(1) + "        debug {\n            " + use + "\n        }\n", txt, count=1)
+    txt = re.sub(r"(release\s*\{\n)", lambda m: m.group(1) + "            " + use + "\n", txt, count=1)
+    # version numbers from CI (fall back to 1 / 0.1.0 for local builds)
+    txt = re.sub(r"versionCode\s+\d+", "versionCode (System.getenv('VERSION_CODE') ?: '1').toInteger()", txt, count=1)
+    txt = re.sub(r'versionName\s+"[^"]*"', "versionName (System.getenv('VERSION_NAME') ?: '0.1.0')", txt, count=1)
+    app_gradle.write_text(txt)
+
 print("Editorr: android project patched")

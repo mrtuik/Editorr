@@ -51,3 +51,51 @@ npm install
 npm run typecheck
 npm run dev        # browser preview (picker + sync + editor work; export needs the APK)
 ```
+
+## v5 changes (CapCut-style pass)
+
+- Slim timeline: ruler 16 px, two waveform rows 20 px, layout row 30 px. The preview takes the freed space and now fits the real aspect ratio.
+- Aspect ratio: 16:9, 9:16, 1:1, 4:5, 4:3 (toolbar > ratio icon). Used by preview and export (`outputSize()` in `core/types.ts`).
+- Crop: zoom + move for Host and Constant separately (toolbar > crop icon). Preview and Media3 `Crop` use the same math.
+- Silence cut: finds parts where BOTH mics are quiet for N seconds (0.3 to 5 s), keeps a little padding, removes the same moment from both videos. Shown as red before cutting, striped gaps after. Undo works. Export skips cut parts (`exportProject` builds one clip per kept part).
+- Home screen rebuilt with CapCut's layout: search, "Get started", New project + Continue cards, recent strip, 3-column tool grid, bottom tabs (Edit / Projects / Me). Colors stay black.
+
+Still to do: IndexedDB storage + keeping the picked videos out of the cache folder, and a stable signing key so a new APK installs as an update.
+
+## Updating the APK without uninstalling
+
+Android only installs a new APK over an old one when both are signed with the SAME key and the new `versionCode` is higher. The workflow now does both:
+
+- `versionCode` = GitHub run number, `versionName` = `0.1.<run number>`.
+- Every build (signed release APK) uses one fixed keystore.
+- `applicationId` stays `com.tuik.editorr`.
+- The only APK uploaded is `Editorr-apk` (named `Editorr-v0.1.N.apk`).
+
+### Keystore: do this once (recommended)
+
+1. Make a key on any computer with Java (or Termux): 
+   `keytool -genkeypair -v -keystore release.jks -alias editorr -keyalg RSA -keysize 2048 -validity 36500`
+2. Turn it into text: `base64 -w0 release.jks` (on Mac: `base64 -i release.jks`).
+3. GitHub repo > Settings > Secrets and variables > Actions > New repository secret. Add 4 secrets:
+   `KEYSTORE_BASE64` (the text from step 2), `KEYSTORE_PASSWORD`, `KEY_ALIAS` (editorr), `KEY_PASSWORD`.
+4. Keep `release.jks` and the passwords safe. If you lose them you must uninstall once to change keys.
+
+### No secrets set
+
+The workflow creates a key on the first run and saves it in the GitHub Actions cache, so later builds reuse it. Two warnings:
+GitHub deletes a cache that is not used for 7 days, and then the next build makes a NEW key (you must uninstall once).
+So after the first run, download the `Editorr-keystore-BACKUP` artifact and put it in the secrets as above
+(`base64 -w0 release.jks`, password `editorr-ci-pass`, alias `editorr`).
+
+### One-time uninstall
+
+Your currently installed APK was signed with a random debug key, so install the first new build after uninstalling the old app once. After that every build installs as an update.
+
+## Storage (v7)
+
+- Projects, settings and thumbnails are in IndexedDB (`core/store.ts`, async API). Old localStorage data is moved over once at first launch. `navigator.storage.persist()` is requested at start.
+- Picked videos are copied to the app files folder (`filesDir/videos`), not the cache, so Android never clears them. Audio PCM, preview copies and export temp files stay in the cache and are rebuilt when needed.
+- Opening a saved project checks both videos are still there, decodes the audio again, and goes straight to the editor. If a video is missing you get the Import screen.
+- Deleting a project deletes its video copies. At launch, videos that no project uses (cancelled imports) are removed.
+- Settings > Storage shows projects, saved videos, cache and free space. "Clear cache" only empties temporary files. "Delete all projects" removes projects and their video copies.
+- Saved with the project: cut parts (segments with gaps), aspect ratio, crop of both videos, layouts, offset, audio choice.

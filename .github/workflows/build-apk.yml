@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 40
     env:
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+      VERSION_CODE: ${{ github.run_number }}
+      VERSION_NAME: 0.1.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +25,50 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+
+      # ---- Signing key: the SAME key every build, so Android installs the new APK as an update ----
+      - name: Use keystore from secrets
+        if: env.HAS_KEYSTORE == 'true'
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "KS_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          echo "KS_PASS=${{ secrets.KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "KS_ALIAS=${{ secrets.KEY_ALIAS }}" >> "$GITHUB_ENV"
+          echo "KEY_PASS=${{ secrets.KEY_PASSWORD }}" >> "$GITHUB_ENV"
+
+      - name: Restore saved keystore (no secrets set)
+        if: env.HAS_KEYSTORE != 'true'
+        id: ks_cache
+        uses: actions/cache@v4
+        with:
+          path: .ci-keystore
+          key: editorr-keystore-v1
+
+      - name: Create keystore once (no secrets set)
+        if: env.HAS_KEYSTORE != 'true'
+        run: |
+          mkdir -p .ci-keystore
+          if [ ! -f .ci-keystore/release.jks ]; then
+            echo "No saved keystore found. Creating a new one."
+            keytool -genkeypair -v -keystore .ci-keystore/release.jks -storetype PKCS12 \
+              -alias editorr -keyalg RSA -keysize 2048 -validity 36500 \
+              -storepass editorr-ci-pass -keypass editorr-ci-pass \
+              -dname "CN=Editorr, OU=Tuik, O=Tuik, C=BD"
+            echo "NEW_KEYSTORE=true" >> "$GITHUB_ENV"
+          fi
+          echo "KS_FILE=$GITHUB_WORKSPACE/.ci-keystore/release.jks" >> "$GITHUB_ENV"
+          echo "KS_PASS=editorr-ci-pass" >> "$GITHUB_ENV"
+          echo "KS_ALIAS=editorr" >> "$GITHUB_ENV"
+          echo "KEY_PASS=editorr-ci-pass" >> "$GITHUB_ENV"
+
+      # Backup copy of an auto-created key. Download it and save it as the KEYSTORE_BASE64 secret (see README).
+      - name: Upload keystore backup (only when newly created)
+        if: env.NEW_KEYSTORE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Editorr-keystore-BACKUP
+          path: .ci-keystore/release.jks
+          retention-days: 90
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
@@ -37,48 +83,28 @@ jobs:
         run: |
           if [ ! -d android ]; then npx cap add android; fi
 
-      - name: Patch Android project (native plugin, Media3, permissions)
+      - name: Patch Android project (native plugin, Media3, permissions, signing, version)
         run: python3 scripts/patch-android.py
 
       - name: Sync Capacitor
         run: npx cap sync android
 
-      - name: Build APKs
+      - name: Build signed release APK
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug assembleRelease --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
-      - name: Sign release APK
-        if: env.HAS_KEYSTORE == 'true'
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      - name: Check signature and version
         run: |
           BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-          UNSIGNED=android/app/build/outputs/apk/release/app-release-unsigned.apk
-          ALIGNED="$RUNNER_TEMP/aligned.apk"
-          "$ANDROID_HOME/build-tools/$BT/zipalign" -f -p 4 "$UNSIGNED" "$ALIGNED"
-          "$ANDROID_HOME/build-tools/$BT/apksigner" sign \
-            --ks "$RUNNER_TEMP/release.jks" \
-            --ks-pass "pass:$KEYSTORE_PASSWORD" \
-            --ks-key-alias "$KEY_ALIAS" \
-            --key-pass "pass:$KEY_PASSWORD" \
-            --out android/app/build/outputs/apk/release/Editorr-release-signed.apk \
-            "$ALIGNED"
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/$BT/apksigner" verify --print-certs "$APK" | head -5
+          "$ANDROID_HOME/build-tools/$BT/aapt" dump badging "$APK" | head -1
+          cp "$APK" "Editorr-v${VERSION_NAME}.apk"
 
-      - name: Upload debug APK (installable)
+      - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: Editorr-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-
-      - name: Upload signed release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Editorr-release-apk
-          path: android/app/build/outputs/apk/release/Editorr-release-signed.apk
-          if-no-files-found: ignore
+          name: Editorr-apk
+          path: Editorr-v*.apk

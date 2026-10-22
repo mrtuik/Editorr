@@ -1,13 +1,19 @@
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
-import type { Project } from './types';
+import { outputSize, type CropState, type Project } from './types';
 
 export interface ExportRequest {
   hostUri: string;
   constUri: string;
   offsetMs: number;
   durationMs: number;
+  /** short side: 720 or 1080 */
   height: 720 | 1080;
+  /** output frame in pixels (from aspect ratio) */
+  outW: number;
+  outH: number;
+  cropHost: CropState;
+  cropConst: CropState;
   mainAudio: 'host' | 'constant';
   normalize: boolean;
   segments: {
@@ -36,6 +42,14 @@ export interface EditorrNativePlugin {
   cancelExport(): Promise<void>;
   addListener(eventName: 'audioProgress' | 'exportProgress' | 'proxyProgress', cb: (e: { path?: string; percent: number }) => void): Promise<PluginListenerHandle>;
   freeSpaceMb(): Promise<{ mb: number }>;
+  fileExists(opts: { path: string }): Promise<{ exists: boolean }>;
+  /** Delete picked videos (and their audio/preview copies). Only files in the app videos folder are removed. */
+  deleteVideos(opts: { paths: string[] }): Promise<{ deleted: number }>;
+  /** Delete videos that no saved project uses. */
+  pruneVideos(opts: { keep: string[] }): Promise<{ deleted: number }>;
+  storageInfo(): Promise<{ videosBytes: number; cacheBytes: number; freeMb: number }>;
+  /** Empty the cache folder. Projects and videos stay. */
+  clearCache(): Promise<{ freedBytes: number }>;
 }
 
 export const EditorrNative = registerPlugin<EditorrNativePlugin>('EditorrNative');
@@ -58,14 +72,18 @@ export async function loadPcm(pcmPath: string): Promise<Float32Array> {
 }
 
 export function toExportRequest(p: Project, hostUri: string, constUri: string, height: 720 | 1080): ExportRequest {
+  const { w, h } = outputSize(p.aspect, height);
   return {
     hostUri, constUri,
     offsetMs: p.offsetMs,
     durationMs: p.durationMs,
     height,
+    outW: w, outH: h,
+    cropHost: p.cropHost, cropConst: p.cropConst,
     mainAudio: p.mainAudio,
     normalize: p.normalize,
-    segments: p.segments.map((s) => ({
+    // sorted; parts removed by silence cut are simply not in this list
+    segments: [...p.segments].sort((a, b) => a.startMs - b.startMs).map((s) => ({
       startMs: s.startMs, endMs: s.endMs, style: s.style, main: s.main, corner: s.corner, size: s.size,
     })),
   };

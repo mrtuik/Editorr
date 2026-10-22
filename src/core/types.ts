@@ -4,6 +4,24 @@ export type Corner = 'tl' | 'tr' | 'bl' | 'br';
 export type PopupSize = 'S' | 'M' | 'L';
 export type Sensitivity = 'low' | 'medium' | 'high';
 export type Confidence = 'High' | 'Medium' | 'Low';
+export type Aspect = '16:9' | '9:16' | '1:1' | '4:5' | '4:3';
+export type SilenceSens = 'low' | 'medium' | 'high';
+
+/** Pan/zoom of one video inside its frame. zoom 1 = no crop. x,y in -1..1 move the picture. */
+export interface CropState { zoom: number; x: number; y: number; }
+export const NO_CROP: CropState = { zoom: 1, x: 0, y: 0 };
+
+export const ASPECTS: Record<Aspect, [number, number]> = {
+  '16:9': [16, 9], '9:16': [9, 16], '1:1': [1, 1], '4:5': [4, 5], '4:3': [4, 3],
+};
+export const aspectValue = (a: Aspect) => ASPECTS[a][0] / ASPECTS[a][1];
+
+/** Output pixel size. `short` (720/1080) is the short side, like phone editors do. Always even numbers. */
+export function outputSize(a: Aspect, short: number): { w: number; h: number } {
+  const [aw, ah] = ASPECTS[a];
+  const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+  return aw >= ah ? { w: even((short * aw) / ah), h: even(short) } : { w: even(short), h: even((short * ah) / aw) };
+}
 
 export interface VideoRef {
   /** Display name */
@@ -34,6 +52,11 @@ export interface Settings {
   minSegmentMs: number;
   resolution: 720 | 1080;
   bothSpeaking: 'hold' | 'side';
+  /** Silence cut: both people quiet for at least this long gets removed. */
+  silenceMinMs: number;
+  /** Keep this much quiet time next to speech so words are not clipped. */
+  silencePadMs: number;
+  silenceSens: SilenceSens;
 }
 
 export interface Project {
@@ -50,6 +73,11 @@ export interface Project {
   mainAudio: Role;
   normalize: boolean;
   durationMs: number;
+  aspect: Aspect;
+  cropHost: CropState;
+  cropConst: CropState;
+  /** small jpeg data URL for Home */
+  thumb?: string;
 }
 
 export interface SyncResult {

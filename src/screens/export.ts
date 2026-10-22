@@ -2,7 +2,7 @@ import { app } from '../app';
 import { EditorrNative, isNative, toExportRequest } from '../core/native';
 import { h, iconButton, progressBar, toast } from '../ui';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import type { Role } from '../core/types';
+import { ASPECTS, type Aspect, type Role } from '../core/types';
 
 export function exportScreen() {
   const p = app.project;
@@ -26,7 +26,7 @@ export function exportScreen() {
 
   settingsBox.append(
     h('div', { class: 'field' }, h('label', {}, 'Resolution'), seg<number>([[720, '720p'], [1080, '1080p']], res, (v) => { res = v as 720 | 1080; })),
-    h('div', { class: 'field' }, h('label', {}, 'Aspect ratio'), seg<string>([['16:9', '16:9']], '16:9', () => {})),
+    h('div', { class: 'field' }, h('label', {}, 'Aspect ratio'), seg<string>((Object.keys(ASPECTS) as Aspect[]).map((a) => [a, a] as [string, string]), p.aspect, (v) => { p.aspect = v as Aspect; })),
     h('div', { class: 'field' }, h('label', {}, 'Audio source'), seg<Role>([['host', 'Host mic'], ['constant', 'Constant mic']], p.mainAudio, (v) => { p.mainAudio = v; })),
     h('div', { class: 'field' }, h('label', {}, 'Normalize volume'), seg<string>([['off', 'Off'], ['on', 'On']], p.normalize ? 'on' : 'off', (v) => { p.normalize = v === 'on'; })),
     h('div', { class: 'cap' }, 'Output: MP4 (H.264 + AAC), saved to your gallery. 1080p needs 6 GB+ RAM. Keep the phone plugged in for long exports.'));
@@ -46,7 +46,8 @@ export function exportScreen() {
     settingsBox.style.display = 'none'; runBox.style.display = ''; startBtn.style.display = 'none'; cancelBtn.style.display = '';
     try {
       const { mb } = await EditorrNative.freeSpaceMb();
-      const needMb = Math.round((p.durationMs / 60000) * (res === 1080 ? 120 : 60));
+      const keptMs = p.segments.reduce((a, s) => a + (s.endMs - s.startMs), 0) || p.durationMs;
+      const needMb = Math.round((keptMs / 60000) * (res === 1080 ? 120 : 60));
       if (mb < needMb) throw new Error(`Not enough storage. Free about ${needMb - mb} MB and try again.`);
       try { await LocalNotifications.requestPermissions(); } catch { /* optional */ }
       const t0 = Date.now();

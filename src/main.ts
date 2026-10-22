@@ -7,6 +7,8 @@ import { analyzeScreen } from './screens/analyze';
 import { editorScreen } from './screens/editor';
 import { exportScreen } from './screens/export';
 import { settingsScreen } from './screens/settings';
+import { initStorage, listProjects, loadSettings } from './core/store';
+import { pruneUnusedVideos } from './core/media';
 
 const root = document.getElementById('app')!;
 let cleanup: (() => void) | undefined;
@@ -40,4 +42,12 @@ app.go = (n) => { current = n; origGo(n); };
 document.addEventListener('backbutton', () => { const b = backMap[current]; if (b) app.go(b); });
 window.addEventListener('popstate', () => { const b = backMap[current]; if (b) app.go(b); });
 
-app.go('home');
+// Open the database first, then show Home with the saved settings and projects.
+(async () => {
+  try {
+    await initStorage();
+    app.settings = await loadSettings();
+    pruneUnusedVideos(await listProjects());
+  } catch { /* storage unavailable: start with defaults */ }
+  app.go('home');
+})();

@@ -27,6 +27,7 @@ import androidx.media3.common.util.Size;
 import androidx.media3.common.OverlaySettings;
 import androidx.media3.common.VideoCompositorSettings;
 import androidx.media3.effect.StaticOverlaySettings;
+import androidx.media3.effect.Crop;
 import androidx.media3.effect.Presentation;
 import androidx.media3.transformer.Composition;
 import androidx.media3.transformer.EditedMediaItem;
@@ -96,8 +97,8 @@ public class EditorrNativePlugin extends Plugin {
         new Thread(() -> {
             try {
                 String name = displayName(uri);
-                File dir = new File(getContext().getCacheDir(), "editorr");
-                if (!dir.exists()) dir.mkdirs();
+                // App files folder, NOT cache: Android may empty the cache at any time, but never this folder.
+                File dir = videoDir();
                 File out = new File(dir, System.currentTimeMillis() + "_" + name.replaceAll("[^A-Za-z0-9._-]", "_"));
                 try (InputStream in = getContext().getContentResolver().openInputStream(uri);
                      OutputStream os = new FileOutputStream(out)) {
@@ -143,6 +144,122 @@ public class EditorrNativePlugin extends Plugin {
     }
 
     // --------------------------------------------------------------- storage
+
+    /** Picked videos live here until their project is deleted. */
+    private File videoDir() {
+        File d = new File(getContext().getFilesDir(), "videos");
+        if (!d.exists()) d.mkdirs();
+        return d;
+    }
+
+    /** Rebuildable files (audio PCM, preview copies, export temp). Safe to delete. */
+    private File cacheDir() {
+        File d = new File(getContext().getCacheDir(), "editorr");
+        if (!d.exists()) d.mkdirs();
+        return d;
+    }
+
+    private static long dirSize(File f) {
+        if (f == null || !f.exists()) return 0;
+        if (f.isFile()) return f.length();
+        long n = 0;
+        File[] kids = f.listFiles();
+        if (kids != null) for (File k : kids) n += dirSize(k);
+        return n;
+    }
+
+    /** True only for a file inside the videos folder (blocks paths like ../../x). */
+    private boolean isInsideVideoDir(File f) {
+        try {
+            return f.getCanonicalPath().startsWith(videoDir().getCanonicalPath() + File.separator);
+        } catch (Exception e) { return false; }
+    }
+
+    /** Delete a video and the audio/preview files made from it. */
+    private void deleteVideoAndDerived(File video) {
+        String name = video.getName();
+        if (isInsideVideoDir(video)) video.delete();
+        new File(cacheDir(), name + ".pcm16k").delete();
+        new File(cacheDir(), "proxy_" + name + ".mp4").delete();
+        new File(cacheDir(), "proxy_" + name + ".mp4.tmp").delete();
+    }
+
+    private static String stripFileScheme(String p) {
+        return p != null && p.startsWith("file://") ? p.substring(7) : p;
+    }
+
+    @PluginMethod
+    public void fileExists(PluginCall call) {
+        String path = stripFileScheme(call.getString("path"));
+        File f = path == null ? null : new File(path);
+        JSObject o = new JSObject();
+        o.put("exists", f != null && f.isFile() && f.length() > 0);
+        call.resolve(o);
+    }
+
+    /** Delete the videos of a deleted project (only files inside the videos folder). */
+    @PluginMethod
+    public void deleteVideos(PluginCall call) {
+        try {
+            JSArray arr = call.getArray("paths");
+            int n = 0;
+            for (int i = 0; arr != null && i < arr.length(); i++) {
+                File f = new File(stripFileScheme(arr.getString(i)));
+                if (isInsideVideoDir(f)) { deleteVideoAndDerived(f); n++; }
+            }
+            JSObject o = new JSObject();
+            o.put("deleted", n);
+            call.resolve(o);
+        } catch (Exception e) {
+            call.reject("Could not delete videos: " + e.getMessage());
+        }
+    }
+
+    /** Delete every video that no saved project uses (left over from cancelled imports). */
+    @PluginMethod
+    public void pruneVideos(PluginCall call) {
+        new Thread(() -> {
+            try {
+                java.util.HashSet<String> keep = new java.util.HashSet<>();
+                JSArray arr = call.getArray("keep");
+                for (int i = 0; arr != null && i < arr.length(); i++) keep.add(new File(stripFileScheme(arr.getString(i))).getCanonicalPath());
+                int n = 0;
+                File[] kids = videoDir().listFiles();
+                if (kids != null) for (File k : kids) {
+                    if (k.isFile() && !keep.contains(k.getCanonicalPath())) { deleteVideoAndDerived(k); n++; }
+                }
+                JSObject o = new JSObject();
+                o.put("deleted", n);
+                call.resolve(o);
+            } catch (Exception e) {
+                call.reject("Could not clean videos: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    @PluginMethod
+    public void storageInfo(PluginCall call) {
+        new Thread(() -> {
+            JSObject o = new JSObject();
+            o.put("videosBytes", dirSize(videoDir()));
+            o.put("cacheBytes", dirSize(cacheDir()));
+            o.put("freeMb", new StatFs(getContext().getFilesDir().getAbsolutePath()).getAvailableBytes() / (1024 * 1024));
+            call.resolve(o);
+        }).start();
+    }
+
+    /** Empty the cache folder only. Projects and their videos are not touched. */
+    @PluginMethod
+    public void clearCache(PluginCall call) {
+        new Thread(() -> {
+            long before = dirSize(cacheDir());
+            File[] kids = cacheDir().listFiles();
+            if (kids != null) for (File k : kids) if (k.isFile()) k.delete();
+            JSObject o = new JSObject();
+            o.put("freedBytes", before - dirSize(cacheDir()));
+            call.resolve(o);
+        }).start();
+    }
 
     @PluginMethod
     public void freeSpaceMb(PluginCall call) {
@@ -377,6 +494,25 @@ public class EditorrNativePlugin extends Plugin {
         String style, main, corner, size;
     }
 
+    /** Pan/zoom of one video inside its frame. zoom 1 = no crop. x,y in -1..1 move the picture. */
+    private static class CropSpec {
+        float zoom = 1f, x = 0f, y = 0f;
+    }
+
+    private static CropSpec readCrop(JSObject o) {
+        CropSpec c = new CropSpec();
+        if (o == null) return c;
+        c.zoom = (float) o.optDouble("zoom", 1.0);
+        c.x = (float) o.optDouble("x", 0.0);
+        c.y = (float) o.optDouble("y", 0.0);
+        return c;
+    }
+
+    /** A kept part of the timeline, in Host time. Parts removed by silence cut are not in the list. */
+    private static class Range {
+        long a, b;
+    }
+
     @PluginMethod
     public void exportProject(PluginCall call) {
         try {
@@ -384,7 +520,11 @@ public class EditorrNativePlugin extends Plugin {
             final String constUri = call.getString("constUri");
             final long offsetMs = call.getLong("offsetMs", 0L);
             final long durationMs = call.getLong("durationMs", 0L);
-            final int outH = call.getInt("height", 720);
+            final int shortSide = call.getInt("height", 720);
+            final int outW = call.getInt("outW", (shortSide * 16 / 9) / 2 * 2);
+            final int outH = call.getInt("outH", shortSide);
+            final CropSpec cropHost = readCrop(call.getObject("cropHost"));
+            final CropSpec cropConst = readCrop(call.getObject("cropConst"));
             final boolean hostAudio = "host".equals(call.getString("mainAudio", "host"));
             final List<Seg> segs = new ArrayList<>();
             JSArray arr = call.getArray("segments");
@@ -397,31 +537,54 @@ public class EditorrNativePlugin extends Plugin {
                 segs.add(s);
             }
             getActivity().runOnUiThread(() ->
-                    startTransformer(call, hostUri, constUri, offsetMs, durationMs, outH, hostAudio, segs));
+                    startTransformer(call, hostUri, constUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst));
         } catch (JSONException e) {
             call.reject("Bad export request: " + e.getMessage());
         }
     }
 
     private void startTransformer(PluginCall call, String hostUri, String constUri, long offsetMs, long durationMs,
-                                  int outH, boolean hostAudio, List<Seg> segs) {
+                                  int outW, int outH, boolean hostAudio, List<Seg> segs,
+                                  CropSpec cropHost, CropSpec cropConst) {
         try {
-            final int outW = (outH * 16 / 9) / 2 * 2;
+            // Timeline time = Host time. The Constant video is offsetMs ahead of it.
             final long hostStart = Math.max(0, -offsetMs);
-            final long constStart = Math.max(0, offsetMs);
-            final long total = Math.max(1000, durationMs - hostStart);
 
-            EditedMediaItem host = item(hostUri, hostStart, total, outW, outH, !hostAudio);
-            EditedMediaItem cons = item(constUri, constStart, total, outW, outH, hostAudio);
+            // Kept parts (silence cut leaves gaps). Touching segments are joined into one part.
+            final List<Range> ranges = new ArrayList<>();
+            for (Seg s : segs) {
+                long a = Math.max(s.start, hostStart);
+                long b = Math.min(s.end, durationMs);
+                if (b - a < 100) continue;
+                Range last = ranges.isEmpty() ? null : ranges.get(ranges.size() - 1);
+                if (last != null && a - last.b <= 1) last.b = Math.max(last.b, b);
+                else { Range r = new Range(); r.a = a; r.b = b; ranges.add(r); }
+            }
+            if (ranges.isEmpty()) { call.reject("Nothing to export. Every part was cut."); return; }
 
-            EditedMediaItemSequence hostSeq = new EditedMediaItemSequence.Builder(host).build();
-            EditedMediaItemSequence constSeq = new EditedMediaItemSequence.Builder(cons).build();
+            // composition start of each kept part, so the layout lookup can map output time back to Host time
+            final long[] cumStart = new long[ranges.size()];
+            long run = 0;
+            for (int i = 0; i < ranges.size(); i++) { cumStart[i] = run; run += ranges.get(i).b - ranges.get(i).a; }
+
+            List<EditedMediaItem> hostItems = new ArrayList<>();
+            List<EditedMediaItem> constItems = new ArrayList<>();
+            for (Range r : ranges) {
+                hostItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, !hostAudio, cropHost));
+                constItems.add(item(constUri, r.a + offsetMs, r.b - r.a, outW, outH, hostAudio, cropConst));
+            }
+
+            EditedMediaItemSequence hostSeq = new EditedMediaItemSequence.Builder(hostItems.toArray(new EditedMediaItem[0])).build();
+            EditedMediaItemSequence constSeq = new EditedMediaItemSequence.Builder(constItems.toArray(new EditedMediaItem[0])).build();
 
             VideoCompositorSettings settings = new VideoCompositorSettings() {
                 @Override public Size getOutputSize(List<Size> inputSizes) { return new Size(outW, outH); }
                 @Override public OverlaySettings getOverlaySettings(int inputId, long presentationTimeUs) {
-                    long t = presentationTimeUs / 1000 + hostStart;
-                    return overlayFor(segs, t, inputId == 0);
+                    long tc = presentationTimeUs / 1000;
+                    int idx = 0;
+                    for (int i = 0; i < cumStart.length; i++) { if (tc >= cumStart[i]) idx = i; else break; }
+                    long hostT = ranges.get(idx).a + (tc - cumStart[idx]);
+                    return overlayFor(segs, hostT, inputId == 0);
                 }
             };
 
@@ -462,7 +625,7 @@ public class EditorrNativePlugin extends Plugin {
         }
     }
 
-    private EditedMediaItem item(String uri, long startMs, long totalMs, int w, int h, boolean removeAudio) {
+    private EditedMediaItem item(String uri, long startMs, long totalMs, int w, int h, boolean removeAudio, CropSpec crop) {
         MediaItem mi = new MediaItem.Builder()
                 .setUri(uri)
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
@@ -470,11 +633,20 @@ public class EditorrNativePlugin extends Plugin {
                         .setEndPositionMs(startMs + totalMs)
                         .build())
                 .build();
-        ImmutableList<Effect> video = ImmutableList.of(
-                Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
+        ImmutableList.Builder<Effect> video = new ImmutableList.Builder<>();
+        video.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
+        if (crop != null && crop.zoom > 1.001f) {
+            // Same math as the preview: the visible window is 1/zoom of the frame, moved by x,y.
+            float half = 1f / crop.zoom;
+            float k = 1f - half;
+            float cx = -crop.x * k;
+            float cy = crop.y * k; // picture moves down -> window moves up (NDC y is up)
+            video.add(new Crop(cx - half, cx + half, cy - half, cy + half));
+            video.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_STRETCH_TO_FIT));
+        }
         return new EditedMediaItem.Builder(mi)
                 .setRemoveAudio(removeAudio)
-                .setEffects(new Effects(ImmutableList.of(), video))
+                .setEffects(new Effects(ImmutableList.of(), video.build()))
                 .build();
     }
 
