@@ -66,9 +66,13 @@ export interface VoiceResult {
   voiced: boolean[];
   /** cluster separation (distance between centres / average spread). < ~1.2 = weak */
   quality: number;
+  /** which label (0/1) is the Host, when lip movement was used to decide. -1 = unknown */
+  hostLabel: number;
+  /** true when lip movement drove the decision */
+  usedLips: boolean;
 }
 
-export function separateByVoice(mix: Float32Array, frames: number): VoiceResult {
+export function separateByVoice(mix: Float32Array, frames: number, lip?: Float32Array): VoiceResult {
   const D = NCEP - 1;
   const hop = (SAMPLE_RATE * HOP_MS) / 1000;
   const feats: Float64Array[] = [];
@@ -105,7 +109,7 @@ export function separateByVoice(mix: Float32Array, frames: number): VoiceResult 
   const idx: number[] = [];
   voiced.forEach((v, i) => v && idx.push(i));
   const labels = new Uint8Array(frames);
-  if (idx.length < 40) return { labels, voiced, quality: 0 };
+  if (idx.length < 40) return { labels, voiced, quality: 0, hostLabel: -1, usedLips: false };
   const mean = new Float64Array(D), sd = new Float64Array(D);
   for (const i of idx) for (let d = 0; d < D; d++) mean[d] += sm[i][d] / idx.length;
   for (const i of idx) for (let d = 0; d < D; d++) sd[d] += (sm[i][d] - mean[d]) ** 2 / idx.length;
@@ -155,17 +159,37 @@ export function separateByVoice(mix: Float32Array, frames: number): VoiceResult 
     return s;
   };
 
+  // Which cluster is the Host? Use lip movement: the cluster where the Host camera moves more.
+  let hostLabel = -1;
+  const LIPW = 7;
+  let audioW = 1;
+  let lipOnly = false;
+  if (lip) {
+    let l0 = 0, l1 = 0, c0 = 0, c1 = 0;
+    idx.forEach((i, j) => { if (assign[j] === 0) { l0 += lip[i] ?? 0; c0++; } else { l1 += lip[i] ?? 0; c1++; } });
+    hostLabel = (c0 ? l0 / c0 : 0) >= (c1 ? l1 / c1 : 0) ? 0 : 1;
+    if (quality < 0.6) { lipOnly = true; audioW = 0; hostLabel = 0; }
+    else if (quality < 1.2) audioW = 0.4;
+  }
+
   // Viterbi with sticky switching
   const PEN = 15;
   let s0 = 0, s1 = 0;
   const from: [Uint8Array, Uint8Array] = [new Uint8Array(frames), new Uint8Array(frames)];
   for (let f = 0; f < frames; f++) {
-    const e0 = voiced[f] ? ll(X[f], 0) : 0, e1 = voiced[f] ? ll(X[f], 1) : 0;
+    let e0 = 0, e1 = 0;
+    if (voiced[f]) {
+      e0 = audioW * ll(X[f], 0); e1 = audioW * ll(X[f], 1);
+      if (lip) {
+        const lv = (lip[f] ?? 0) * LIPW;
+        if (hostLabel === 0) { e0 += lv; e1 -= lv; } else { e0 -= lv; e1 += lv; }
+      }
+    }
     const a0 = s0, a1 = s1 - PEN, b0 = s0 - PEN, b1 = s1;
     from[0][f] = a0 >= a1 ? 0 : 1; from[1][f] = b0 >= b1 ? 0 : 1;
     s0 = Math.max(a0, a1) + e0; s1 = Math.max(b0, b1) + e1;
   }
   let st = s0 >= s1 ? 0 : 1;
   for (let f = frames - 1; f >= 0; f--) { labels[f] = st; st = from[st][f]; }
-  return { labels, voiced, quality };
+  return { labels, voiced, quality, hostLabel, usedLips: !!lip };
 }

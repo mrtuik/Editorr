@@ -1,11 +1,12 @@
 import { app } from '../app';
 import { peaks } from '../core/audio';
-import { detectSpeakers, lastMethod, lastSeparationDb, lastVoiceQuality } from '../core/speaker';
+import { detectSpeakers, lastMethod, lastSeparationDb, lastUsedLips, lastVoiceQuality } from '../core/speaker';
+import { motionToActivity, scanMotion } from '../core/motion';
 import { History, runtime, saveProject } from '../core/store';
 import { EditorrNative, fileSrc, isNative, tick } from '../core/native';
 import { deleteSegment, mergeWithPrev, moveBoundary, segmentAt, splitAt, updateSegment } from '../core/timeline';
 import { Corner, LayoutStyle, PopupSize, Role, Segment, segmentColor, STYLE_LABEL } from '../core/types';
-import { actionSheet, confirmDialog, fmtTime, h, icon, iconButton, toast } from '../ui';
+import { confirmDialog, fmtTime, h, ICON, icon, iconButton, progressBar, toast } from '../ui';
 import { PEAKS_PER_SEC } from './sync';
 
 const SHORT: Record<LayoutStyle, string> = { one: '', side: 'Side', updown: 'Up/Down', popup: 'Popup' };
@@ -162,6 +163,35 @@ export function editorScreen() {
     }
   }
 
+  function drawGlyph(g: CanvasRenderingContext2D, s: Segment, cx: number, cy: number) {
+    g.fillStyle = '#000000'; g.strokeStyle = '#000000'; g.lineWidth = 2;
+    if (s.style === 'one') {
+      g.beginPath(); g.arc(cx, cy - 4, 4, 0, 6.3); g.fill();
+      g.beginPath(); g.arc(cx, cy + 10, 8, Math.PI, 0); g.fill();
+    } else if (s.style === 'side') { g.fillRect(cx - 9, cy - 6, 8, 12); g.fillRect(cx + 1, cy - 6, 8, 12); }
+    else if (s.style === 'updown') { g.fillRect(cx - 8, cy - 9, 16, 8); g.fillRect(cx - 8, cy + 1, 16, 8); }
+    else { g.strokeRect(cx - 9, cy - 6, 18, 12); g.fillRect(cx + 1, cy + 1, 7, 4); }
+  }
+  let actSrc: [Float32Array | undefined, Float32Array | undefined] = [undefined, undefined];
+  let actH: Float32Array | undefined, actC: Float32Array | undefined;
+  function drawMotion(g: CanvasRenderingContext2D) {
+    if (!runtime.hostMotion || !runtime.constMotion) return;
+    if (actSrc[0] !== runtime.hostMotion || actSrc[1] !== runtime.constMotion) {
+      actSrc = [runtime.hostMotion, runtime.constMotion];
+      actH = motionToActivity(runtime.hostMotion); actC = motionToActivity(runtime.constMotion);
+    }
+    const rows = layoutRows();
+    const bars = (arr: Float32Array, y: number, hgt: number) => {
+      g.fillStyle = 'rgba(245,158,11,.85)';
+      for (let x = 0; x < W; x += 3) {
+        const ms = msOf(x); if (ms < 0 || ms > p.durationMs) continue;
+        const v = Math.max(0, Math.min(1.5, arr[Math.round(ms / 100)] ?? 0)) / 1.5;
+        const bh = v * hgt * 0.4; if (bh > 0.5) g.fillRect(x, y + hgt - bh, 2, bh);
+      }
+    };
+    bars(actH!, rows.host[0], rows.host[1]); bars(actC!, rows.cons[0], rows.cons[1]);
+  }
+
   function draw() {
     const dpr = window.devicePixelRatio || 1;
     const cw = tl.clientWidth, ch = tl.clientHeight;
@@ -187,8 +217,9 @@ export function editorScreen() {
     g.fillRect(0, rows.host[0], W, rows.host[1]); g.fillRect(0, rows.cons[0], W, rows.cons[1]);
     drawWave(g, hostPeaks, 0, rows.host[0], rows.host[1], '#FFFFFF');
     drawWave(g, constPeaks, p.offsetMs, rows.cons[0], rows.cons[1], '#22C55E');
-    g.fillStyle = '#A0A0A0'; g.font = '10px Roboto, sans-serif';
-    g.fillText('Host', 4, rows.host[0] + 8); g.fillText('Constant', 4, rows.cons[0] + 8);
+    g.fillStyle = '#FFFFFF'; g.beginPath(); g.arc(9, rows.host[0] + 9, 4, 0, 6.3); g.fill();
+    g.fillStyle = '#22C55E'; g.beginPath(); g.arc(9, rows.cons[0] + 9, 4, 0, 6.3); g.fill();
+    drawMotion(g);
 
     // layout track
     const [ly, lh] = rows.lay;
@@ -203,11 +234,7 @@ export function editorScreen() {
         g.strokeStyle = '#FFFFFF'; g.lineWidth = 2;
         g.beginPath(); g.roundRect(x1 - 0.5, ly - 2, Math.max(2, x2 - x1 + 1), lh + 4, 7); g.stroke();
       }
-      if (x2 - x1 > 44) {
-        g.fillStyle = '#000000'; g.font = '600 11px Roboto, sans-serif';
-        const label = s.style === 'one' ? (s.main === 'host' ? 'Host' : 'Const') : SHORT[s.style];
-        g.fillText(label, Math.max(x1, 0) + 6, ly + lh / 2);
-      }
+      if (x2 - x1 > 30) drawGlyph(g, s, Math.max(x1, 0) + 16, ly + lh / 2);
     }
 
     // playhead (fixed at center)
@@ -295,9 +322,9 @@ export function editorScreen() {
   tl.addEventListener('pointerup', end);
   tl.addEventListener('pointercancel', end);
 
-  // ---------- Controls ----------
+  // ---------- Controls (CapCut style) ----------
   const timeText = h('div', { class: 'timeText' }, '');
-  const playBtn = iconButton('play', 'Play', () => setPlaying(!playing));
+  const playBtn = h('button', { class: 'btn iconbtn playbtn', 'aria-label': 'Play', onclick: () => setPlaying(!playing) }, icon('play')) as HTMLButtonElement;
   const undoBtn = iconButton('undo', 'Undo', () => { const r = hist.undo(p.segments); if (r) { p.segments = r; afterEdit(); } });
   const redoBtn = iconButton('redo', 'Redo', () => { const r = hist.redo(p.segments); if (r) { p.segments = r; afterEdit(); } });
   const fsBtn = iconButton('full', 'Full screen preview', () => {
@@ -309,23 +336,37 @@ export function editorScreen() {
   });
   function exitFull() { stage.classList.remove('full'); (screen.orientation as any)?.unlock?.(); }
 
-  const controls = h('div', { class: 'controls' },
-    iconButton('back10', 'Back 10 seconds', () => seek(playMs - 10000)),
+  const controls = h('div', { class: 'controls cc' },
+    h('div', { class: 'left' }, timeText),
     playBtn,
-    iconButton('fwd10', 'Forward 10 seconds', () => seek(playMs + 10000)),
-    timeText, undoBtn, redoBtn, fsBtn);
+    h('div', { class: 'right' }, undoBtn, redoBtn, fsBtn));
 
-  // ---------- Style bar + options ----------
-  const styleBtns = (['one', 'side', 'updown', 'popup'] as LayoutStyle[]).map((st) =>
-    h('button', { class: 'btn', 'aria-label': STYLE_LABEL[st], onclick: () => setStyle(st) }, icon(st, 22), STYLE_LABEL[st]));
-  const styleBar = h('div', { class: 'stylebar' }, ...styleBtns);
-  const opts = h('div', { class: 'popopts' });
+  // ---------- Bottom toolbar (icons only) ----------
+  type Bar = 'root' | 'layout' | 'main' | 'audio';
+  let bar: Bar = 'root';
+  const toolbar = h('div', { class: 'toolbar' });
+  let tipEl: HTMLElement | null = null;
+  function tip(label: string) {
+    tipEl?.remove();
+    tipEl = h('div', { class: 'tip' }, label);
+    document.body.append(tipEl);
+    const me = tipEl;
+    setTimeout(() => me.remove(), 1000);
+  }
+  function tool(name: keyof typeof ICON, label: string, run: () => void, o: { sel?: boolean; cls?: string; ring?: string; disabled?: boolean } = {}) {
+    const b = h('button', { class: 'tool' + (o.sel ? ' sel' : '') + (o.cls ? ' ' + o.cls : ''), 'aria-label': label, title: label, disabled: !!o.disabled,
+      onclick: () => { tip(label); run(); } }, icon(name, 26));
+    if (o.ring) b.append(h('i', { class: 'ring', style: `background:${o.ring}` }));
+    return b;
+  }
+  const sepEl = () => h('div', { class: 'sep' });
+  const backTool = () => h('button', { class: 'tool back', 'aria-label': 'Back', onclick: () => { bar = 'root'; renderBar(); } }, icon('back', 24));
 
   function selected(): Segment | undefined { return p.segments.find((s) => s.id === selectedId); }
-  function select(id: string) { selectedId = id; renderOpts(); draw(); updateStyleBar(); }
+  function select(id: string) { selectedId = id; renderBar(); draw(); }
 
   function edit(next: Segment[]) { hist.push(p.segments); p.segments = next; afterEdit(); }
-  function afterEdit() { applyLayout(segmentAt(p.segments, playMs)); if (!selected()) selectedId = segmentAt(p.segments, playMs)?.id ?? null; renderOpts(); updateStyleBar(); draw(); updateBtns(); scheduleSave(); }
+  function afterEdit() { applyLayout(segmentAt(p.segments, playMs)); if (!selected()) selectedId = segmentAt(p.segments, playMs)?.id ?? null; renderBar(); draw(); updateBtns(); scheduleSave(); }
 
   function setStyle(st: LayoutStyle) {
     const s = selected() ?? segmentAt(p.segments, playMs);
@@ -335,16 +376,44 @@ export function editorScreen() {
   }
   function patch(pt: Partial<Segment>) { const s = selected(); if (s) edit(updateSegment(p.segments, s.id, pt)); }
 
-  function doAutoSwitch() {
-    const segs = detectSpeakers(runtime.hostPcm!, runtime.constPcm!, p.offsetMs, p.durationMs, app.settings, p.mainAudio);
+  function doAutoSwitch(useLips: boolean) {
+    const motion = useLips && runtime.hostMotion && runtime.constMotion ? { host: runtime.hostMotion, constant: runtime.constMotion } : undefined;
+    const segs = detectSpeakers(runtime.hostPcm!, runtime.constPcm!, p.offsetMs, p.durationMs, app.settings, p.mainAudio, motion);
     edit(segs); selectedId = segs[0]?.id ?? null; afterEdit();
-    if (segs.length <= 1) toast('Could not tell the two voices apart. Try a cleaner part or split manually.');
-    else if (lastMethod === 'voice') toast(`Auto switch by VOICE: ${segs.length} segments (quality ${lastVoiceQuality.toFixed(1)}). If Host/Const are swapped, use Main buttons or Undo.`);
+    if (segs.length <= 1) toast('Could not tell the two people apart. Try the lips scan or cut by hand.');
+    else if (lastUsedLips) toast(`Auto switch with lips + voice: ${segs.length} segments. Undo to go back.`);
+    else if (lastMethod === 'voice') toast(`Auto switch by voice: ${segs.length} segments (quality ${lastVoiceQuality.toFixed(1)}). Wrong way round? Tap swap.`);
     else toast(`Auto switch by mic loudness: ${segs.length} segments (${lastSeparationDb.toFixed(1)} dB). Undo to go back.`);
   }
+
+  let scanning = false, scanCancel = false;
+  async function doSmartSwitch() {
+    if (scanning) return;
+    if (!runtime.hostMotion || !runtime.constMotion) {
+      scanning = true; scanCancel = false;
+      setPlaying(false);
+      const pb = progressBar();
+      const box = h('div', { class: 'scanbox' }, icon('lips', 22), pb.el, iconButton('close', 'Cancel scan', () => { scanCancel = true; }));
+      preview.append(box);
+      try {
+        const dur = p.durationMs;
+        const a = await scanMotion(hostV.currentSrc || hostV.src, 0, dur, (x) => pb.set(x / 2), () => scanCancel);
+        const b = a ? await scanMotion(constV.currentSrc || constV.src, p.offsetMs, dur, (x) => pb.set(50 + x / 2), () => scanCancel) : null;
+        if (a && b) { runtime.hostMotion = a; runtime.constMotion = b; }
+      } catch { /* fall through */ }
+      box.remove(); scanning = false;
+      if (!runtime.hostMotion || !runtime.constMotion) {
+        if (scanCancel) { toast('Scan cancelled'); return; }
+        toast('Could not read the video frames for the lips scan. Using voice only.');
+        doAutoSwitch(false); return;
+      }
+      draw();
+    }
+    doAutoSwitch(true);
+  }
+
   function doSwap() {
     edit(p.segments.map((s) => ({ ...s, main: (s.main === 'host' ? 'constant' : 'host') as Role })));
-    toast('Host and Constant swapped everywhere.');
   }
   function doSplit() { edit(splitAt(p.segments, playMs)); selectedId = segmentAt(p.segments, playMs)?.id ?? null; tick(); }
   function doMerge() { const s = selected(); if (s) { edit(mergeWithPrev(p.segments, s.id)); selectedId = null; afterEdit(); } }
@@ -352,47 +421,55 @@ export function editorScreen() {
     const s = selected(); if (!s || p.segments.length <= 1) { toast('Cannot delete the only segment.'); return; }
     if (await confirmDialog('Delete segment?', 'The neighbouring segment will fill the gap.')) { edit(deleteSegment(p.segments, s.id)); selectedId = null; afterEdit(); }
   }
-  function openMenu() {
-    actionSheet([
-      { label: 'Split at playhead', run: doSplit },
-      { label: 'Merge with previous', run: doMerge },
-      { label: 'Delete segment', danger: true, run: doDelete },
-    ]);
-  }
+  function openMenu() { bar = 'root'; renderBar(); tick(); }
 
   function setAudio(role: Role) {
     p.mainAudio = role;
     hostV.muted = role !== 'host';
     constV.muted = role !== 'constant';
-    renderOpts(); scheduleSave(); tick();
+    renderBar(); scheduleSave(); tick();
   }
-  function optBtn(label: string, on: boolean, run: () => void, aria?: string) {
-    return h('button', { class: 'btn small' + (on ? ' primary' : ''), style: on ? 'flex:none' : '', 'aria-label': aria ?? label, onclick: run }, label);
-  }
-  function renderOpts() {
+
+  function renderBar() {
     const s = selected();
-    const rows: Node[] = [
-      optBtn('Auto switch', false, doAutoSwitch, 'Detect speakers and switch automatically'),
-      optBtn('Swap Host/Const', false, doSwap, 'Swap who is Host and who is Constant'),
-      optBtn('Sound: Host', p.mainAudio === 'host', () => setAudio('host'), 'Use Host audio'),
-      optBtn('Sound: Const', p.mainAudio === 'constant', () => setAudio('constant'), 'Use Constant audio'),
-      optBtn('Split', false, doSplit, 'Split at playhead'),
-      optBtn('Merge', false, doMerge, 'Merge with previous'),
-      optBtn('Delete', false, doDelete),
-    ];
-    if (s && (s.style === 'one' || s.style === 'popup')) {
-      rows.push(optBtn('Main: Host', s.main === 'host', () => patch({ main: 'host' as Role })));
-      rows.push(optBtn('Main: Const', s.main === 'constant', () => patch({ main: 'constant' as Role })));
+    const rows: Node[] = [];
+    if (bar === 'root') {
+      rows.push(
+        tool('wand', 'Auto switch (voice)', () => doAutoSwitch(false), { cls: 'accent' }),
+        tool('lips', 'Auto switch with lips (smart)', doSmartSwitch, { cls: 'accent' }),
+        sepEl(),
+        tool('scissors', 'Split at playhead', doSplit),
+        tool('layout', 'Layout', () => { bar = 'layout'; renderBar(); }),
+        tool('user', 'Who is on screen', () => { bar = 'main'; renderBar(); }),
+        tool('volume', 'Audio source', () => { bar = 'audio'; renderBar(); }),
+        tool('merge', 'Merge with previous', doMerge),
+        tool('trash', 'Delete segment', doDelete),
+        tool('swap', 'Swap Host and Constant', doSwap),
+        sepEl(),
+        tool('zoomOut', 'Zoom out timeline', () => { pxPerSec = Math.max(4, pxPerSec / 1.5); draw(); }),
+        tool('zoomIn', 'Zoom in timeline', () => { pxPerSec = Math.min(300, pxPerSec * 1.5); draw(); }),
+      );
+    } else if (bar === 'layout') {
+      rows.push(backTool());
+      (['one', 'side', 'updown', 'popup'] as LayoutStyle[]).forEach((st) => rows.push(tool(st, STYLE_LABEL[st], () => setStyle(st), { sel: s?.style === st })));
+      if (s?.style === 'popup') {
+        rows.push(sepEl());
+        (['tl', 'tr', 'bl', 'br'] as Corner[]).forEach((c) => rows.push(tool(({ tl: 'cTL', tr: 'cTR', bl: 'cBL', br: 'cBR' } as const)[c], `Corner ${c}`, () => patch({ corner: c }), { sel: s.corner === c })));
+        rows.push(sepEl());
+        (['S', 'M', 'L'] as PopupSize[]).forEach((z) => rows.push(tool(({ S: 'sizeS', M: 'sizeM', L: 'sizeL' } as const)[z], `Size ${z}`, () => patch({ size: z }), { sel: s.size === z })));
+      }
+    } else if (bar === 'main') {
+      rows.push(backTool(),
+        tool('user', 'Host on screen', () => patch({ main: 'host' as Role }), { sel: s?.main === 'host', cls: 'person host', disabled: !s || s.style === 'side' || s.style === 'updown' }),
+        tool('user', 'Constant on screen', () => patch({ main: 'constant' as Role }), { sel: s?.main === 'constant', cls: 'person const', disabled: !s || s.style === 'side' || s.style === 'updown' }),
+        sepEl(),
+        tool('swap', 'Swap Host and Constant', doSwap));
+    } else {
+      rows.push(backTool(),
+        tool('volume', 'Use Host audio', () => setAudio('host'), { sel: p.mainAudio === 'host', ring: '#FFFFFF' }),
+        tool('volume', 'Use Constant audio', () => setAudio('constant'), { sel: p.mainAudio === 'constant', ring: '#22C55E' }));
     }
-    if (s && s.style === 'popup') {
-      (['tl', 'tr', 'bl', 'br'] as Corner[]).forEach((c) => rows.push(optBtn({ tl: 'Top L', tr: 'Top R', bl: 'Bot L', br: 'Bot R' }[c], s.corner === c, () => patch({ corner: c }), `Popup corner ${c}`)));
-      (['S', 'M', 'L'] as PopupSize[]).forEach((z) => rows.push(optBtn(z, s.size === z, () => patch({ size: z }), `Popup size ${z}`)));
-    }
-    opts.replaceChildren(...rows);
-  }
-  function updateStyleBar() {
-    const s = selected();
-    (['one', 'side', 'updown', 'popup'] as LayoutStyle[]).forEach((st, i) => styleBtns[i].classList.toggle('sel', s?.style === st));
+    toolbar.replaceChildren(...rows);
   }
   function updateBtns() { undoBtn.disabled = !hist.canUndo; redoBtn.disabled = !hist.canRedo; }
 
@@ -404,7 +481,7 @@ export function editorScreen() {
     const seg = segmentAt(p.segments, playMs);
     if (seg && seg.id !== lastSegId) { lastSegId = seg.id; }
     applyLayout(seg);
-    timeText.textContent = `${fmtTime(playMs)} / ${fmtTime(p.durationMs)}`;
+    timeText.innerHTML = `<b>${fmtTime(playMs)}</b> / ${fmtTime(p.durationMs)}`;
     draw();
   }
   function loop() {
@@ -418,15 +495,15 @@ export function editorScreen() {
 
   const proj = h('h1', {}, p.name);
   const el = h('div', { class: 'screen' },
-    h('div', { class: 'topbar' },
+    h('div', { class: 'topbar ed' },
       iconButton('back', 'Back', () => { saveProject(p); app.go('home'); }),
       proj,
-      h('button', { class: 'btn small', style: 'background:#fff;border-color:#fff;color:#000', onclick: () => { setPlaying(false); saveProject(p); app.go('export'); } }, 'Export')),
-    preview, controls, tl, opts, styleBar);
+      h('button', { class: 'exportbtn', 'aria-label': 'Export', title: 'Export', onclick: () => { setPlaying(false); saveProject(p); app.go('export'); } }, icon('export', 20))),
+    preview, controls, tl, toolbar);
 
   requestAnimationFrame(() => {
     selectedId = segmentAt(p.segments, 0)?.id ?? null;
-    renderOpts(); updateStyleBar(); updateBtns();
+    renderBar(); updateBtns();
     hostV.addEventListener('loadedmetadata', () => seek(0), { once: true });
     refresh(false);
     loop();

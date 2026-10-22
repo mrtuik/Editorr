@@ -1,5 +1,6 @@
 import { rmsEnvelope } from './audio';
 import { separateByVoice } from './voice';
+import { motionToActivity } from './motion';
 import type { Role, Segment, Sensitivity, Settings } from './types';
 
 const HOP_MS = 100;
@@ -24,6 +25,7 @@ export let lastSeparationDb = 0;
 /** Which method produced the last result: mic loudness or voice (who is talking). */
 export let lastMethod: 'loudness' | 'voice' = 'loudness';
 export let lastVoiceQuality = 0;
+export let lastUsedLips = false;
 
 const DEAD_ZONE: Record<Sensitivity, number> = { low: 0.3, medium: 0.2, high: 0.1 };
 
@@ -54,6 +56,7 @@ export function detectSpeakers(
   durationMs: number,
   settings: Settings,
   preferred?: Role,
+  motion?: { host?: Float32Array; constant?: Float32Array },
 ): Segment[] {
   const hostDb = toDb(rmsEnvelope(hostPcm, HOP_MS));
   const constDbRaw = toDb(rmsEnvelope(constPcm, HOP_MS));
@@ -97,7 +100,8 @@ export function detectSpeakers(
   }
   ok = ok && lastSeparationDb >= 6;
   lastMethod = ok ? 'loudness' : 'voice';
-  if (!ok) return voicePath(hostPcm, constPcm, shift, frames, durationMs, d, active, settings, preferred);
+  lastUsedLips = false;
+  if (!ok) return voicePath(hostPcm, constPcm, shift, frames, durationMs, d, active, settings, preferred, motion);
 
   const dead = lastSeparationDb * DEAD_ZONE[settings.sensitivity];
   type Cell = { role: Role; side: boolean };
@@ -136,7 +140,7 @@ export function detectSpeakers(
 function rmsOf(a: Float32Array) { let s = 0; for (let i = 0; i < a.length; i += 7) s += a[i] * a[i]; return Math.sqrt(s / (a.length / 7)) + 1e-9; }
 
 /** Both mics sound alike (mic bleed): tell the two people apart by their VOICE instead. */
-function voicePath(hostPcm: Float32Array, constPcm: Float32Array, shift: number, frames: number, durationMs: number, d: Float32Array, active: boolean[], settings: Settings, preferred?: Role): Segment[] {
+function voicePath(hostPcm: Float32Array, constPcm: Float32Array, shift: number, frames: number, durationMs: number, d: Float32Array, active: boolean[], settings: Settings, preferred?: Role, motion?: { host?: Float32Array; constant?: Float32Array }): Segment[] {
   const n = Math.min(hostPcm.length, Math.max(0, constPcm.length - shift * 1600));
   const rh = rmsOf(hostPcm), rc = rmsOf(constPcm);
   const mix = new Float32Array(n);
@@ -145,9 +149,17 @@ function voicePath(hostPcm: Float32Array, constPcm: Float32Array, shift: number,
     const a = hostPcm[i] / rh, b = (constPcm[i + shift * 1600] ?? 0) / rc;
     mix[i] = preferred === 'host' ? a : preferred === 'constant' ? b : a + b;
   }
-  const r = separateByVoice(mix, frames);
+  // lip evidence: positive when the Host camera moves more than the Constant camera
+  let lip: Float32Array | undefined;
+  if (motion?.host && motion?.constant) {
+    const ah = motionToActivity(motion.host), ac = motionToActivity(motion.constant);
+    lip = new Float32Array(frames);
+    for (let f = 0; f < frames; f++) lip[f] = (ah[f] ?? 0) - (ac[f] ?? 0);
+  }
+  const r = separateByVoice(mix, frames, lip);
   lastVoiceQuality = r.quality;
-  if (r.quality < 0.6) return mergeShort([], settings.minSegmentMs, durationMs);
+  lastUsedLips = r.usedLips;
+  if (r.quality < 0.6 && !lip) return mergeShort([], settings.minSegmentMs, durationMs);
   // decide which cluster is Host: louder on the Host mic -> Host. No info -> first voice = Host.
   let sum0 = 0, n0 = 0, sum1 = 0, n1 = 0, first = -1;
   for (let f = 0; f < frames; f++) {
@@ -156,7 +168,7 @@ function voicePath(hostPcm: Float32Array, constPcm: Float32Array, shift: number,
     if (r.labels[f] === 0) { sum0 += d[f]; n0++; } else { sum1 += d[f]; n1++; }
   }
   const diff = (n0 ? sum0 / n0 : 0) - (n1 ? sum1 / n1 : 0);
-  const hostLabel = Math.abs(diff) > 0.7 ? (diff > 0 ? 0 : 1) : first < 0 ? 0 : first;
+  const hostLabel = r.hostLabel >= 0 ? r.hostLabel : Math.abs(diff) > 0.7 ? (diff > 0 ? 0 : 1) : first < 0 ? 0 : first;
   const raw: Segment[] = [];
   let start = 0;
   for (let f = 1; f <= frames; f++) {

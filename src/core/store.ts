@@ -91,5 +91,8 @@ export interface Runtime {
   constPath?: string;
   hostPcm?: Float32Array;
   constPcm?: Float32Array;
+  /** lip/face movement per 100 ms timeline frame (not saved) */
+  hostMotion?: Float32Array;
+  constMotion?: Float32Array;
 }
 export const runtime: Runtime = {};
