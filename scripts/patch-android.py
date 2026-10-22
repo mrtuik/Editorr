@@ -27,6 +27,21 @@ txt = vars_gradle.read_text()
 txt = re.sub(r"minSdkVersion\s*=\s*\d+", "minSdkVersion = 26", txt)
 vars_gradle.write_text(txt)
 
+# 2b. Media3 1.6.x needs compileSdk 35, which needs a newer Android Gradle Plugin + Gradle.
+txt = vars_gradle.read_text()
+txt = re.sub(r"compileSdkVersion\s*=\s*\d+", "compileSdkVersion = 35", txt)
+vars_gradle.write_text(txt)
+
+root_gradle = ANDROID / "build.gradle"
+txt = root_gradle.read_text()
+txt = re.sub(r"com\.android\.tools\.build:gradle:[0-9.]+", "com.android.tools.build:gradle:8.7.3", txt)
+root_gradle.write_text(txt)
+
+wrapper = ANDROID / "gradle/wrapper/gradle-wrapper.properties"
+txt = wrapper.read_text()
+txt = re.sub(r"gradle-[0-9.]+-(all|bin)\.zip", "gradle-8.9-all.zip", txt)
+wrapper.write_text(txt)
+
 # 3. Media3 dependencies
 app_gradle = ANDROID / "app/build.gradle"
 txt = app_gradle.read_text()
