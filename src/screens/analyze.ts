@@ -20,7 +20,7 @@ export function analyzeScreen() {
       await new Promise((r) => requestAnimationFrame(() => r(null)));
       p.durationMs = Math.max(1000, Math.min(p.host.durationMs, p.constant.durationMs - p.offsetMs));
       if (cancelled) return;
-      p.segments = detectSpeakers(runtime.hostPcm, runtime.constPcm, p.offsetMs, p.durationMs, app.settings);
+      p.segments = detectSpeakers(runtime.hostPcm, runtime.constPcm, p.offsetMs, p.durationMs, app.settings, p.mainAudio);
       pb.set(100);
       clearInterval(timer);
       saveProject(p);

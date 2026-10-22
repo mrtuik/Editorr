@@ -1,6 +1,6 @@
 import { app } from '../app';
 import { peaks } from '../core/audio';
-import { detectSpeakers, lastSeparationDb } from '../core/speaker';
+import { detectSpeakers, lastMethod, lastSeparationDb, lastVoiceQuality } from '../core/speaker';
 import { History, runtime, saveProject } from '../core/store';
 import { EditorrNative, fileSrc, isNative, tick } from '../core/native';
 import { deleteSegment, mergeWithPrev, moveBoundary, segmentAt, splitAt, updateSegment } from '../core/timeline';
@@ -336,10 +336,15 @@ export function editorScreen() {
   function patch(pt: Partial<Segment>) { const s = selected(); if (s) edit(updateSegment(p.segments, s.id, pt)); }
 
   function doAutoSwitch() {
-    const segs = detectSpeakers(runtime.hostPcm!, runtime.constPcm!, p.offsetMs, p.durationMs, app.settings);
+    const segs = detectSpeakers(runtime.hostPcm!, runtime.constPcm!, p.offsetMs, p.durationMs, app.settings, p.mainAudio);
     edit(segs); selectedId = segs[0]?.id ?? null; afterEdit();
-    if (segs.length <= 1) toast('Could not tell speakers apart. Both mics sound almost the same.');
-    else toast(`Auto switch done: ${segs.length} segments (separation ${lastSeparationDb.toFixed(1)} dB). Undo to go back.`);
+    if (segs.length <= 1) toast('Could not tell the two voices apart. Try a cleaner part or split manually.');
+    else if (lastMethod === 'voice') toast(`Auto switch by VOICE: ${segs.length} segments (quality ${lastVoiceQuality.toFixed(1)}). If Host/Const are swapped, use Main buttons or Undo.`);
+    else toast(`Auto switch by mic loudness: ${segs.length} segments (${lastSeparationDb.toFixed(1)} dB). Undo to go back.`);
+  }
+  function doSwap() {
+    edit(p.segments.map((s) => ({ ...s, main: (s.main === 'host' ? 'constant' : 'host') as Role })));
+    toast('Host and Constant swapped everywhere.');
   }
   function doSplit() { edit(splitAt(p.segments, playMs)); selectedId = segmentAt(p.segments, playMs)?.id ?? null; tick(); }
   function doMerge() { const s = selected(); if (s) { edit(mergeWithPrev(p.segments, s.id)); selectedId = null; afterEdit(); } }
@@ -368,6 +373,7 @@ export function editorScreen() {
     const s = selected();
     const rows: Node[] = [
       optBtn('Auto switch', false, doAutoSwitch, 'Detect speakers and switch automatically'),
+      optBtn('Swap Host/Const', false, doSwap, 'Swap who is Host and who is Constant'),
       optBtn('Sound: Host', p.mainAudio === 'host', () => setAudio('host'), 'Use Host audio'),
       optBtn('Sound: Const', p.mainAudio === 'constant', () => setAudio('constant'), 'Use Constant audio'),
       optBtn('Split', false, doSplit, 'Split at playhead'),
