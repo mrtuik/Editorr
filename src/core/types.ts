@@ -66,7 +66,7 @@ export const STYLE_LABEL: Record<LayoutStyle, string> = {
 };
 
 export const STYLE_COLOR = {
-  oneHost: '#3B82F6',
+  oneHost: '#E5E5E5',
   oneConstant: '#22C55E',
   side: '#A855F7',
   updown: '#F97316',

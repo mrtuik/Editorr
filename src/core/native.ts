@@ -1,4 +1,4 @@
-import { registerPlugin, Capacitor } from '@capacitor/core';
+import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import type { Project } from './types';
 
@@ -32,6 +32,7 @@ export interface EditorrNativePlugin {
   /** Runs Media3 Transformer composition. Emits 'exportProgress' events. */
   exportProject(req: ExportRequest): Promise<{ outputUri: string }>;
   cancelExport(): Promise<void>;
+  addListener(eventName: 'audioProgress' | 'exportProgress', cb: (e: { path?: string; percent: number }) => void): Promise<PluginListenerHandle>;
   freeSpaceMb(): Promise<{ mb: number }>;
 }
 

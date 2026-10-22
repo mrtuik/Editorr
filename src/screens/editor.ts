@@ -141,7 +141,7 @@ export function editorScreen() {
     // waves
     g.fillStyle = '#111111';
     g.fillRect(0, rows.host[0], W, rows.host[1]); g.fillRect(0, rows.cons[0], W, rows.cons[1]);
-    drawWave(g, hostPeaks, 0, rows.host[0], rows.host[1], '#3B82F6');
+    drawWave(g, hostPeaks, 0, rows.host[0], rows.host[1], '#FFFFFF');
     drawWave(g, constPeaks, p.offsetMs, rows.cons[0], rows.cons[1], '#22C55E');
     g.fillStyle = '#A0A0A0'; g.font = '10px Roboto, sans-serif';
     g.fillText('Host', 4, rows.host[0] + 8); g.fillText('Constant', 4, rows.cons[0] + 8);
@@ -154,8 +154,10 @@ export function editorScreen() {
       g.fillStyle = segmentColor(s);
       g.beginPath(); g.roundRect(x1 + 0.5, ly, Math.max(2, x2 - x1 - 1), lh, 6); g.fill();
       if (s.id === selectedId) {
+        g.strokeStyle = '#000000'; g.lineWidth = 3;
+        g.beginPath(); g.roundRect(x1 + 2.5, ly + 2, Math.max(2, x2 - x1 - 5), lh - 4, 4); g.stroke();
         g.strokeStyle = '#FFFFFF'; g.lineWidth = 2;
-        g.beginPath(); g.roundRect(x1 + 1.5, ly + 1, Math.max(2, x2 - x1 - 3), lh - 2, 5); g.stroke();
+        g.beginPath(); g.roundRect(x1 - 0.5, ly - 2, Math.max(2, x2 - x1 + 1), lh + 4, 7); g.stroke();
       }
       if (x2 - x1 > 44) {
         g.fillStyle = '#000000'; g.font = '600 11px Roboto, sans-serif';
@@ -165,7 +167,7 @@ export function editorScreen() {
     }
 
     // playhead (fixed at center)
-    g.fillStyle = '#3B82F6'; g.fillRect(W / 2 - 1, 0, 2, H);
+    g.fillStyle = '#FFFFFF'; g.fillRect(W / 2 - 1, 0, 2, H);
     g.beginPath(); g.moveTo(W / 2 - 6, 0); g.lineTo(W / 2 + 6, 0); g.lineTo(W / 2, 8); g.fill();
   }
 
@@ -353,7 +355,7 @@ export function editorScreen() {
     h('div', { class: 'topbar' },
       iconButton('back', 'Back', () => { saveProject(p); app.go('home'); }),
       proj,
-      h('button', { class: 'btn small', style: 'background:var(--accent);border-color:var(--accent)', onclick: () => { setPlaying(false); saveProject(p); app.go('export'); } }, 'Export')),
+      h('button', { class: 'btn small', style: 'background:#fff;border-color:#fff;color:#000', onclick: () => { setPlaying(false); saveProject(p); app.go('export'); } }, 'Export')),
     preview, controls, tl, opts, styleBar);
 
   requestAnimationFrame(() => {

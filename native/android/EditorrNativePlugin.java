@@ -101,7 +101,7 @@ public class EditorrNativePlugin extends Plugin {
                 File out = new File(dir, System.currentTimeMillis() + "_" + name.replaceAll("[^A-Za-z0-9._-]", "_"));
                 try (InputStream in = getContext().getContentResolver().openInputStream(uri);
                      OutputStream os = new FileOutputStream(out)) {
-                    byte[] buf = new byte[1 << 16];
+                    byte[] buf = new byte[1 << 20];
                     int n;
                     while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
                 }
@@ -159,10 +159,10 @@ public class EditorrNativePlugin extends Plugin {
         final String path = call.getString("path");
         if (path == null) { call.reject("path missing"); return; }
         new Thread(() -> {
-            MediaExtractor ex = new MediaExtractor();
+            MediaExtractor ex = null;
             MediaCodec codec = null;
             try {
-                ex.setDataSource(path);
+                ex = openSource(path);
                 int track = -1;
                 MediaFormat fmt = null;
                 for (int i = 0; i < ex.getTrackCount(); i++) {
@@ -180,6 +180,8 @@ public class EditorrNativePlugin extends Plugin {
                 File outFile = new File(getContext().getCacheDir(), "editorr/" + new File(path).getName() + ".pcm16k");
                 outFile.getParentFile().mkdirs();
                 long samplesOut = 0;
+                long durUs = fmt.containsKey(MediaFormat.KEY_DURATION) ? fmt.getLong(MediaFormat.KEY_DURATION) : 0;
+                int lastPct = -10;
 
                 int channels = fmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT) ? fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) : 1;
                 int rate = fmt.containsKey(MediaFormat.KEY_SAMPLE_RATE) ? fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) : 44100;
@@ -239,6 +241,16 @@ public class EditorrNativePlugin extends Plugin {
                                     idx++;
                                 }
                             }
+                            if (durUs > 0) {
+                                int pct = (int) Math.min(100, info.presentationTimeUs * 100 / durUs);
+                                if (pct >= lastPct + 2) {
+                                    lastPct = pct;
+                                    JSObject pe = new JSObject();
+                                    pe.put("path", path);
+                                    pe.put("percent", pct);
+                                    notifyListeners("audioProgress", pe);
+                                }
+                            }
                             codec.releaseOutputBuffer(oi, false);
                             if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) outDone = true;
                         } else if (oi == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
@@ -260,9 +272,34 @@ public class EditorrNativePlugin extends Plugin {
                 call.reject("Could not read audio: " + e.getMessage());
             } finally {
                 try { if (codec != null) { codec.stop(); codec.release(); } } catch (Exception ignored) { }
-                ex.release();
+                if (ex != null) ex.release();
             }
         }).start();
+    }
+
+    /** Open a MediaExtractor on a local file. File descriptor first (most reliable), Uri as fallback. */
+    private MediaExtractor openSource(String path) throws Exception {
+        File f = new File(path);
+        if (!f.exists() || f.length() == 0) {
+            throw new Exception("video file is missing or empty (" + f.length() + " bytes)");
+        }
+        String err1;
+        MediaExtractor a = new MediaExtractor();
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(f)) {
+            a.setDataSource(fis.getFD(), 0, f.length());
+            return a;
+        } catch (Exception e) {
+            err1 = String.valueOf(e.getMessage());
+            a.release();
+        }
+        MediaExtractor b = new MediaExtractor();
+        try {
+            b.setDataSource(getContext(), Uri.fromFile(f), null);
+            return b;
+        } catch (Exception e) {
+            b.release();
+            throw new Exception(err1 + " / " + e.getMessage() + " (file " + (f.length() / 1024) + " KB, " + f.getName() + ")");
+        }
     }
 
     // ----------------------------------------------------------------- export

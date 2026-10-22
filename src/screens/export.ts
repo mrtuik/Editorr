@@ -50,7 +50,7 @@ export function exportScreen() {
       if (mb < needMb) throw new Error(`Not enough storage. Free about ${needMb - mb} MB and try again.`);
       try { await LocalNotifications.requestPermissions(); } catch { /* optional */ }
       const t0 = Date.now();
-      (EditorrNative as any).addListener?.('exportProgress', (e: { percent: number }) => {
+      EditorrNative.addListener('exportProgress', (e: { path?: string; percent: number }) => {
         pb.set(e.percent);
         if (e.percent > 3) {
           const left = ((Date.now() - t0) / e.percent) * (100 - e.percent);

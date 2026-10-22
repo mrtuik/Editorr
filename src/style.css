@@ -6,7 +6,7 @@
   --text: #ffffff;
   --text2: #a0a0a0;
   --disabled: #555555;
-  --accent: #3b82f6;
+  --accent: #ffffff;
   --error: #ef4444;
   --warn: #f59e0b;
   --ok: #22c55e;
@@ -29,7 +29,7 @@ body { font-family: Roboto, Inter, system-ui, sans-serif; font-size: 15px; line-
 
 .btn { min-height: 48px; min-width: 48px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--border); background: var(--elevated); color: var(--text); font: inherit; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
 .btn:active { opacity: .7; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; flex: 1; }
+.btn.primary { background: #ffffff; border-color: #ffffff; color: #000000; flex: 1; }
 .btn.danger { color: var(--error); }
 .btn:disabled { color: var(--disabled); background: var(--surface); border-color: var(--border); cursor: default; }
 .btn.small { min-height: 40px; padding: 0 12px; font-size: 14px; }
@@ -56,7 +56,7 @@ body { font-family: Roboto, Inter, system-ui, sans-serif; font-size: 15px; line-
 
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .seg button { min-height: 44px; padding: 0 14px; background: var(--surface); color: var(--text2); border: 0; font: inherit; }
-.seg button.on { background: var(--accent); color: #fff; }
+.seg button.on { background: #ffffff; color: #000000; }
 
 .field { margin-bottom: 16px; }
 .field label { display: block; margin-bottom: 8px; color: var(--text2); font-size: 14px; }
