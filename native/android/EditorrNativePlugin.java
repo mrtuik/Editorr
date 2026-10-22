@@ -302,6 +302,74 @@ public class EditorrNativePlugin extends Plugin {
         }
     }
 
+
+    // ------------------------------------------------------------ preview proxy
+
+    private Transformer proxyTransformer;
+
+    /** Transcode one video to 480p H.264 so the WebView can preview it. Cached per source file. */
+    @PluginMethod
+    public void makeProxy(PluginCall call) {
+        final String path = call.getString("path");
+        final int height = call.getInt("height", 480);
+        if (path == null) { call.reject("path missing"); return; }
+        getActivity().runOnUiThread(() -> {
+            try {
+                final File out = new File(getContext().getCacheDir(), "editorr/proxy_" + new File(path).getName() + ".mp4");
+                out.getParentFile().mkdirs();
+                if (out.exists() && out.length() > 0) {
+                    JSObject o = new JSObject();
+                    o.put("proxyPath", out.getAbsolutePath());
+                    call.resolve(o);
+                    return;
+                }
+                final File tmp = new File(out.getAbsolutePath() + ".tmp");
+                if (tmp.exists()) tmp.delete();
+                MediaItem mi = MediaItem.fromUri(Uri.fromFile(new File(path)));
+                ImmutableList<Effect> video = ImmutableList.of(Presentation.createForHeight(height));
+                EditedMediaItem item = new EditedMediaItem.Builder(mi)
+                        .setEffects(new Effects(ImmutableList.of(), video))
+                        .build();
+                final ProgressHolder holder = new ProgressHolder();
+                final Runnable[] poll = new Runnable[1];
+                proxyTransformer = new Transformer.Builder(getContext())
+                        .setVideoMimeType(MimeTypes.VIDEO_H264)
+                        .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                        .addListener(new Transformer.Listener() {
+                            @Override public void onCompleted(@NonNull Composition c, @NonNull ExportResult r) {
+                                main.removeCallbacks(poll[0]);
+                                if (tmp.renameTo(out)) {
+                                    JSObject o = new JSObject();
+                                    o.put("proxyPath", out.getAbsolutePath());
+                                    call.resolve(o);
+                                } else call.reject("Could not save the preview copy.");
+                            }
+                            @Override public void onError(@NonNull Composition c, @NonNull ExportResult r, @NonNull ExportException e) {
+                                main.removeCallbacks(poll[0]);
+                                call.reject("Preview copy failed: " + e.getMessage());
+                            }
+                        })
+                        .build();
+                poll[0] = new Runnable() {
+                    @Override public void run() {
+                        if (proxyTransformer == null) return;
+                        if (proxyTransformer.getProgress(holder) != Transformer.PROGRESS_STATE_NOT_STARTED) {
+                            JSObject e = new JSObject();
+                            e.put("path", path);
+                            e.put("percent", holder.progress);
+                            notifyListeners("proxyProgress", e);
+                        }
+                        main.postDelayed(this, 700);
+                    }
+                };
+                proxyTransformer.start(item, tmp.getAbsolutePath());
+                main.post(poll[0]);
+            } catch (Exception e) {
+                call.reject("Preview copy failed to start: " + e.getMessage());
+            }
+        });
+    }
+
     // ----------------------------------------------------------------- export
 
     private static class Seg {

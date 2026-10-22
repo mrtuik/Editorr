@@ -1,7 +1,7 @@
 import { app } from '../app';
 import { peaks } from '../core/audio';
 import { History, runtime, saveProject } from '../core/store';
-import { tick } from '../core/native';
+import { EditorrNative, fileSrc, isNative, tick } from '../core/native';
 import { deleteSegment, mergeWithPrev, moveBoundary, segmentAt, splitAt, updateSegment } from '../core/timeline';
 import { Corner, LayoutStyle, PopupSize, Role, Segment, segmentColor, STYLE_LABEL } from '../core/types';
 import { actionSheet, confirmDialog, fmtTime, h, icon, iconButton, toast } from '../ui';
@@ -62,13 +62,18 @@ export function editorScreen() {
   }
 
   let lastSegId = '';
+  let playWall = 0;
+  let playBase = 0;
+
   function syncVideos(force = false) {
     const t = playMs / 1000;
-    if (force || Math.abs(hostV.currentTime - t) > 0.2) hostV.currentTime = t;
+    const drift = playing ? 0.4 : 0.05;
+    if (force || Math.abs(hostV.currentTime - t) > drift) { try { hostV.currentTime = t; } catch { /* ignore */ } }
+    if (playing && hostV.paused && t < hostV.duration) hostV.play().catch(() => {});
     const ct = (playMs + p.offsetMs) / 1000;
-    if (ct < 0 || ct > constV.duration) { constV.pause(); }
+    if (ct < 0 || !(ct < constV.duration)) { if (!constV.paused) constV.pause(); }
     else {
-      if (force || Math.abs(constV.currentTime - ct) > 0.15) constV.currentTime = ct;
+      if (force || Math.abs(constV.currentTime - ct) > drift) { try { constV.currentTime = ct; } catch { /* ignore */ } }
       if (playing && constV.paused) constV.play().catch(() => {});
     }
   }
@@ -77,6 +82,7 @@ export function editorScreen() {
     playing = on;
     if (on) {
       if (playMs >= p.durationMs - 50) playMs = 0;
+      playWall = performance.now(); playBase = playMs;
       syncVideos(true);
       hostV.play().catch(() => {}); constV.play().catch(() => {});
     } else { hostV.pause(); constV.pause(); }
@@ -89,6 +95,43 @@ export function editorScreen() {
     syncVideos(true);
     refresh(false);
   }
+
+  // ---------- Preview copy for formats the WebView cannot play ----------
+  const banner = h('div', { class: 'banner', style: 'display:none' });
+  preview.append(banner);
+  const proxying: Record<string, boolean> = {};
+  async function ensurePlayable(role: Role, v: HTMLVideoElement) {
+    if (!isNative()) return;
+    const path = role === 'host' ? runtime.hostPath : runtime.constPath;
+    if (!path) return;
+    const label = role === 'host' ? 'Host' : 'Constant';
+    const check = async () => {
+      const broken = !!v.error || (v.readyState >= 1 && v.videoWidth === 0);
+      if (!broken || proxying[role]) return;
+      proxying[role] = true;
+      banner.style.display = '';
+      banner.textContent = `${label} video format is not supported for preview. Making a preview copy...`;
+      try {
+        const sub = await EditorrNative.addListener('proxyProgress', (e: { path?: string; percent: number }) => {
+          if (e.path === path) banner.textContent = `Preparing ${label} preview ${Math.round(e.percent)}%`;
+        });
+        const r = await EditorrNative.makeProxy({ path, height: 480 });
+        sub.remove().catch(() => {});
+        v.src = fileSrc(r.proxyPath);
+        v.load();
+        v.addEventListener('loadedmetadata', () => { syncVideos(true); }, { once: true });
+        banner.style.display = 'none';
+        toast(`${label} preview ready`);
+      } catch (e) {
+        banner.textContent = `${label} preview failed: ${(e as Error).message}`;
+      }
+    };
+    v.addEventListener('error', check);
+    v.addEventListener('loadedmetadata', check);
+    window.setTimeout(check, 4000);
+  }
+  ensurePlayable('host', hostV);
+  ensurePlayable('constant', constV);
 
   // ---------- Timeline canvas ----------
   const canvas = h('canvas') as HTMLCanvasElement;
@@ -305,12 +348,20 @@ export function editorScreen() {
     ]);
   }
 
+  function setAudio(role: Role) {
+    p.mainAudio = role;
+    hostV.muted = role !== 'host';
+    constV.muted = role !== 'constant';
+    renderOpts(); scheduleSave(); tick();
+  }
   function optBtn(label: string, on: boolean, run: () => void, aria?: string) {
     return h('button', { class: 'btn small' + (on ? ' primary' : ''), style: on ? 'flex:none' : '', 'aria-label': aria ?? label, onclick: run }, label);
   }
   function renderOpts() {
     const s = selected();
     const rows: Node[] = [
+      optBtn('Sound: Host', p.mainAudio === 'host', () => setAudio('host'), 'Use Host audio'),
+      optBtn('Sound: Const', p.mainAudio === 'constant', () => setAudio('constant'), 'Use Constant audio'),
       optBtn('Split', false, doSplit, 'Split at playhead'),
       optBtn('Merge', false, doMerge, 'Merge with previous'),
       optBtn('Delete', false, doDelete),
@@ -344,8 +395,9 @@ export function editorScreen() {
   }
   function loop() {
     if (playing) {
-      if (hostV.currentTime * 1000 >= p.durationMs - 30) { setPlaying(false); }
-      else { refresh(true); syncVideos(false); }
+      playMs = playBase + (performance.now() - playWall);
+      if (playMs >= p.durationMs - 30) { playMs = p.durationMs; setPlaying(false); refresh(false); }
+      else { refresh(false); syncVideos(false); }
     }
     raf = requestAnimationFrame(loop);
   }

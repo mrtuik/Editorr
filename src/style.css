@@ -90,3 +90,6 @@ canvas { display: block; width: 100%; }
 input[type=text] { width: 100%; min-height: 48px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 0 12px; font: inherit; user-select: text; }
 input[type=file] { display: none; }
 .empty { text-align: center; color: var(--text2); padding: 48px 0; }
+
+.preview { position: relative; }
+.banner { position: absolute; left: 8px; right: 8px; bottom: 8px; background: rgba(0,0,0,.8); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 13px; z-index: 5; }

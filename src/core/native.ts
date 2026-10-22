@@ -31,8 +31,10 @@ export interface EditorrNativePlugin {
   extractAudio(opts: { path: string }): Promise<{ pcmPath: string; samples: number }>;
   /** Runs Media3 Transformer composition. Emits 'exportProgress' events. */
   exportProject(req: ExportRequest): Promise<{ outputUri: string }>;
+  /** Transcode to a small H.264 file so the WebView can preview formats it cannot decode (e.g. HEVC). */
+  makeProxy(opts: { path: string; height: number }): Promise<{ proxyPath: string }>;
   cancelExport(): Promise<void>;
-  addListener(eventName: 'audioProgress' | 'exportProgress', cb: (e: { path?: string; percent: number }) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'audioProgress' | 'exportProgress' | 'proxyProgress', cb: (e: { path?: string; percent: number }) => void): Promise<PluginListenerHandle>;
   freeSpaceMb(): Promise<{ mb: number }>;
 }
 
