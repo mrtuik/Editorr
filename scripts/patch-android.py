@@ -101,8 +101,8 @@ if "signingConfigs.editorr" not in txt:
         txt = re.sub(r"(buildTypes\s*\{\n)", lambda m: m.group(1) + "        debug {\n            " + use + "\n        }\n", txt, count=1)
     txt = re.sub(r"(release\s*\{\n)", lambda m: m.group(1) + "            " + use + "\n", txt, count=1)
     # version numbers from CI (fall back to 1 / 0.1.0 for local builds)
-    txt = re.sub(r"versionCode\s+\d+", "versionCode (System.getenv('VERSION_CODE') ?: '1').toInteger()", txt, count=1)
-    txt = re.sub(r'versionName\s+"[^"]*"', "versionName (System.getenv('VERSION_NAME') ?: '0.1.0')", txt, count=1)
+    txt = re.sub(r"versionCode\s+\d+", "versionCode Integer.parseInt(System.getenv('VERSION_CODE') ?: '1')", txt, count=1)
+    txt = re.sub(r'versionName\s+"[^"]*"', "versionName System.getenv('VERSION_NAME') ?: '0.1.0'", txt, count=1)
     app_gradle.write_text(txt)
 
 print("Editorr: android project patched")
