@@ -5,7 +5,7 @@ import { detectSpeakers, lastMethod, lastSeparationDb, lastUsedLips, lastVoiceQu
 import { motionToActivity, scanMotion } from '../core/motion';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
 import { detectSilence } from '../core/silence';
-import { fileSrc, isNative, tick } from '../core/native';
+import { EditorrNative, fileSrc, isNative, tick } from '../core/native';
 import { ensureAudio, nextPaint, runAutoSwitch, runSync } from '../core/pipeline';
 import { ensureProxy, needsProxy } from '../core/proxy';
 import { makeStrip, type Strip } from '../core/thumbs';
@@ -64,7 +64,8 @@ export function editorScreen() {
     // Video deleted or moved: black preview with a message, like CapCut.
     const noVideo = h('div', { class: 'missing' },
       h('div', { class: 'missing-ico' }, '\u{1F6AB}'),
-      h('div', { class: 'missing-txt' }, 'Video or photo is deleted or moved in your device.'),
+      h('div', { class: 'missing-txt', style: 'font-size:17px;color:#fff' }, 'Video not found'),
+      h('div', { class: 'missing-txt' }, 'The video or photo is deleted or moved on your device.'),
       h('div', { class: 'missing-txt' }, 'Add the videos again to keep editing.'));
     return { el: h('div', { class: 'screen' },
       h('div', { class: 'topbar' }, iconButton('close', 'Close', () => app.go('home'), 'plain')),
@@ -103,12 +104,16 @@ export function editorScreen() {
   computePeaks();
 
   // ======================================================================= Preview
-  const hostV = h('video', { playsInline: true, preload: 'auto', 'aria-label': 'Host video' }) as HTMLVideoElement;
-  const constV = h('video', { playsInline: true, preload: 'auto', 'aria-label': 'Constant video' }) as HTMLVideoElement;
+  // The WebView draws its own grey "play" picture on any video that has no poster or cannot load. A black poster replaces it.
+  const BLACK_POSTER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  const hostV = h('video', { playsInline: true, preload: 'auto', poster: BLACK_POSTER, 'aria-label': 'Host video' }) as HTMLVideoElement;
+  const constV = h('video', { playsInline: true, preload: 'auto', poster: BLACK_POSTER, 'aria-label': 'Constant video' }) as HTMLVideoElement;
+  const hostMsg = h('div', { class: 'vmsg', style: 'display:none' }, 'Video not found');
+  const constMsg = h('div', { class: 'vmsg', style: 'display:none' }, 'Video not found');
   hostV.muted = p.mainAudio !== 'host' || p.noiseHost > 0;
   constV.muted = p.mainAudio !== 'constant' || p.noiseConst > 0;
-  const hostCell = h('div', { class: 'cell' }, hostV);
-  const constCell = h('div', { class: 'cell' }, constV);
+  const hostCell = h('div', { class: 'cell' }, hostV, hostMsg);
+  const constCell = h('div', { class: 'cell' }, constV, constMsg);
   const stage = h('div', { class: 'stage' }, hostCell, constCell);
   const guideV = h('div', { class: 'guide v' });
   const guideH = h('div', { class: 'guide h' });
@@ -186,15 +191,29 @@ export function editorScreen() {
   const proxying: Record<Role, boolean> = { host: false, constant: false };
   const usingProxy: Record<Role, boolean> = { host: false, constant: false };
   const vid = (r: Role) => (r === 'host' ? hostV : constV);
+  const curUrl: Record<Role, string> = { host: '', constant: '' };
+  const posterSet: Record<Role, boolean> = { host: false, constant: false };
+  /** Black cell with "Video not found" while a video cannot be shown; hides the moment it plays again. */
+  function showMissing(role: Role, on: boolean) {
+    (role === 'host' ? hostMsg : constMsg).style.display = on ? '' : 'none';
+    const v = vid(role);
+    if (on) { v.style.visibility = 'hidden'; } else { v.style.visibility = ''; }
+  }
+  function markFailed(role: Role) {
+    failed[role] = true; ready[role] = true;
+    showMissing(role, true);
+    if (!destroyed) updatePlayState();
+  }
   const label = (r: Role) => (r === 'host' ? 'Host' : 'Constant');
 
   function setSource(role: Role, url: string) {
     const v = vid(role);
     ready[role] = false;
+    curUrl[role] = url;
     v.src = url;
     v.load();
     v.addEventListener('loadedmetadata', () => {
-      ready[role] = true;
+      ready[role] = true; failed[role] = false; showMissing(role, false);
       if (!destroyed) { seekVideo(v, role === 'host' ? playMs / 1000 : (playMs + p.offsetMs) / 1000); updatePlayState(); requestDraw(); }
     }, { once: true });
   }
@@ -216,8 +235,7 @@ export function editorScreen() {
       setSource(role, url);
       if (wasPlaying) vid(role).addEventListener('loadedmetadata', () => { if (!destroyed) setPlaying(true); }, { once: true });
     } catch (e) {
-      failed[role] = true;
-      ready[role] = true; // do not block playing forever
+      markFailed(role); // do not block playing forever
       toast(`${label(role)} video: could not make a smooth preview. ${(e as Error).message || ''}`.trim());
     } finally {
       proxying[role] = false;
@@ -239,13 +257,35 @@ export function editorScreen() {
         if (playing) setPlaying(false);
         useProxy(role, was);
       } else if (!proxying[role] && !failed[role]) {
-        failed[role] = true; ready[role] = true; updatePlayState();
+        markFailed(role);
         toast(`${label(role)} video cannot be played in the preview. Export may still work.`);
       }
     });
-    if (isNative() && (flagged || needsProxy(meta))) useProxy(role); // before playing: no stall in the middle of a video
-    else setSource(role, url);
+    const begin = () => {
+      if (isNative() && (flagged || needsProxy(meta))) useProxy(role); // before playing: no stall in the middle of a video
+      else setSource(role, url);
+    };
+    const path = role === 'host' ? runtime.hostPath : runtime.constPath;
+    if (isNative() && path) {
+      // file deleted or moved: show "Video not found" straight away instead of a broken picture
+      EditorrNative.fileExists({ path }).then((r) => { if (destroyed) return; if (r.exists) begin(); else markFailed(role); }, () => { if (!destroyed) begin(); });
+    } else begin();
   }
+
+  /** The system can drop a video's decoder while the app is in the background (or the phone is busy). Load it again when we come back. */
+  function reviveVideos() {
+    if (destroyed) return;
+    for (const role of ['host', 'constant'] as Role[]) {
+      const v = vid(role);
+      const lost = !!v.error || (ready[role] && !failed[role] && v.readyState === 0);
+      if (!lost || proxying[role] || !curUrl[role]) continue;
+      const t = v.currentTime || 0;
+      setSource(role, curUrl[role]);
+      v.addEventListener('loadedmetadata', () => { if (!destroyed) { try { v.currentTime = t; } catch { /* ignore */ } } }, { once: true });
+    }
+  }
+  const onVisible = () => { if (document.visibilityState === 'visible') reviveVideos(); };
+  document.addEventListener('visibilitychange', onVisible);
 
   // ---------- seeking (never queue seeks: only the latest one counts) ----------
   const pendingSeek = new Map<HTMLVideoElement, number>();
@@ -1502,7 +1542,7 @@ export function editorScreen() {
     // until a video can play, show its first picture in the preview instead of black
     const poster = (role: Role, st: Strip | undefined) => {
       const img = st?.frames.find((f) => !!f);
-      if (img && !ready[role] && !vid(role).poster) vid(role).poster = img.src;
+      if (img && !ready[role] && !failed[role] && !posterSet[role]) { posterSet[role] = true; vid(role).poster = img.src; }
     };
     hostStrip = makeStrip({ path: runtime.hostPath, url: runtime.hostUrl!, durationMs: hostDur, height: LANE * 2, onFrame: () => { poster('host', hostStrip); requestDraw(); } });
     constStrip = makeStrip({ path: runtime.constPath, url: runtime.constUrl!, durationMs: constDur, height: LANE * 2, onFrame: () => { poster('constant', constStrip); requestDraw(); } });
@@ -1673,6 +1713,7 @@ export function editorScreen() {
       endTask('audio'); endTask('sync'); endTask('switch'); endTask('proxy-host'); endTask('proxy-constant'); endTask('lips'); scanCancel = true; closeListSheet();
       try { actx?.close(); } catch { /* ignore */ }
       window.removeEventListener('resize', onResize);
+      document.removeEventListener('visibilitychange', onVisible);
       ro.disconnect();
       (screen.orientation as any)?.unlock?.();
     },
