@@ -89,13 +89,6 @@ export function homeScreen() {
     const list = all();
     const last = projects[0];
 
-    const quickChips = [
-      { id: 'wand', label: 'Auto Cut', run: () => newProject() },
-      { id: 'silence', label: 'Silence Remover', run: () => newProject('silence') },
-      { id: 'sync', label: 'Camera Sync', run: () => newProject('sync') },
-      { id: 'prompter', label: 'Prompter', run: () => toast('Teleprompter tool ready for live recording') },
-    ];
-
     const tools: [keyof typeof ICON, string, () => void][] = [
       ['wand', 'Auto switch', () => newProject()],
       ['lips', 'Lips scan', () => newProject()],
@@ -109,39 +102,15 @@ export function homeScreen() {
     ];
 
     return [
-      h('div', { class: 'hero-banner' },
-        h('button', { class: 'hero-new-btn', onclick: () => newProject() },
-          h('div', { class: 'hero-plus-icon' }, icon('plus', 30)),
-          h('div', { class: 'hero-btn-text' },
-            h('span', { class: 'hero-title' }, 'New project'),
-            h('span', { class: 'hero-sub' }, 'Create smooth dual-cam edit'))),
-        last ? h('button', { class: 'hero-resume-btn', onclick: () => openProject(last) },
-          icon('resume', 22),
-          h('span', {}, 'Continue last edit')) : null
-      ),
-
-      h('div', { class: 'quick-chips-strip' },
-        ...quickChips.map((c) => h('button', { class: 'quick-chip', onclick: c.run },
-          icon(c.id as keyof typeof ICON, 18),
-          h('span', {}, c.label)))
-      ),
-
+      h('div', { class: 'hero' }, h('div', { class: 'small' }, 'Podcast editor'), h('h1', {}, 'Get started')),
+      h('div', { class: 'cards' },
+        h('button', { class: 'bigcard', onclick: () => newProject() }, icon('newVideo', 34), 'New project'),
+        h('button', { class: 'bigcard', disabled: !last, onclick: () => last && openProject(last) }, icon('resume', 34), 'Continue')),
       list.length
-        ? h('div', { class: 'recent-section' },
-            h('div', { class: 'section-head' },
-              h('span', { class: 'section-title' }, 'Recent projects'),
-              h('button', { class: 'section-more', onclick: () => { app.homeTab = 'projects'; render(); } }, 'View all')),
-            h('div', { class: 'recent' },
-              ...list.slice(0, 8).map((p) => h('button', { class: 'rthumb', style: thumbStyle(p), 'aria-label': p.name, onclick: () => openProject(p) },
-                h('div', { class: 'rthumb-badges' },
-                  h('span', { class: 'tag-aspect' }, p.aspect || '9:16'),
-                  h('span', { class: 'tag-duration' }, fmtTime(p.durationMs))),
-                h('span', { class: 'rthumb-name' }, p.name))),
-              h('button', { class: 'rthumb more', 'aria-label': 'All projects', onclick: () => { app.homeTab = 'projects'; render(); } }, icon('chevR', 24))))
+        ? h('div', { class: 'recent' },
+            ...list.slice(0, 6).map((p) => h('button', { class: 'rthumb', style: thumbStyle(p), 'aria-label': p.name, onclick: () => openProject(p) }, h('span', {}, `${shortDate(p.updatedAt)}-${p.name}`))),
+            h('button', { class: 'rthumb more', 'aria-label': 'All projects', onclick: () => { app.homeTab = 'projects'; render(); } }, icon('chevR', 24)))
         : null,
-
-      h('div', { class: 'section-head', style: 'margin-top:20px' },
-        h('span', { class: 'section-title' }, 'Editing tools')),
       h('div', { class: 'tools' }, ...tools.map(([ic, label, run]) => h('button', { class: 'toolcell', onclick: run }, icon(ic, 28), label))),
     ];
   }
