@@ -1,6 +1,6 @@
 import { app } from '../app';
 import { EditorrNative, isNative, toExportRequest } from '../core/native';
-import { h, toast } from '../ui';
+import { confirmDialog, h, iconButton, toast } from '../ui';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { resLabel } from '../core/types';
 import { estimateMb, resolveExport } from '../core/exportOpts';
@@ -21,8 +21,9 @@ export function exportScreen() {
   const sub = h('div', { class: 'xsub' }, "Please don't close Editorr or lock your screen.");
   const runBox = h('div', { class: 'xrun' }, status, sub, h('div', { class: 'xbox' }, pct), eta);
   const doneBox = h('div', { class: 'xrun', style: 'display:none' });
-  const cancelBtn = h('button', { class: 'btn', style: 'display:none;margin:24px auto 0', onclick: cancel }, 'Cancel export');
+  const cancelBtn = h('button', { class: 'btn', style: 'display:none;margin:24px auto 0', onclick: () => { app.go('editor'); } }, 'Back');
   runBox.append(cancelBtn);
+  let finished = false;
 
   let lastPct = -1;
   async function start() {
@@ -31,7 +32,7 @@ export function exportScreen() {
     const hostUri = p.host?.uri, constUri = p.constant?.uri;
     if (!hostUri || !constUri) { toast('Original video paths are missing. Re-import the videos, then export.'); return; }
     running = true;
-    runBox.style.display = ''; cancelBtn.style.display = '';
+    runBox.style.display = ''; cancelBtn.style.display = 'none';
     status.className = 'xtitle'; status.textContent = 'Exporting...'; sub.style.display = '';
     try {
       const { mb } = await EditorrNative.freeSpaceMb();
@@ -77,8 +78,19 @@ export function exportScreen() {
       running = false;
       status.className = 'xtitle err'; status.textContent = (e as Error).message || 'Export failed.';
       sub.textContent = 'Try a lower resolution or bitrate in the export settings, or close other apps.'; sub.style.display = '';
-      pct.textContent = '!'; cancelBtn.textContent = 'Back'; cancelBtn.onclick = () => { app.go('editor'); };
+      pct.textContent = '!'; cancelBtn.style.display = '';
     }
+  }
+
+  /** Cross button (and Android back): ask first while exporting, then stop. */
+  async function closeScreen() {
+    if (finished) { app.go('home'); return; }
+    if (running) {
+      if (!(await confirmDialog('Stop export?', 'The video will not be saved if you stop now.', 'Stop'))) return;
+      await cancel();
+      return;
+    }
+    app.go('editor');
   }
 
   async function cancel() {
@@ -88,7 +100,7 @@ export function exportScreen() {
   }
 
   function finish(uri: string) {
-    running = false;
+    running = false; finished = true;
     runBox.style.display = 'none';
     doneBox.style.display = '';
     doneBox.replaceChildren(
@@ -99,9 +111,10 @@ export function exportScreen() {
     LocalNotifications.schedule({ notifications: [{ id: 1, title: 'Editorr', body: 'Your video is ready in the gallery.' }] }).catch(() => {});
   }
 
-  const el = h('div', { class: 'screen' }, h('div', { class: 'topbar' }, h('h1', {}, 'Export')), h('div', { class: 'content' }, runBox, doneBox));
+  const el = h('div', { class: 'screen' }, h('div', { class: 'topbar' }, iconButton('close', 'Cancel export', closeScreen, 'plain')), h('div', { class: 'content' }, runBox, doneBox));
   // Exporting begins as soon as the screen opens, but only after it has painted and the editor is torn down.
   // Starting in the same frame made the UI stutter while the encoder spun up.
   requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(start, 350)));
+  app.onBack = () => { void closeScreen(); return true; };
   return { el };
 }

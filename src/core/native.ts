@@ -103,8 +103,9 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
   return {
     hostUri, constUri,
     fps, bitrate: Math.round(mbps * 1_000_000),
-    offsetMs: p.offsetMs,
-    durationMs: p.durationMs,
+    // whole numbers only: the native side reads these as integers
+    offsetMs: Math.round(p.offsetMs || 0),
+    durationMs: Math.round(p.durationMs || Math.max(0, ...p.segments.map((s) => s.endMs))),
     height,
     outW: w, outH: h,
     cropHost: p.cropHost, cropConst: p.cropConst,
@@ -115,7 +116,7 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     gain: effectiveGain(p, p.mainAudio),
     // sorted; parts removed by silence cut are simply not in this list
     segments: [...p.segments].sort((a, b) => a.startMs - b.startMs).map((s) => ({
-      startMs: s.startMs, endMs: s.endMs, style: s.style, main: s.main, corner: s.corner, size: s.size,
+      startMs: Math.round(s.startMs), endMs: Math.round(s.endMs), style: s.style, main: s.main, corner: s.corner, size: s.size,
     })),
   };
 }

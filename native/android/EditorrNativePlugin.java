@@ -1088,8 +1088,9 @@ public class EditorrNativePlugin extends Plugin {
         try {
             final String hostUri = call.getString("hostUri");
             final String constUri = call.getString("constUri");
-            final long offsetMs = call.getLong("offsetMs", 0L);
-            final long durationMs = call.getLong("durationMs", 0L);
+            // call.getLong() silently returns the default for non-integer JSON numbers (Double); optLong accepts any number.
+            final long offsetMs = call.getData().optLong("offsetMs", 0L);
+            long durationRaw = call.getData().optLong("durationMs", 0L);
             final int shortSide = call.getInt("height", 720);
             final int outW = call.getInt("outW", (shortSide * 16 / 9) / 2 * 2);
             final int outH = call.getInt("outH", shortSide);
@@ -1106,14 +1107,17 @@ public class EditorrNativePlugin extends Plugin {
             final float gain = (float) Math.max(0.0, Math.min(10.0, call.getDouble("gain", 1.0)));
             final List<Seg> segs = new ArrayList<>();
             JSArray arr = call.getArray("segments");
-            for (int i = 0; i < arr.length(); i++) {
+            for (int i = 0; arr != null && i < arr.length(); i++) {
                 JSONObject o = arr.getJSONObject(i);
                 Seg s = new Seg();
-                s.start = o.getLong("startMs"); s.end = o.getLong("endMs");
-                s.style = o.getString("style"); s.main = o.getString("main");
-                s.corner = o.getString("corner"); s.size = o.getString("size");
+                s.start = Math.round(o.getDouble("startMs")); s.end = Math.round(o.getDouble("endMs"));
+                s.style = o.optString("style", "one"); s.main = o.optString("main", "host");
+                s.corner = o.optString("corner", "br"); s.size = o.optString("size", "M");
                 segs.add(s);
             }
+            // A missing/zero duration must never cut everything: fall back to the end of the last segment.
+            if (durationRaw <= 0) { for (Seg s : segs) durationRaw = Math.max(durationRaw, s.end); }
+            final long durationMs = durationRaw;
             cancelProxyJobs();
             exportHandler().post(() ->
                     startTransformer(call, hostUri, constUri, cleanAudioUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate));
@@ -1140,7 +1144,17 @@ public class EditorrNativePlugin extends Plugin {
                 if (last != null && a - last.b <= 1) last.b = Math.max(last.b, b);
                 else { Range r = new Range(); r.a = a; r.b = b; ranges.add(r); }
             }
-            if (ranges.isEmpty()) { call.reject("Nothing to export. Every part was cut."); return; }
+            if (ranges.isEmpty() && segs.isEmpty() && durationMs - hostStart >= 100) {
+                // no layout segments arrived: export the whole overlap as one part
+                Range r = new Range(); r.a = hostStart; r.b = durationMs; ranges.add(r);
+                Seg whole = new Seg(); whole.start = hostStart; whole.end = durationMs;
+                whole.style = "one"; whole.main = hostAudio ? "host" : "constant"; whole.corner = "br"; whole.size = "M";
+                segs.add(whole);
+            }
+            if (ranges.isEmpty()) {
+                call.reject("Nothing to export. Every part was cut. (segments=" + segs.size() + ", length=" + durationMs + " ms, offset=" + offsetMs + " ms)");
+                return;
+            }
 
             // composition start of each kept part, so the layout lookup can map output time back to Host time
             final long[] cumStart = new long[ranges.size()];
