@@ -15,8 +15,8 @@ import {
   coverage, defaultSegments, deleteSegment, dropSlivers, fitSegmentsToDuration, intersectRanges, isKept, keptMs, mergeWithPrev,
   moveBoundary, nextKeptStart, overlapDuration, segmentAt, splitAt, subtractRanges, updateSegment, type Range,
 } from '../core/timeline';
-import { Aspect, ASPECTS, aspectValue, Corner, CropRatio, CropState, LayoutStyle, NO_CROP, PopupSize, RES_STEPS, resLabel, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
-import { actionSheet, confirmDialog, fmtClock, h, ICON, icon, iconButton, spinner, toast } from '../ui';
+import { Aspect, ASPECTS, aspectValue, Corner, CropRatio, CropState, LayoutStyle, NO_CROP, PopupSize, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
+import { confirmDialog, fmtClock, h, ICON, icon, iconButton, spinner, toast } from '../ui';
 
 type Panel = 'none' | 'ratio' | 'crop' | 'silence' | 'sync' | 'layout' | 'main' | 'audio';
 
@@ -344,7 +344,7 @@ export function editorScreen() {
     let buffer = audioBuffers.get(pcm);
     if (!buffer) {
       buffer = actx.createBuffer(1, pcm.length, SAMPLE_RATE);
-      buffer.copyToChannel(pcm, 0);
+      buffer.getChannelData(0).set(pcm);
       audioBuffers.set(pcm, buffer);
     }
     const source = actx.createBufferSource();
@@ -1563,15 +1563,10 @@ export function editorScreen() {
   }
 
   // ======================================================================= Screen
-  const resChip = h('button', { class: 'reschip', 'aria-label': 'Export resolution', onclick: () => {
-    actionSheet(RES_STEPS.map((r) => ({ label: `${resLabel(r)}${app.settings.resolution === r ? '  (selected)' : ''}`, run: () => { app.settings.resolution = r; saveSettings(app.settings); resChip.firstChild!.textContent = resLabel(r); } })));
-  } }, h('span', {}, resLabel(app.settings.resolution)), icon('chevD', 14));
-
   const el = h('div', { class: 'screen editor' },
     h('div', { class: 'edtop' },
       iconButton('close', 'Close', async () => { setPlaying(false); await saveProject(p); app.go('home'); }, 'plain'),
       h('div', { class: 'grow' }),
-      resChip,
       h('button', { class: 'exportbtn', 'aria-label': 'Export', onclick: async () => {
         if (!syncReady || !p.segments.length) { toast('Wait until syncing is done.'); return; }
         setPlaying(false); await saveProject(p); app.go('export');
