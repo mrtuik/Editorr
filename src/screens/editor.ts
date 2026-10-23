@@ -84,7 +84,7 @@ export function editorScreen() {
     stage.style.width = `${Math.floor(w)}px`;
     stage.style.height = `${Math.floor(w / ar)}px`;
   }
-  const ro = new ResizeObserver(() => fitStage());
+  const ro = new ResizeObserver(() => { fitStage(); layoutCrop(); });
   ro.observe(preview);
 
   /** Crop = zoom + move inside the frame. Same math is used by the exporter. */
@@ -819,13 +819,14 @@ export function editorScreen() {
     if (n !== 'sync') selClip = null;
     if (n === 'crop') cropRole = segmentAt(p.segments, playMs)?.main ?? 'host';
     if (n === 'silence') { if (!needAudio()) { panel = 'none'; return; } runDetect(); }
-    stage.classList.toggle('cropping', n === 'crop');
+    cropView.classList.toggle('on', n === 'crop');
     renderPanel(); draw(); tick();
+    if (n === 'crop') requestAnimationFrame(layoutCrop);
   }
   function closePanel() {
     panel = 'none'; pendingCuts = []; snapMs = null;
     if (selClip === 'constant') selClip = null;
-    stage.classList.remove('cropping'); guideV.classList.remove('on'); guideH.classList.remove('on');
+    cropView.classList.remove('on'); guideV.classList.remove('on'); guideH.classList.remove('on');
     renderPanel(); renderBar(); draw();
   }
 
@@ -930,15 +931,11 @@ export function editorScreen() {
         h('div', { class: 'pinfo' }, 'Applies to the preview and the exported video.'));
     } else if (panel === 'crop') {
       const c: CropState = cropRole === 'host' ? p.cropHost : p.cropConst;
-      const zoom = slider('Zoom', 1, 3, 0.01, c.zoom, (v) => `${v.toFixed(2)}x`, (v) => { c.zoom = v; xs.input.disabled = ys.input.disabled = v <= 1.001; applyCrop(cropRole); scheduleSave(); });
-      const xs = slider('Left / right', -1, 1, 0.01, c.x, (v) => v.toFixed(2), (v) => { c.x = v; applyCrop(cropRole); scheduleSave(); }, c.zoom <= 1.001);
-      const ys = slider('Up / down', -1, 1, 0.01, c.y, (v) => v.toFixed(2), (v) => { c.y = v; applyCrop(cropRole); scheduleSave(); }, c.zoom <= 1.001);
-      const reset = h('button', { class: 'chip', onclick: () => { Object.assign(c, NO_CROP); applyCrop(cropRole); scheduleSave(); renderPanel(); } }, 'Reset');
+      const reset = h('button', { class: 'chip', onclick: () => { Object.assign(c, NO_CROP); applyCrop(cropRole); positionCropFrame(); scheduleSave(); } }, 'Reset');
       panelEl.replaceChildren(pHead('Crop'),
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Video'),
-          chipRow<Role>([['host', 'Host'], ['constant', 'Constant']], cropRole, (v) => { cropRole = v; renderPanel(); }), reset),
-        h('div', { class: 'pinfo' }, 'Pinch the picture to zoom, drag it to move. Cyan lines show the center.'),
-        zoom.row, xs.row, ys.row);
+          chipRow<Role>([['host', 'Host'], ['constant', 'Constant']], cropRole, (v) => { cropRole = v; renderPanel(); layoutCrop(); }), reset),
+        h('div', { class: 'pinfo' }, 'Drag the corners or pinch to crop. Drag inside the frame to move it.'));
     } else {
       const total = pendingCuts.reduce((a, r) => a + (r.endMs - r.startMs), 0);
       const info = pendingCuts.length
@@ -957,45 +954,144 @@ export function editorScreen() {
     }
   }
 
-  // ----- crop by touch on the preview: drag to move, pinch to zoom, cyan center guides -----
-  const stagePtrs = new Map<number, Ptr>();
-  let cropPinch = { d: 0, z: 1 };
-  stage.addEventListener('pointerdown', (e) => {
+  // ----- CapCut-style crop: the picture is shown big, a frame with corner handles picks the part that is kept -----
+  // The frame keeps the shape of the video's box in the layout. Position/size are stored as CropState (zoom, x, y),
+  // the same numbers the exporter uses.
+  const cropCanvas = h('canvas', { class: 'cropcanvas' }) as HTMLCanvasElement;
+  const cropGrid = h('div', { class: 'grid' });
+  const cropFrame = h('div', { class: 'cropframe' }, cropGrid,
+    ...(['tl', 'tr', 'bl', 'br'] as const).map((k) => h('div', { class: `crh ${k}`, 'data-c': k })));
+  const cropView = h('div', { class: 'cropview' }, cropCanvas, cropFrame);
+  preview.append(cropView);
+  let cm = { x: 0, y: 0, w: 0, h: 0 }; // the big picture area inside the preview
+  let cropAr = 16 / 9;
+
+  function layoutCrop() {
     if (panel !== 'crop') return;
-    stage.setPointerCapture(e.pointerId);
-    stagePtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (stagePtrs.size === 2) {
-      const [a, b] = [...stagePtrs.values()];
-      cropPinch = { d: Math.hypot(a.x - b.x, a.y - b.y), z: (cropRole === 'host' ? p.cropHost : p.cropConst).zoom };
-    }
-  });
-  stage.addEventListener('pointermove', (e) => {
-    if (panel !== 'crop' || !stagePtrs.has(e.pointerId)) return;
-    const prev = stagePtrs.get(e.pointerId)!;
-    stagePtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    const c = cropRole === 'host' ? p.cropHost : p.cropConst;
+    const cw = preview.clientWidth, ch = preview.clientHeight;
+    if (!cw || !ch) return;
     const cell = cropRole === 'host' ? hostCell : constCell;
-    if (stagePtrs.size === 2) {
-      const [a, b] = [...stagePtrs.values()];
-      const d = Math.hypot(a.x - b.x, a.y - b.y);
-      c.zoom = Math.max(1, Math.min(3, cropPinch.z * (d / (cropPinch.d || 1))));
-      if (c.zoom < 1.001) { c.x = 0; c.y = 0; }
-    } else if (c.zoom > 1.001 && cell.clientWidth && cell.clientHeight) {
-      c.x = Math.max(-1, Math.min(1, c.x + (e.clientX - prev.x) / ((c.zoom - 1) * 0.5 * cell.clientWidth)));
-      c.y = Math.max(-1, Math.min(1, c.y + (e.clientY - prev.y) / ((c.zoom - 1) * 0.5 * cell.clientHeight)));
-      if (Math.abs(c.x) < 0.04) c.x = 0;
-      if (Math.abs(c.y) < 0.04) c.y = 0;
-    }
-    guideV.classList.toggle('on', c.zoom > 1.001 && c.x === 0);
-    guideH.classList.toggle('on', c.zoom > 1.001 && c.y === 0);
-    applyCrop(cropRole); scheduleSave();
-  });
-  const stageEnd = (e: PointerEvent) => {
-    stagePtrs.delete(e.pointerId);
-    if (!stagePtrs.size) { guideV.classList.remove('on'); guideH.classList.remove('on'); if (panel === 'crop') renderPanel(); }
+    cropAr = cell.clientWidth > 0 && cell.clientHeight > 0 ? cell.clientWidth / cell.clientHeight : aspectValue(p.aspect);
+    const pad = 24;
+    const w = Math.max(40, Math.min(cw - 2 * pad, (ch - 2 * pad) * cropAr));
+    const hh = w / cropAr;
+    cm = { x: (cw - w) / 2, y: (ch - hh) / 2, w, h: hh };
+    const dpr = window.devicePixelRatio || 1;
+    cropCanvas.width = Math.round(w * dpr); cropCanvas.height = Math.round(hh * dpr);
+    cropCanvas.style.cssText = `left:${cm.x}px;top:${cm.y}px;width:${w}px;height:${hh}px`;
+    drawCropCanvas(); positionCropFrame();
+  }
+  /** The video as the layout box shows it with no crop (cover), drawn big. */
+  function drawCropCanvas() {
+    const ctx = cropCanvas.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
+    const v = vid(cropRole);
+    const vw = v.videoWidth, vh = v.videoHeight;
+    if (!vw || !vh) return;
+    let sx = 0, sy = 0, sw = vw, sh = vh;
+    if (vw / vh > cropAr) { sw = vh * cropAr; sx = (vw - sw) / 2; } else { sh = vw / cropAr; sy = (vh - sh) / 2; }
+    try { ctx.drawImage(v, sx, sy, sw, sh, 0, 0, cropCanvas.width, cropCanvas.height); } catch { /* frame not decoded yet */ }
+  }
+  const cropState = () => (cropRole === 'host' ? p.cropHost : p.cropConst);
+  const frameRect = () => {
+    const c = cropState(); const z = Math.max(1, c.zoom);
+    const w = cm.w / z, hh = cm.h / z;
+    const cx = cm.x + cm.w / 2 - c.x * (cm.w - w) / 2, cy = cm.y + cm.h / 2 - c.y * (cm.h - hh) / 2;
+    return { l: cx - w / 2, t: cy - hh / 2, w, h: hh };
   };
-  stage.addEventListener('pointerup', stageEnd);
-  stage.addEventListener('pointercancel', stageEnd);
+  function positionCropFrame() {
+    const r = frameRect();
+    cropFrame.style.cssText = `left:${r.l}px;top:${r.t}px;width:${r.w}px;height:${r.h}px`;
+  }
+  /** Store a frame (left, top, width) as CropState, with limits and snapping to the center. */
+  function setFrame(l: number, t: number, w: number, snap = true) {
+    w = Math.max(cm.w / 3, Math.min(cm.w, w));
+    const hh = w / cropAr;
+    l = Math.max(cm.x, Math.min(cm.x + cm.w - w, l));
+    t = Math.max(cm.y, Math.min(cm.y + cm.h - hh, t));
+    const ux = l + w / 2 - (cm.x + cm.w / 2), uy = t + hh / 2 - (cm.y + cm.h / 2);
+    const rx = (cm.w - w) / 2, ry = (cm.h - hh) / 2;
+    const c = cropState();
+    c.zoom = cm.w / w;
+    if (c.zoom < 1.002) { c.zoom = 1; c.x = 0; c.y = 0; }
+    else {
+      c.x = rx > 0.5 ? Math.max(-1, Math.min(1, -ux / rx)) : 0;
+      c.y = ry > 0.5 ? Math.max(-1, Math.min(1, -uy / ry)) : 0;
+      if (snap && Math.abs(ux) < 5) c.x = 0;
+      if (snap && Math.abs(uy) < 5) c.y = 0;
+    }
+    guideV.classList.toggle('on', c.zoom > 1 && c.x === 0);
+    guideH.classList.toggle('on', c.zoom > 1 && c.y === 0);
+    applyCrop(cropRole); positionCropFrame(); scheduleSave();
+  }
+
+  type CropDrag = { mode: 'move' | 'resize'; corner?: string; ax?: number; ay?: number; dx?: number; dy?: number };
+  const cropPtrs = new Map<number, Ptr>();
+  let cropDrag: CropDrag | null = null;
+  let pinchStart = { d: 0, w: 0 };
+  cropView.addEventListener('pointerdown', (e) => {
+    if (panel !== 'crop') return;
+    cropView.setPointerCapture(e.pointerId);
+    const rect = cropView.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    cropPtrs.set(e.pointerId, { x: px, y: py });
+    cropGrid.classList.add('on');
+    const r = frameRect();
+    if (cropPtrs.size === 2) {
+      const [a, b] = [...cropPtrs.values()];
+      pinchStart = { d: Math.hypot(a.x - b.x, a.y - b.y), w: r.w };
+      cropDrag = null;
+      return;
+    }
+    const corner = (e.target as HTMLElement).dataset?.c;
+    if (corner) {
+      const right = corner === 'tr' || corner === 'br', bottom = corner === 'bl' || corner === 'br';
+      cropDrag = { mode: 'resize', corner, ax: right ? r.l : r.l + r.w, ay: bottom ? r.t : r.t + r.h };
+    } else {
+      cropDrag = { mode: 'move', dx: px - r.l, dy: py - r.t };
+    }
+  });
+  cropView.addEventListener('pointermove', (e) => {
+    if (panel !== 'crop' || !cropPtrs.has(e.pointerId)) return;
+    const rect = cropView.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    cropPtrs.set(e.pointerId, { x: px, y: py });
+    const r = frameRect();
+    if (cropPtrs.size === 2) {
+      const [a, b] = [...cropPtrs.values()];
+      const w = pinchStart.w * (Math.hypot(a.x - b.x, a.y - b.y) / (pinchStart.d || 1));
+      const cx = r.l + r.w / 2, cy = r.t + r.h / 2;
+      setFrame(cx - w / 2, cy - w / cropAr / 2, w);
+    } else if (cropDrag?.mode === 'move') {
+      setFrame(px - cropDrag.dx!, py - cropDrag.dy!, r.w);
+    } else if (cropDrag?.mode === 'resize') {
+      const { ax, ay, corner } = cropDrag as Required<CropDrag>;
+      const dirX = corner.endsWith('r') ? 1 : -1, dirY = corner.startsWith('b') ? 1 : -1;
+      const spaceX = dirX > 0 ? cm.x + cm.w - ax : ax - cm.x;
+      const spaceY = dirY > 0 ? cm.y + cm.h - ay : ay - cm.y;
+      let w = Math.max(Math.abs(px - ax), Math.abs(py - ay) * cropAr);
+      w = Math.max(cm.w / 3, Math.min(w, spaceX, spaceY * cropAr));
+      const hh = w / cropAr;
+      setFrame(dirX > 0 ? ax : ax - w, dirY > 0 ? ay : ay - hh, w, false);
+    }
+  });
+  const cropEnd = (e: PointerEvent) => {
+    cropPtrs.delete(e.pointerId);
+    if (cropPtrs.size === 1) { // one finger left after a pinch: carry on as a move
+      const [pt] = [...cropPtrs.values()]; const r = frameRect();
+      cropDrag = { mode: 'move', dx: pt.x - r.l, dy: pt.y - r.t };
+    } else if (!cropPtrs.size) {
+      cropDrag = null; cropGrid.classList.remove('on');
+      guideV.classList.remove('on'); guideH.classList.remove('on');
+    }
+  };
+  cropView.addEventListener('pointerup', cropEnd);
+  cropView.addEventListener('pointercancel', cropEnd);
+  hostV.addEventListener('seeked', () => { if (panel === 'crop' && cropRole === 'host') drawCropCanvas(); });
+  constV.addEventListener('seeked', () => { if (panel === 'crop' && cropRole === 'constant') drawCropCanvas(); });
+  hostV.addEventListener('loadeddata', () => { if (panel === 'crop' && cropRole === 'host') drawCropCanvas(); });
+  constV.addEventListener('loadeddata', () => { if (panel === 'crop' && cropRole === 'constant') drawCropCanvas(); });
 
   function scheduleSave() { clearTimeout(saveTimer); saveTimer = window.setTimeout(() => saveProject(p), 600); }
 

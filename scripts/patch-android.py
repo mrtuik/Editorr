@@ -106,3 +106,13 @@ if "signingConfigs.editorr" not in txt:
     app_gradle.write_text(txt)
 
 print("Editorr: android project patched")
+
+# 5. App icon (black, no card/oval; adaptive + square + round). Replaces Capacitor's default icons.
+icon_res = ROOT / "native/android/res"
+if icon_res.exists():
+    dest = ANDROID / "app/src/main/res"
+    for d in dest.glob("mipmap-*"):
+        for f in d.glob("ic_launcher*"):
+            f.unlink()
+    shutil.copytree(icon_res, dest, dirs_exist_ok=True)
+    print("icons installed")
