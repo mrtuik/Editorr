@@ -73,6 +73,9 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Remove stale v8 screens
+        run: rm -f src/screens/sync.ts src/screens/analyze.ts
+
       - name: TypeScript check
         run: npm run typecheck
 

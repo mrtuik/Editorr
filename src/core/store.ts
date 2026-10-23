@@ -181,7 +181,6 @@ export class History {
     return next;
   }
   reset(): void { this.past = []; this.future = []; }
-  reset(): void { this.past = []; this.future = []; }
   get canUndo() { return this.past.length > 0; }
   get canRedo() { return this.future.length > 0; }
 }
