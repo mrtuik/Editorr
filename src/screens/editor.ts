@@ -16,7 +16,7 @@ import {
 import { Aspect, ASPECTS, aspectValue, Corner, CropState, LayoutStyle, NO_CROP, PopupSize, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
 import { actionSheet, confirmDialog, fmtClock, h, ICON, icon, iconButton, progressBar, spinner, toast } from '../ui';
 
-type Panel = 'none' | 'ratio' | 'crop' | 'silence' | 'sync';
+type Panel = 'none' | 'ratio' | 'crop' | 'silence' | 'sync' | 'layout' | 'main' | 'audio';
 
 // ---- timeline geometry (CSS px) ----
 const G = 46;            // left column with the lane icons (like CapCut)
@@ -604,7 +604,7 @@ export function editorScreen() {
     if (lane === 'lay' || lane === 'ruler' || lane === 'none') {
       const s = lane === 'lay' ? hitSegment(x) : undefined;
       if (s) { if (panel !== 'none') closePanel(); selectSeg(s.id); tick(); }
-      else if (lane !== 'ruler') { selClip = null; draw(); }
+      else if (lane !== 'ruler') { selClip = null; selectedId = null; renderBar(); draw(); }
       return;
     }
     // a video clip: tap selects it; tapping the green clip opens Sync
@@ -674,8 +674,6 @@ export function editorScreen() {
   }
 
   // ======================================================================= Bottom toolbar (icon + label)
-  type Bar = 'root' | 'layout' | 'main' | 'audio';
-  let bar: Bar = 'root';
   const toolbar = h('div', { class: 'toolbar' });
   function tool(name: keyof typeof ICON, text: string, run: () => void, o: { sel?: boolean; cls?: string; ring?: string; disabled?: boolean } = {}) {
     const b = h('button', { class: 'tool' + (o.sel ? ' sel' : '') + (o.cls ? ' ' + o.cls : ''), 'aria-label': text, disabled: !!o.disabled, onclick: run },
@@ -684,18 +682,19 @@ export function editorScreen() {
     return b;
   }
   const sepEl = () => h('div', { class: 'sep' });
-  const backTool = () => h('button', { class: 'tool back', 'aria-label': 'Back', onclick: () => { bar = 'root'; renderBar(); } }, icon('back', 22));
+  const backTool = () => h('button', { class: 'tool back', 'aria-label': 'Back', onclick: () => { selectedId = null; selClip = null; renderBar(); draw(); tick(); } }, icon('back', 20));
+  /** The segment the layout tools act on: the selected one, else the one under the playhead. */
+  const target = (): Segment | undefined => selected() ?? segmentAt(p.segments, playMs);
 
   function selected(): Segment | undefined { return p.segments.find((s) => s.id === selectedId); }
   function selectSeg(id: string) { selectedId = id; selClip = null; renderBar(); draw(); }
 
   function setStyle(st: LayoutStyle) {
-    const s = selected() ?? segmentAt(p.segments, playMs);
+    const s = target();
     if (!s) return;
-    selectedId = s.id;
-    edit(updateSegment(p.segments, s.id, { style: st })); tick();
+    edit(updateSegment(p.segments, s.id, { style: st })); if (panel !== 'none') renderPanel(); tick();
   }
-  function patch(pt: Partial<Segment>) { const s = selected(); if (s) edit(updateSegment(p.segments, s.id, pt)); }
+  function patch(pt: Partial<Segment>) { const s = target(); if (s) { edit(updateSegment(p.segments, s.id, pt)); if (panel !== 'none') renderPanel(); } }
 
   const needAudio = (): boolean => {
     if (audioReady()) return true;
@@ -761,49 +760,37 @@ export function editorScreen() {
   }
 
   function renderBar() {
-    const s = selected();
     const rows: Node[] = [];
-    if (bar === 'root') {
+    const hasSel = !!selected() || selClip === 'host';
+    if (!hasSel) {
+      // nothing selected: the main tools, like CapCut's first row
       rows.push(
-        tool('sync', 'Sync', () => { selClip = 'constant'; selectedId = null; openPanel('sync'); }, { cls: 'accent' }),
-        tool('wand', 'Auto switch', () => doAutoSwitch(false), { cls: 'accent' }),
-        tool('lips', 'Lips scan', doSmartSwitch, { cls: 'accent' }),
-        sepEl(),
-        tool('scissors', 'Split', doSplit),
-        tool('layout', 'Layout', () => { bar = 'layout'; renderBar(); }),
-        tool('user', 'On screen', () => { bar = 'main'; renderBar(); }),
-        tool('volume', 'Audio', () => { bar = 'audio'; renderBar(); }),
+        tool('sync', 'Sync', () => { selClip = 'constant'; selectedId = null; openPanel('sync'); }),
+        tool('wand', 'Auto switch', () => doAutoSwitch(false)),
+        tool('lips', 'Lips scan', doSmartSwitch),
         tool('silence', 'Silence', () => openPanel('silence')),
+        tool('layout', 'Layout', () => openPanel('layout')),
+        tool('user', 'On screen', () => openPanel('main')),
+        tool('volume', 'Audio', () => openPanel('audio')),
         tool('crop', 'Crop', () => openPanel('crop')),
         tool('ratio', 'Ratio', () => openPanel('ratio')),
-        tool('merge', 'Merge', doMerge),
-        tool('trash', 'Delete', doDelete),
-        tool('swap', 'Swap', doSwap),
-        sepEl(),
         tool('zoomOut', 'Zoom out', () => { pxPerSec = Math.max(minPx(), pxPerSec / 1.5); draw(); }),
         tool('zoomIn', 'Zoom in', () => { pxPerSec = Math.min(300, pxPerSec * 1.5); draw(); }),
       );
-    } else if (bar === 'layout') {
-      rows.push(backTool());
-      (['one', 'side', 'updown', 'popup'] as LayoutStyle[]).forEach((st) => rows.push(tool(st, STYLE_LABEL[st], () => setStyle(st), { sel: s?.style === st })));
-      if (s?.style === 'popup') {
-        rows.push(sepEl());
-        (['tl', 'tr', 'bl', 'br'] as Corner[]).forEach((c) => rows.push(tool(({ tl: 'cTL', tr: 'cTR', bl: 'cBL', br: 'cBR' } as const)[c], ({ tl: 'Top left', tr: 'Top right', bl: 'Bottom left', br: 'Bottom right' })[c], () => patch({ corner: c }), { sel: s.corner === c })));
-        rows.push(sepEl());
-        (['S', 'M', 'L'] as PopupSize[]).forEach((z) => rows.push(tool(({ S: 'sizeS', M: 'sizeM', L: 'sizeL' } as const)[z], `Size ${z}`, () => patch({ size: z }), { sel: s.size === z })));
-      }
-    } else if (bar === 'main') {
-      rows.push(backTool(),
-        tool('user', 'Host', () => patch({ main: 'host' as Role }), { sel: s?.main === 'host', cls: 'person host', disabled: !s || s.style === 'side' || s.style === 'updown' }),
-        tool('user', 'Constant', () => patch({ main: 'constant' as Role }), { sel: s?.main === 'constant', cls: 'person const', disabled: !s || s.style === 'side' || s.style === 'updown' }),
-        sepEl(),
-        tool('swap', 'Swap', doSwap));
     } else {
+      // a clip is selected: the bar swaps to clip tools with a back chevron (CapCut)
       rows.push(backTool(),
-        tool('volume', 'Host mic', () => setAudio('host'), { sel: p.mainAudio === 'host', ring: '#FFFFFF' }),
-        tool('volume', 'Constant mic', () => setAudio('constant'), { sel: p.mainAudio === 'constant', ring: '#4ade80' }));
+        tool('scissors', 'Split', doSplit),
+        tool('layout', 'Layout', () => openPanel('layout')),
+        tool('user', 'On screen', () => openPanel('main')),
+        tool('volume', 'Audio', () => openPanel('audio')),
+        tool('crop', 'Crop', () => openPanel('crop')),
+        tool('merge', 'Merge', doMerge),
+        tool('trash', 'Delete', doDelete),
+        tool('swap', 'Swap', doSwap));
     }
     toolbar.replaceChildren(...rows);
+    toolbar.scrollLeft = 0;
   }
 
   // ======================================================================= Panels: sync, ratio, crop, silence
@@ -830,9 +817,16 @@ export function editorScreen() {
     renderPanel(); renderBar(); draw();
   }
 
-  const pHead = (title: string) => h('div', { class: 'phead' },
+  /** CapCut footer: thin divider, centered title, check on the right. */
+  const pFoot = (title: string) => h('div', { class: 'pfoot' },
     h('div', { class: 'ptitle' }, title),
-    h('button', { class: 'btn iconbtn done', 'aria-label': 'Done', title: 'Done', onclick: closePanel }, icon('check', 20)));
+    h('button', { class: 'pcheck', 'aria-label': 'Done', title: 'Done', onclick: closePanel }, icon('check', 28)));
+  const setPanel = (title: string, ...body: Node[]) => panelEl.replaceChildren(h('div', { class: 'pbody' }, ...body), pFoot(title));
+  /** CapCut tile: rounded square with an icon, label under it. Selected = white outline. */
+  const ptile = (inner: Node, label: string, run: () => void, o: { sel?: boolean; disabled?: boolean } = {}) =>
+    h('button', { class: 'ptile' + (o.sel ? ' sel' : ''), disabled: !!o.disabled, 'aria-label': label, onclick: run },
+      h('span', { class: 'pbox' }, inner), h('span', { class: 'plab' }, label));
+  const pstrip = (...tiles: Node[]) => h('div', { class: 'pstrip' }, ...tiles);
 
   const secText = (ms: number) => (ms >= 60000 ? fmtClock(ms) : `${(ms / 1000).toFixed(1)} s`);
 
@@ -907,10 +901,11 @@ export function editorScreen() {
     panelEl.style.display = panel === 'none' ? 'none' : '';
     if (panel === 'none') return;
     const s = app.settings;
+    const seg = target();
 
     if (panel === 'sync') {
       const nudges: [number, string][] = [[-1000, '-1s'], [-100, '-100ms'], [-10, '-10ms'], [10, '+10ms'], [100, '+100ms'], [1000, '+1s']];
-      panelEl.replaceChildren(pHead('Sync'),
+      setPanel('Sync',
         h('div', { class: 'prow' },
           h('div', { class: 'plabel' }, 'Green clip'),
           h('b', { class: 'shiftval' }, shiftText()),
@@ -920,19 +915,35 @@ export function editorScreen() {
         h('div', { class: 'chips nudges2' }, ...nudges.map(([d, l]) => h('button', { class: 'chip', onclick: () => nudge(d) }, l))),
         h('div', { class: 'pinfo' }, 'Drag the green clip on the timeline until its waves line up with the white ones. + moves it later.'));
     } else if (panel === 'ratio') {
-      const chips = (Object.keys(ASPECTS) as Aspect[]).map((a) => {
-        const [aw, ah] = ASPECTS[a]; const k = 15 / Math.max(aw, ah);
-        return h('button', {
-          class: 'chip' + (p.aspect === a ? ' on' : ''), 'aria-label': `Ratio ${a}`,
-          onclick: () => { p.aspect = a; fitStage(); applyLayout(segmentAt(p.segments, playMs)); scheduleSave(); renderPanel(); tick(); },
-        }, h('i', { style: `width:${Math.round(aw * k)}px;height:${Math.round(ah * k)}px` }), a);
+      const tiles = (Object.keys(ASPECTS) as Aspect[]).map((a) => {
+        const [aw, ah] = ASPECTS[a]; const k = 20 / Math.max(aw, ah);
+        return ptile(h('i', { class: 'rbox', style: `width:${Math.round(aw * k)}px;height:${Math.round(ah * k)}px` }), a,
+          () => { p.aspect = a; fitStage(); applyLayout(segmentAt(p.segments, playMs)); scheduleSave(); renderPanel(); tick(); }, { sel: p.aspect === a });
       });
-      panelEl.replaceChildren(pHead('Aspect ratio'), h('div', { class: 'chips' }, ...chips),
-        h('div', { class: 'pinfo' }, 'Applies to the preview and the exported video.'));
+      setPanel('Ratio', pstrip(...tiles));
+    } else if (panel === 'layout') {
+      const tiles: Node[] = (['one', 'side', 'updown', 'popup'] as LayoutStyle[]).map((st) => ptile(icon(st, 26), STYLE_LABEL[st], () => setStyle(st), { sel: seg?.style === st, disabled: !seg }));
+      if (seg?.style === 'popup') {
+        tiles.push(h('div', { class: 'psep' }));
+        (['tl', 'tr', 'bl', 'br'] as Corner[]).forEach((c) => tiles.push(ptile(icon(({ tl: 'cTL', tr: 'cTR', bl: 'cBL', br: 'cBR' } as const)[c], 26), ({ tl: 'Top left', tr: 'Top right', bl: 'Bottom left', br: 'Bottom right' })[c], () => patch({ corner: c }), { sel: seg.corner === c })));
+        tiles.push(h('div', { class: 'psep' }));
+        (['S', 'M', 'L'] as PopupSize[]).forEach((z) => tiles.push(ptile(icon(({ S: 'sizeS', M: 'sizeM', L: 'sizeL' } as const)[z], 26), `Size ${z}`, () => patch({ size: z }), { sel: seg.size === z })));
+      }
+      setPanel('Layout', pstrip(...tiles));
+    } else if (panel === 'main') {
+      const lock = !seg || seg.style === 'side' || seg.style === 'updown';
+      setPanel('On screen', pstrip(
+        ptile(icon('user', 26), 'Host', () => patch({ main: 'host' as Role }), { sel: seg?.main === 'host', disabled: lock }),
+        ptile(icon('user', 26), 'Constant', () => patch({ main: 'constant' as Role }), { sel: seg?.main === 'constant', disabled: lock }),
+        ptile(icon('swap', 26), 'Swap all', () => { doSwap(); renderPanel(); })));
+    } else if (panel === 'audio') {
+      setPanel('Audio', pstrip(
+        ptile(icon('volume', 26), 'Host mic', () => { setAudio('host'); renderPanel(); }, { sel: p.mainAudio === 'host' }),
+        ptile(icon('volume', 26), 'Constant mic', () => { setAudio('constant'); renderPanel(); }, { sel: p.mainAudio === 'constant' })));
     } else if (panel === 'crop') {
       const c: CropState = cropRole === 'host' ? p.cropHost : p.cropConst;
-      const reset = h('button', { class: 'chip', onclick: () => { Object.assign(c, NO_CROP); applyCrop(cropRole); positionCropFrame(); scheduleSave(); } }, 'Reset');
-      panelEl.replaceChildren(pHead('Crop'),
+      const reset = h('button', { class: 'chip', onclick: () => { Object.assign(c, NO_CROP); applyCrop(cropRole); positionCropFrame(); scheduleSave(); } }, icon('trash', 16), 'Reset');
+      setPanel('Crop',
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Video'),
           chipRow<Role>([['host', 'Host'], ['constant', 'Constant']], cropRole, (v) => { cropRole = v; renderPanel(); layoutCrop(); }), reset),
         h('div', { class: 'pinfo' }, 'Drag the corners or pinch to crop. Drag inside the frame to move it.'));
@@ -943,7 +954,7 @@ export function editorScreen() {
         : h('div', { class: 'pinfo' }, 'No silence this long. Try a shorter time or higher sensitivity.');
       const go = (pt: Partial<typeof s>) => { Object.assign(s, pt); saveSettings(s); runDetect(); renderPanel(); draw(); };
       const apply = h('button', { class: 'btn primary', disabled: !pendingCuts.length, onclick: applySilence }, pendingCuts.length ? `Cut ${pendingCuts.length} ${pendingCuts.length === 1 ? 'silence' : 'silences'}` : 'Nothing to cut');
-      panelEl.replaceChildren(pHead('Silence cut'), info,
+      setPanel('Silence cut', info,
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Both quiet for'),
           chipRow<number>([[300, '0.3 s'], [500, '0.5 s'], [1000, '1 s'], [1500, '1.5 s'], [2000, '2 s'], [3000, '3 s'], [5000, '5 s']], s.silenceMinMs, (v) => go({ silenceMinMs: v }))),
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Keep around'),
@@ -1208,7 +1219,7 @@ export function editorScreen() {
   app.onBack = () => {
     if (stage.classList.contains('full')) { exitFull(); return true; }
     if (panel !== 'none') { closePanel(); return true; }
-    if (bar !== 'root') { bar = 'root'; renderBar(); return true; }
+    if (selectedId || selClip) { selectedId = null; selClip = null; renderBar(); draw(); return true; }
     return false;
   };
 
@@ -1218,7 +1229,7 @@ export function editorScreen() {
   });
 
   requestAnimationFrame(() => {
-    selectedId = segmentAt(p.segments, 0)?.id ?? null;
+    selectedId = null;
     fitStage();
     renderBar(); updateBtns(); updatePlayState();
     refresh();

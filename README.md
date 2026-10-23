@@ -111,3 +111,10 @@ Your currently installed APK was signed with a random debug key, so install the 
 - Native: multi-select picker with copy progress, timeline thumbnails (MediaMetadataRetriever), concurrent preview copies, faster audio decode.
 
 Settings page: waiting for the CapCut reference screenshot.
+
+## v11 (CapCut tool design)
+
+- Bottom sheets now follow CapCut: a row of rounded icon tiles (selected = white outline), a thin divider, the title centered and a check on the right. Used by Ratio, Layout, On screen, Audio, Sync, Crop and Silence. The timeline stays visible above the sheet.
+- Tap a segment (layout row) or the Host clip: the toolbar swaps to clip tools (Split, Layout, On screen, Audio, Crop, Merge, Delete, Swap) with CapCut's grey back chevron on the left. Tap empty space or the chevron to go back to the main tools.
+- Main tools (nothing selected): Sync, Auto switch, Lips scan, Silence, Layout, On screen, Audio, Crop, Ratio, Zoom.
+- Nothing is selected when the editor opens (it used to pre-select the first segment).
