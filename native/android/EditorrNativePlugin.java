@@ -270,6 +270,20 @@ public class EditorrNativePlugin extends Plugin {
         return d;
     }
 
+    /** Decoded audio of each picked video. Kept (not in cache) so it is read only once, like the video itself. */
+    private File audioDir() {
+        File d = new File(getContext().getFilesDir(), "audio");
+        if (!d.exists()) d.mkdirs();
+        return d;
+    }
+
+    /** Preview copies and timeline pictures. Kept (not in cache) so Android does not wipe them and they are made only once. */
+    private File previewDir() {
+        File d = new File(getContext().getFilesDir(), "preview");
+        if (!d.exists()) d.mkdirs();
+        return d;
+    }
+
     /** Rebuildable files (audio PCM, preview copies, export temp). Safe to delete. */
     private File cacheDir() {
         File d = new File(getContext().getCacheDir(), "editorr");
@@ -298,10 +312,16 @@ public class EditorrNativePlugin extends Plugin {
         String name = video.getName();
         if (isInsideVideoDir(video)) video.delete();
         new File(cacheDir(), name + ".pcm16k").delete();
+        new File(audioDir(), name + ".pcm16k").delete();
+        new File(audioDir(), name + ".pcm16k.meta").delete();
         new File(cacheDir(), "proxy_" + name + ".mp4").delete();
         new File(cacheDir(), "proxy_" + name + ".mp4.tmp").delete();
-        File[] cached = cacheDir().listFiles();
-        if (cached != null) for (File c : cached) if (c.getName().startsWith("thumb_" + name + "_")) c.delete();
+        new File(previewDir(), "proxy_" + name + ".mp4").delete();
+        new File(previewDir(), "proxy_" + name + ".mp4.tmp").delete();
+        for (File dir : new File[] { cacheDir(), previewDir() }) {
+            File[] cached = dir.listFiles();
+            if (cached != null) for (File c : cached) if (c.getName().startsWith("thumb_" + name + "_")) c.delete();
+        }
     }
 
     private static String stripFileScheme(String p) {
@@ -361,7 +381,7 @@ public class EditorrNativePlugin extends Plugin {
     public void storageInfo(PluginCall call) {
         new Thread(() -> {
             JSObject o = new JSObject();
-            o.put("videosBytes", dirSize(videoDir()));
+            o.put("videosBytes", dirSize(videoDir()) + dirSize(audioDir()) + dirSize(previewDir()));
             o.put("cacheBytes", dirSize(cacheDir()));
             o.put("freeMb", new StatFs(getContext().getFilesDir().getAbsolutePath()).getAvailableBytes() / (1024 * 1024));
             call.resolve(o);
@@ -399,6 +419,26 @@ public class EditorrNativePlugin extends Plugin {
             MediaExtractor ex = null;
             MediaCodec codec = null;
             try {
+                // Already decoded before (same source file)? Reuse it: no "Reading audio" wait on every open.
+                File srcFile = new File(stripFileScheme(path));
+                File cachedPcm = new File(audioDir(), srcFile.getName() + ".pcm16k");
+                File cachedMeta = new File(audioDir(), srcFile.getName() + ".pcm16k.meta");
+                if (cachedPcm.exists() && cachedPcm.length() > 0 && cachedMeta.exists()) {
+                    try {
+                        String meta = new String(java.nio.file.Files.readAllBytes(cachedMeta.toPath()), "UTF-8").trim();
+                        if (meta.equals(String.valueOf(srcFile.length()))) {
+                            JSObject pe = new JSObject();
+                            pe.put("path", path);
+                            pe.put("percent", 100);
+                            notifyListeners("audioProgress", pe);
+                            JSObject hit = new JSObject();
+                            hit.put("pcmPath", cachedPcm.getAbsolutePath());
+                            hit.put("samples", cachedPcm.length() / 2);
+                            call.resolve(hit);
+                            return;
+                        }
+                    } catch (Exception ignored) { /* decode again */ }
+                }
                 ex = openSource(path);
                 int track = -1;
                 MediaFormat fmt = null;
@@ -414,8 +454,7 @@ public class EditorrNativePlugin extends Plugin {
                 codec.configure(fmt, null, null, 0);
                 codec.start();
 
-                File outFile = new File(getContext().getCacheDir(), "editorr/" + new File(path).getName() + ".pcm16k");
-                outFile.getParentFile().mkdirs();
+                File outFile = new File(audioDir(), new File(stripFileScheme(path)).getName() + ".pcm16k.tmp");
                 long samplesOut = 0;
                 long durUs = fmt.containsKey(MediaFormat.KEY_DURATION) ? fmt.getLong(MediaFormat.KEY_DURATION) : 0;
                 int lastPct = -10;
@@ -507,8 +546,13 @@ public class EditorrNativePlugin extends Plugin {
                     }
                     if (outBytes.position() > 0) fos.write(outBytes.array(), 0, outBytes.position());
                 }
+                File finalPcm = new File(audioDir(), new File(stripFileScheme(path)).getName() + ".pcm16k");
+                finalPcm.delete();
+                if (!outFile.renameTo(finalPcm)) throw new java.io.IOException("could not save the audio");
+                java.nio.file.Files.write(new File(audioDir(), finalPcm.getName() + ".meta").toPath(),
+                        String.valueOf(new File(stripFileScheme(path)).length()).getBytes("UTF-8"));
                 JSObject o = new JSObject();
-                o.put("pcmPath", outFile.getAbsolutePath());
+                o.put("pcmPath", finalPcm.getAbsolutePath());
                 o.put("samples", samplesOut);
                 call.resolve(o);
             } catch (Exception e) {
@@ -930,7 +974,7 @@ public class EditorrNativePlugin extends Plugin {
         if (path == null) { call.reject("path missing"); return; }
         getActivity().runOnUiThread(() -> {
             try {
-                final File out = new File(cacheDir(), "proxy_" + new File(path).getName() + ".mp4");
+                final File out = new File(previewDir(), "proxy_" + new File(path).getName() + ".mp4");
                 if (out.exists() && out.length() > 0) {
                     JSObject o = new JSObject();
                     o.put("proxyPath", out.getAbsolutePath());
@@ -1013,7 +1057,7 @@ public class EditorrNativePlugin extends Plugin {
                 String base = new File(path).getName();
                 JSArray files = new JSArray();
                 for (int i = 0; i < count; i++) {
-                    File f = new File(cacheDir(), "thumb_" + base + "_" + count + "_" + i + ".jpg");
+                    File f = new File(previewDir(), "thumb_" + base + "_" + count + "_" + i + ".jpg");
                     if (!f.exists() || f.length() == 0) {
                         long tUs = (long) (((i + 0.5) / count) * durMs * 1000.0);
                         Bitmap bmp = r.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);

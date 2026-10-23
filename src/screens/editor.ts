@@ -60,8 +60,17 @@ export function editorScreen() {
   let syncReady = p.segments.length > 0;
   let hasAudioError = false;
 
-  if (!runtime.hostUrl || !runtime.constUrl || !p.host || !p.constant) {
-    return { el: h('div', { class: 'screen' }, h('div', { class: 'content' }, h('div', { class: 'err' }, 'Videos are not loaded. Go back and add them again.'), h('button', { class: 'btn', onclick: () => app.go('import') }, 'Add videos'))) };
+  if (!runtime.hostUrl || !runtime.constUrl || !p.host || !p.constant || runtime.projectId !== p.id) {
+    // Video deleted or moved: black preview with a message, like CapCut.
+    const noVideo = h('div', { class: 'missing' },
+      h('div', { class: 'missing-ico' }, '\u{1F6AB}'),
+      h('div', { class: 'missing-txt' }, 'Video or photo is deleted or moved in your device.'),
+      h('div', { class: 'missing-txt' }, 'Add the videos again to keep editing.'));
+    return { el: h('div', { class: 'screen' },
+      h('div', { class: 'topbar' }, iconButton('close', 'Close', () => app.go('home'), 'plain')),
+      h('div', { class: 'content', style: 'display:flex;flex-direction:column;align-items:center' },
+        noVideo,
+        h('button', { class: 'btn primary', style: 'margin-top:24px', onclick: () => app.go('import') }, 'Add videos again'))) };
   }
   const hostDur = p.host.durationMs, constDur = p.constant.durationMs;
   if (!p.durationMs) p.durationMs = overlapDuration(hostDur, constDur, p.offsetMs);

@@ -47,8 +47,9 @@ export function homeScreen() {
     try { ok = await attachProjectMedia(p); } catch (e) { toast(`Could not open the videos: ${(e as Error).message}`); }
     box.remove();
     opening = false;
-    if (ok) app.go('editor');
-    else { toast('The saved videos were not found. Pick them again.'); app.go('import'); }
+    // Missing videos: the editor opens with a black preview and a message (like CapCut) instead of throwing the user to Import.
+    if (!ok && runtime.projectId !== p.id) { runtime.hostUrl = runtime.constUrl = undefined; runtime.hostPath = runtime.constPath = undefined; }
+    app.go('editor');
   }
 
   function options(p: Project) {
