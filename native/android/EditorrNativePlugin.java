@@ -311,7 +311,7 @@ public class EditorrNativePlugin extends Plugin {
                 int n = 0;
                 File[] kids = videoDir().listFiles();
                 if (kids != null) for (File k : kids) {
-                    if (k.isFile() && !keep.contains(k.getCanonicalPath())) { deleteVideoAndDerived(k); n++; }
+                    if (k.isFile() && !keep.contains(k.getCanonicalPath()) && System.currentTimeMillis() - k.lastModified() > 24L * 3600 * 1000) { deleteVideoAndDerived(k); n++; }
                 }
                 JSObject o = new JSObject();
                 o.put("deleted", n);

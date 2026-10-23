@@ -45,7 +45,10 @@ window.addEventListener('popstate', back);
   try {
     await initStorage();
     app.settings = await loadSettings();
-    pruneUnusedVideos(await listProjects());
   } catch { /* storage unavailable: start with defaults */ }
+  try {
+    // strict: if the database cannot be read we must NOT think "no projects" and delete every saved video
+    pruneUnusedVideos(await listProjects(true));
+  } catch { /* skip cleanup this launch */ }
   app.go('home');
 })();

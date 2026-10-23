@@ -1,6 +1,6 @@
 import { app } from '../app';
 import { probeVideo } from '../core/audio';
-import { runtime, saveProject } from '../core/store';
+import { runtime, saveMedia, saveProject } from '../core/store';
 import type { Role, VideoRef } from '../core/types';
 import { EditorrNative, fileSrc, isNative, type PickedVideo } from '../core/native';
 import { projectVideoPaths } from '../core/media';
@@ -18,6 +18,33 @@ export function importScreen() {
   const busy: Partial<Record<Role, number>> = {};
   if (p.host && runtime.hostUrl) info.host = { ...p.host, url: runtime.hostUrl };
   if (p.constant && runtime.constUrl) info.constant = { ...p.constant, url: runtime.constUrl };
+
+  /** Video files this project had when the screen opened (a replaced video is deleted when you continue). */
+  const initialPaths = projectVideoPaths(p);
+
+  /**
+   * Save the picked videos into the project right away (IndexedDB), so they are never lost if the app closes
+   * before "Add to timeline" is pressed. Browser build: the files themselves go into IndexedDB too.
+   */
+  async function commit() {
+    const strip = (v?: VideoRef) => { if (!v) return undefined; const { url: _u, ...m } = v; return m; };
+    const hm = strip(info.host), cm = strip(info.constant);
+    const same = (a?: { uri?: string; name: string; durationMs: number }, b?: { uri?: string; name: string; durationMs: number }) =>
+      (!a && !b) || (!!a && !!b && a.uri === b.uri && a.name === b.name && a.durationMs === b.durationMs);
+    const unchanged = same(p.host, hm) && same(p.constant, cm);
+    p.host = hm; p.constant = cm;
+    if (!unchanged) {
+      // new videos: sync and auto switch run again when the editor opens
+      p.segments = []; p.offsetMs = 0; p.syncConfidence = undefined; p.durationMs = 0;
+      p.proxyHost = p.proxyConst = false; p.thumb = undefined;
+    }
+    runtime.projectId = p.id;
+    await saveProject(p);
+    if (!isNative()) {
+      await saveMedia(p.id, 'host', runtime.hostFile, hm?.name ?? '');
+      await saveMedia(p.id, 'constant', runtime.constFile, cm?.name ?? '');
+    }
+  }
 
   const slots = h('div', { class: 'slots' });
   const warnings = h('div');
@@ -63,6 +90,7 @@ export function importScreen() {
         const url = fileSrc(v.path);
         assign(want[i], { name: v.name, url, uri: 'file://' + v.path, durationMs: v.durationMs, width: v.width, height: v.height, fps: v.fps || 30, codec: v.codec, bitrate: v.bitrate }, v.path);
       });
+      if (vids.length) await commit();
       if (res.ignored > 0) toast('Only 2 videos are used. The extra ones were ignored.');
     } catch (e) {
       const m = (e as Error).message || '';
@@ -90,6 +118,7 @@ export function importScreen() {
           assign(want[i], { name: f.name, url, durationMs: meta.durationMs, width: meta.width, height: meta.height, fps: 30 }, undefined, f);
         }
       } catch (e) { toast((e as Error).message); }
+      await commit();
       want.forEach((t) => { delete busy[t]; });
       render();
     };
@@ -107,6 +136,7 @@ export function importScreen() {
     [runtime.hostPcm, runtime.constPcm] = [runtime.constPcm, runtime.hostPcm];
     runtime.hostMotion = runtime.constMotion = undefined;
     render();
+    commit();
   }
 
   function slot(role: Role, label: string) {
@@ -152,27 +182,13 @@ export function importScreen() {
   }
 
   async function next() {
-    const { host, constant } = info;
-    if (!host || !constant) return;
+    if (!info.host || !info.constant) return;
     cont.disabled = true;
-    const { url: _a, ...hostMeta } = host;
-    const { url: _b, ...constMeta } = constant;
-    const before = projectVideoPaths(p);
-    const same = (a?: { uri?: string; name: string; durationMs: number }, b?: { uri?: string; name: string; durationMs: number }) =>
-      !!a && !!b && a.uri === b.uri && a.name === b.name && a.durationMs === b.durationMs;
-    const unchanged = same(p.host, hostMeta) && same(p.constant, constMeta) && p.segments.length > 0;
-    p.host = hostMeta; p.constant = constMeta;
-    if (!unchanged) {
-      // new videos: sync and auto switch run again when the editor opens
-      p.segments = []; p.offsetMs = 0; p.syncConfidence = undefined; p.durationMs = 0;
-      p.proxyHost = p.proxyConst = false; p.thumb = undefined;
-    }
-    runtime.projectId = p.id;
-    await saveProject(p);
+    await commit();
     // a video that was replaced is no longer used: free its space
     if (isNative()) {
       const now = projectVideoPaths(p);
-      const old = before.filter((x) => !now.includes(x));
+      const old = initialPaths.filter((x) => !now.includes(x));
       if (old.length) EditorrNative.deleteVideos({ paths: old }).catch(() => {});
     }
     app.go('editor');

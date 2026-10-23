@@ -118,3 +118,11 @@ Settings page: waiting for the CapCut reference screenshot.
 - Tap a segment (layout row) or the Host clip: the toolbar swaps to clip tools (Split, Layout, On screen, Audio, Crop, Merge, Delete, Swap) with CapCut's grey back chevron on the left. Tap empty space or the chevron to go back to the main tools.
 - Main tools (nothing selected): Sync, Auto switch, Lips scan, Silence, Layout, On screen, Audio, Crop, Ratio, Zoom.
 - Nothing is selected when the editor opens (it used to pre-select the first segment).
+
+## v12 (videos stay saved, Settings redesign)
+
+- Why videos vanished: they were only linked to the project when "Add to timeline" was pressed, and the launch cleanup deleted any video no project used. If the database could not be read once, the cleanup also saw "no projects" and deleted everything. Fixed: videos are saved into the project (IndexedDB) the moment they are picked or swapped; cleanup runs only when the project list was read successfully; and the app never deletes a video file younger than 24 h.
+- Browser build: the video files themselves are now stored as Blobs in IndexedDB (`media` store, DB version 2), so they survive a reload. The Android app keeps files in its private folder (too big for a database) and stores the paths in IndexedDB.
+- No localStorage is used. The old localStorage data is moved to IndexedDB once and removed.
+- Settings page rebuilt in CapCut style: grouped rounded cards, option chips, storage bar with legend, action rows.
+- New Sync and Swap icons.
