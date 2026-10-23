@@ -105,6 +105,16 @@ if "signingConfigs.editorr" not in txt:
     txt = re.sub(r'versionName\s+"[^"]*"', "versionName System.getenv('VERSION_NAME') ?: '0.1.0'", txt, count=1)
     app_gradle.write_text(txt)
 
+
+# 5b. Android 11+ hides other apps unless they are listed: needed to open Instagram / WhatsApp / TikTok... directly from "Saved to device".
+txt = manifest.read_text()
+if "<queries>" not in txt:
+    pkgs = ["com.instagram.android", "com.google.android.youtube", "com.whatsapp", "com.whatsapp.w4b",
+            "com.facebook.katana", "com.zhiliaoapp.musically", "com.ss.android.ugc.trill"]
+    q = "    <queries>\n" + "".join(f'        <package android:name="{x}" />\n' for x in pkgs) + "    </queries>\n\n    "
+    txt = txt.replace("<application", q + "<application", 1)
+    manifest.write_text(txt)
+
 print("Editorr: android project patched")
 
 # 5. App icon (black, no card/oval; adaptive + square + round). Replaces Capacitor's default icons.

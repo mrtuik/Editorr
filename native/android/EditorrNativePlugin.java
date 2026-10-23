@@ -1489,6 +1489,68 @@ public class EditorrNativePlugin extends Plugin {
         });
     }
 
+    /** A content:// uri other apps can read. Old devices (< Android 10) hand back file:// paths, which cannot be shared. */
+    private Uri shareableUri(Uri uri) {
+        if (!"file".equals(uri.getScheme())) return uri;
+        try (Cursor c = getContext().getContentResolver().query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                new String[]{MediaStore.Video.Media._ID}, MediaStore.Video.Media.DATA + "=?", new String[]{uri.getPath()}, null)) {
+            if (c != null && c.moveToFirst()) return android.content.ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, c.getLong(0));
+        } catch (Exception ignored) { }
+        return uri;
+    }
+
+    @PluginMethod
+    public void shareVideo(PluginCall call) {
+        String raw = call.getString("uri");
+        if (raw == null) { call.reject("No video to share."); return; }
+        try {
+            Uri uri = shareableUri(Uri.parse(raw));
+            JSArray arr = call.getArray("pkgs");
+            java.util.List<String> pkgs = new java.util.ArrayList<>();
+            if (arr != null) for (int i = 0; i < arr.length(); i++) pkgs.add(arr.getString(i));
+            Intent send = new Intent(Intent.ACTION_SEND);
+            send.setType("video/mp4");
+            send.putExtra(Intent.EXTRA_STREAM, uri);
+            send.setClipData(ClipData.newRawUri("video", uri));
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Activity act = getActivity();
+            if (pkgs.isEmpty()) {
+                Intent chooser = Intent.createChooser(send, "Share video");
+                chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                act.startActivity(chooser);
+                call.resolve();
+                return;
+            }
+            for (String pkg : pkgs) {
+                try {
+                    Intent i = new Intent(send);
+                    i.setPackage(pkg);
+                    act.startActivity(i);
+                    call.resolve();
+                    return;
+                } catch (android.content.ActivityNotFoundException ignored) { /* try the next package */ }
+            }
+            call.reject("not_installed");
+        } catch (Exception e) {
+            call.reject("Could not share: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void viewVideo(PluginCall call) {
+        String raw = call.getString("uri");
+        if (raw == null) { call.reject("No video."); return; }
+        try {
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            i.setDataAndType(shareableUri(Uri.parse(raw)), "video/mp4");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            getActivity().startActivity(i);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("No app can open this video.");
+        }
+    }
+
     private Uri saveToGallery(File file) throws Exception {
         String name = "Editorr_" + System.currentTimeMillis() + ".mp4";
         if (Build.VERSION.SDK_INT >= 29) {

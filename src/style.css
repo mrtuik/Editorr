@@ -363,3 +363,23 @@ input[type=file] { display: none; }
 .missing { width: min(100%, 360px); aspect-ratio: 9 / 16; max-height: 60vh; background: #000; border: 1px solid #1c1c1c; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 20px; text-align: center; }
 .missing-ico { font-size: 34px; opacity: .8; margin-bottom: 6px; }
 .missing-txt { color: #d0d0d0; font-size: 13px; line-height: 1.4; }
+
+/* ---- export done screen ("Saved to device") ---- */
+.xbartitle { flex: 1; text-align: center; font-size: 17px; color: var(--text2); }
+.xdonebtn { background: none; border: 0; color: var(--text); font: inherit; font-size: 18px; font-weight: 600; padding: 0 4px; min-height: 48px; }
+.xdone { padding-top: 4px; }
+.xcard { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 18px 16px 14px; }
+.xframe { position: relative; height: 38vh; max-width: 100%; margin: 0 auto; border-radius: 14px; overflow: hidden; background: #0a0b0e; cursor: pointer; }
+.xvid { width: 100%; height: 100%; object-fit: contain; display: block; background: #0a0b0e; }
+.xplay { position: absolute; inset: 0; margin: auto; width: 56px; height: 56px; border-radius: 50%; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; color: #fff; pointer-events: none; }
+.xtiktok { width: 100%; min-height: 52px; margin-top: 16px; border-radius: 12px; border: 0; background: #fff; color: #000; font: inherit; font-size: 18px; font-weight: 600; }
+.xtiktok:active { opacity: .8; }
+.xtargets { display: flex; gap: 4px; margin-top: 14px; overflow-x: auto; scrollbar-width: none; }
+.xtargets::-webkit-scrollbar { display: none; }
+.xtarget { flex: 1 0 64px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 2px; background: none; border: 0; color: var(--text2); font: inherit; font-size: 12px; }
+.xticon { width: 44px; height: 44px; border-radius: 12px; background: var(--elevated); color: #fff; display: flex; align-items: center; justify-content: center; }
+.xhead { font-size: 20px; font-weight: 700; margin: 22px 2px 10px; }
+.xquicks { display: flex; gap: 10px; }
+.xquick { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 8px; background: none; border: 0; color: var(--text); font: inherit; font-size: 13px; }
+.xqicon { width: 100%; height: 62px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; }
+.xquick:active .xqicon { opacity: .7; }

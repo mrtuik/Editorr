@@ -77,6 +77,10 @@ export interface EditorrNativePlugin {
   storageInfo(): Promise<{ videosBytes: number; cacheBytes: number; freeMb: number }>;
   /** Empty the cache folder. Projects and videos stay. */
   clearCache(): Promise<{ freedBytes: number }>;
+  /** Share the exported video. With pkgs, the first installed app in the list opens directly (rejects 'not_installed'); without, the system share sheet. */
+  shareVideo(opts: { uri: string; pkgs?: string[] }): Promise<void>;
+  /** Open the exported video in the gallery / default video player. */
+  viewVideo(opts: { uri: string }): Promise<void>;
 }
 
 export const EditorrNative = registerPlugin<EditorrNativePlugin>('EditorrNative');
