@@ -34,6 +34,10 @@ export interface VideoRef {
   width: number;
   height: number;
   fps: number;
+  /** Video codec mime from the phone, e.g. video/avc or video/hevc (native app only). */
+  codec?: string;
+  /** Average bits per second, whole file. */
+  bitrate?: number;
 }
 
 export interface Segment {
@@ -76,6 +80,9 @@ export interface Project {
   aspect: Aspect;
   cropHost: CropState;
   cropConst: CropState;
+  /** The preview of this video runs on a small H.264 copy (set once one was needed). */
+  proxyHost?: boolean;
+  proxyConst?: boolean;
   /** small jpeg data URL for Home */
   thumb?: string;
 }

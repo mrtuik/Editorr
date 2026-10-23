@@ -2,8 +2,6 @@ import './style.css';
 import { app, ScreenName } from './app';
 import { homeScreen } from './screens/home';
 import { importScreen } from './screens/import';
-import { syncScreen } from './screens/sync';
-import { analyzeScreen } from './screens/analyze';
 import { editorScreen } from './screens/editor';
 import { exportScreen } from './screens/export';
 import { settingsScreen } from './screens/settings';
@@ -16,8 +14,6 @@ let cleanup: (() => void) | undefined;
 const screens: Record<ScreenName, () => { el: HTMLElement; destroy?: () => void }> = {
   home: homeScreen,
   import: importScreen,
-  sync: syncScreen,
-  analyze: analyzeScreen,
   editor: editorScreen,
   export: exportScreen,
   settings: settingsScreen,
@@ -25,6 +21,7 @@ const screens: Record<ScreenName, () => { el: HTMLElement; destroy?: () => void 
 
 function go(name: ScreenName): void {
   cleanup?.();
+  app.onBack = undefined;
   const s = screens[name]();
   cleanup = s.destroy;
   root.replaceChildren(s.el);
@@ -34,13 +31,14 @@ app.go = go;
 
 // Android back button: step back through the flow.
 const backMap: Partial<Record<ScreenName, ScreenName>> = {
-  import: 'home', sync: 'import', analyze: 'sync', editor: 'home', export: 'editor', settings: 'home',
+  import: 'home', editor: 'home', export: 'editor', settings: 'home',
 };
 let current: ScreenName = 'home';
 const origGo = go;
 app.go = (n) => { current = n; origGo(n); };
-document.addEventListener('backbutton', () => { const b = backMap[current]; if (b) app.go(b); });
-window.addEventListener('popstate', () => { const b = backMap[current]; if (b) app.go(b); });
+const back = () => { if (app.onBack?.()) return; const b = backMap[current]; if (b) app.go(b); };
+document.addEventListener('backbutton', back);
+window.addEventListener('popstate', back);
 
 // Open the database first, then show Home with the saved settings and projects.
 (async () => {

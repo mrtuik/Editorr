@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS, newProject } from './core/store';
 
 export type Intent = 'silence' | 'crop' | 'ratio';
 export type HomeTab = 'edit' | 'projects';
-export type ScreenName = 'home' | 'import' | 'sync' | 'analyze' | 'editor' | 'export' | 'settings';
+export type ScreenName = 'home' | 'import' | 'editor' | 'export' | 'settings';
 
 export const app = {
   project: newProject() as Project,
@@ -12,6 +12,8 @@ export const app = {
   intent: undefined as Intent | undefined,
   homeTab: 'edit' as HomeTab,
   go: (_s: ScreenName) => {},
+  /** The open screen can handle the Android back button first (close a panel, leave full screen). Return true when handled. */
+  onBack: undefined as (() => boolean) | undefined,
 };
 
 export function startNewProject(): void {

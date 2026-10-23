@@ -156,27 +156,32 @@ export function newProject(): Project {
   };
 }
 
-/** Undo/redo over the segment list (50 steps, spec asks >= 30). */
+/** What undo/redo restores: the cut list and the sync offset (dragging the green clip is undoable too). */
+export interface Snapshot { segments: Segment[]; offsetMs: number; durationMs: number }
+
+/** Undo/redo (50 steps, spec asks >= 30). */
 export class History {
-  private past: Segment[][] = [];
-  private future: Segment[][] = [];
-  push(current: Segment[]): void {
+  private past: Snapshot[] = [];
+  private future: Snapshot[] = [];
+  push(current: Snapshot): void {
     this.past.push(structuredClone(current));
     if (this.past.length > MAX_UNDO) this.past.shift();
     this.future = [];
   }
-  undo(current: Segment[]): Segment[] | null {
+  undo(current: Snapshot): Snapshot | null {
     const prev = this.past.pop();
     if (!prev) return null;
     this.future.push(structuredClone(current));
     return prev;
   }
-  redo(current: Segment[]): Segment[] | null {
+  redo(current: Snapshot): Snapshot | null {
     const next = this.future.pop();
     if (!next) return null;
     this.past.push(structuredClone(current));
     return next;
   }
+  reset(): void { this.past = []; this.future = []; }
+  reset(): void { this.past = []; this.future = []; }
   get canUndo() { return this.past.length > 0; }
   get canRedo() { return this.future.length > 0; }
 }

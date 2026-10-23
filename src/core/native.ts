@@ -28,19 +28,31 @@ export interface PickedVideo {
   width: number;
   height: number;
   fps: number;
+  /** video codec mime, e.g. video/avc, video/hevc */
+  codec?: string;
+  /** average bits per second of the whole file */
+  bitrate?: number;
 }
 
+export type NativeEvent = 'audioProgress' | 'exportProgress' | 'proxyProgress' | 'copyProgress' | 'thumb';
+
 export interface EditorrNativePlugin {
-  /** Opens the system picker, copies the video into app cache, returns its path + metadata. */
-  pickVideo(): Promise<PickedVideo>;
+  /**
+   * Opens the system picker, copies the chosen video(s) into the app files folder and returns path + metadata.
+   * With multiple = true the user may pick two videos at once (extra ones are ignored).
+   * Emits 'copyProgress' {index, count, percent} while copying.
+   */
+  pickVideos(opts: { multiple: boolean }): Promise<{ videos: PickedVideo[]; ignored: number }>;
   /** Decodes the audio track to mono 16 kHz PCM16 (little endian) in a cache file. */
   extractAudio(opts: { path: string }): Promise<{ pcmPath: string; samples: number }>;
   /** Runs Media3 Transformer composition. Emits 'exportProgress' events. */
   exportProject(req: ExportRequest): Promise<{ outputUri: string }>;
-  /** Transcode to a small H.264 file so the WebView can preview formats it cannot decode (e.g. HEVC). */
-  makeProxy(opts: { path: string; height: number }): Promise<{ proxyPath: string }>;
+  /** Transcode to a small H.264 file so the WebView can preview formats/sizes it cannot play smoothly. Cached per source file. */
+  makeProxy(opts: { path: string; height: number; outW?: number; outH?: number }): Promise<{ proxyPath: string }>;
+  /** Picture strip for the timeline (and the first-frame tile): `count` frames spread over the video. Emits 'thumb' {path,index,count,file}. */
+  makeThumbs(opts: { path: string; count: number; height: number }): Promise<{ files: string[] }>;
   cancelExport(): Promise<void>;
-  addListener(eventName: 'audioProgress' | 'exportProgress' | 'proxyProgress', cb: (e: { path?: string; percent: number }) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: NativeEvent, cb: (e: any) => void): Promise<PluginListenerHandle>;
   freeSpaceMb(): Promise<{ mb: number }>;
   fileExists(opts: { path: string }): Promise<{ exists: boolean }>;
   /** Delete picked videos (and their audio/preview copies). Only files in the app videos folder are removed. */

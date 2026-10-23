@@ -99,3 +99,15 @@ Your currently installed APK was signed with a random debug key, so install the 
 - Deleting a project deletes its video copies. At launch, videos that no project uses (cancelled imports) are removed.
 - Settings > Storage shows projects, saved videos, cache and free space. "Clear cache" only empties temporary files. "Delete all projects" removes projects and their video copies.
 - Saved with the project: cut parts (segments with gaps), aspect ratio, crop of both videos, layouts, offset, audio choice.
+
+## v8 (CapCut-style editor)
+
+- No separate Sync / Analyze screens. Import -> Editor. Reading audio, syncing and auto switch run inside the editor and show as pills over the preview ("Reading audio 40%", "Syncing audio", "Detecting who is speaking").
+- Timeline like CapCut: lane icons on the left (tap the speaker to pick that mic), Host clip and Constant clip with picture strips and waveforms, layout lane below. Time (00:34 / 10:22) sits top-left of the ruler.
+- Sync inside the timeline: tap the green Constant clip (or the Sync tool), then drag it, or use -1s ... +1s buttons, or Auto sync. Snaps to Host start, playhead and common end (cyan line). Undo/redo covers sync too.
+- Preview: Host video is the clock while playing, seeks are never queued, and heavy formats (HEVC, 50/60 fps, >1080p) get a small preview copy BEFORE playing, so nothing stalls halfway. If the WebView fails mid-play, it pauses, makes the copy and continues from the same spot.
+- Import: tiles with first-frame picture, spinner + percent while the video is copied, pick both videos in one go.
+- Crop: pinch and drag on the preview, cyan center guides.
+- Native: multi-select picker with copy progress, timeline thumbnails (MediaMetadataRetriever), concurrent preview copies, faster audio decode.
+
+Settings page: waiting for the CapCut reference screenshot.

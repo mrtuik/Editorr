@@ -1,8 +1,8 @@
 import { app, startNewProject, type Intent } from '../app';
 import { deleteProject, listProjects, runtime, saveProject } from '../core/store';
 import type { Project } from '../core/types';
-import { isLoaded, loadProjectMedia, removeProjectMedia } from '../core/media';
-import { actionSheet, confirmDialog, fmtTime, h, ICON, icon, progressBar, promptDialog, tabBar, TabName, toast } from '../ui';
+import { attachProjectMedia, isLoaded, removeProjectMedia } from '../core/media';
+import { actionSheet, confirmDialog, fmtTime, h, ICON, icon, promptDialog, spinner, tabBar, TabName, toast } from '../ui';
 
 /**
  * Home, laid out like CapCut: search at the top, big "Get started" heading, two big cards,
@@ -26,23 +26,25 @@ export function homeScreen() {
     app.intent = intent;
     runtime.projectId = undefined;
     runtime.hostUrl = runtime.constUrl = undefined;
+    runtime.hostPath = runtime.constPath = undefined;
+    runtime.hostFile = runtime.constFile = undefined;
     runtime.hostPcm = runtime.constPcm = undefined;
+    runtime.hostMotion = runtime.constMotion = undefined;
     app.go('import');
   }
 
   let opening = false;
-  /** Saved videos still on the phone: decode audio again and go straight to the editor. Otherwise ask for the videos. */
+  /** Saved videos still on the phone: go straight to the editor (it reads the audio again with a progress pill). Otherwise ask for the videos. */
   async function openProject(p: Project) {
     if (opening) return;
     app.project = p;
     if (isLoaded(p)) { app.go('editor'); return; }
-    if (!p.segments.length) { app.go('import'); return; } // never finished sync/analyze
+    if (!p.host || !p.constant) { app.go('import'); return; } // never picked both videos
     opening = true;
-    const pb = progressBar();
-    const box = h('div', { class: 'dialog' }, h('div', { class: 'box' }, h('div', { class: 'title' }, 'Opening project'), h('div', { class: 'cap' }, 'Reading audio from the saved videos'), pb.el));
+    const box = h('div', { class: 'dialog' }, h('div', { class: 'box row' }, spinner(24), h('div', { class: 'title' }, 'Opening project...')));
     document.body.append(box);
     let ok = false;
-    try { ok = await loadProjectMedia(p, (x) => pb.set(x)); } catch (e) { toast(`Could not open the videos: ${(e as Error).message}`); }
+    try { ok = await attachProjectMedia(p); } catch (e) { toast(`Could not open the videos: ${(e as Error).message}`); }
     box.remove();
     opening = false;
     if (ok) app.go('editor');

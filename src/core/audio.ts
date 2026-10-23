@@ -1,4 +1,6 @@
 export const SAMPLE_RATE = 16000;
+/** Waveform resolution used by the timeline. */
+export const PEAKS_PER_SEC = 20;
 
 /** Decode the audio track of a video file to mono 16 kHz PCM. */
 export async function decodeToMono16k(file: File | Blob): Promise<Float32Array> {

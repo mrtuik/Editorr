@@ -133,3 +133,32 @@ export function dropSlivers(segs: Segment[], minMs = MIN_SEG_MS): Segment[] {
   }
   return out;
 }
+
+// ---------- sync / duration ----------
+
+/**
+ * Length of the edit in Host time. Timeline 0 = Host 0, and Constant time = Host time + offsetMs.
+ * The edit ends where the shorter of the two videos ends.
+ */
+export function overlapDuration(hostMs: number, constMs: number, offsetMs: number): number {
+  return Math.max(1000, Math.min(hostMs, constMs - offsetMs));
+}
+
+/** After the sync offset (and so the length) changed: cut segments to the new length, or stretch the last one. */
+export function fitSegmentsToDuration(segs: Segment[], oldDurationMs: number, newDurationMs: number): Segment[] {
+  if (!segs.length) return segs;
+  const sorted = [...segs].sort((a, b) => a.startMs - b.startMs);
+  const out = sorted
+    .filter((s) => s.startMs < newDurationMs - 50)
+    .map((s) => (s.endMs > newDurationMs ? { ...s, endMs: newDurationMs } : s));
+  if (!out.length) return [{ ...sorted[0], startMs: 0, endMs: newDurationMs }];
+  const last = out[out.length - 1];
+  // the edit ran to its old end, and the new end is further: stretch the last segment
+  if (newDurationMs > oldDurationMs && last.endMs >= oldDurationMs - 2) out[out.length - 1] = { ...last, endMs: newDurationMs };
+  return out;
+}
+
+/** One full-length Host segment: the starting point before auto switch (or when it cannot run). */
+export function defaultSegments(durationMs: number, main: 'host' | 'constant' = 'host'): Segment[] {
+  return [{ id: uid(), startMs: 0, endMs: durationMs, style: 'one', main, corner: 'br', size: 'M' }];
+}

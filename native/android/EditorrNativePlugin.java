@@ -1,6 +1,7 @@
 package com.tuik.editorr;
 
 import android.app.Activity;
+import android.content.ClipData;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.media.MediaCodec;
@@ -17,6 +18,7 @@ import android.os.StatFs;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.database.Cursor;
+import android.graphics.Bitmap;
 
 import androidx.activity.result.ActivityResult;
 import androidx.annotation.NonNull;
@@ -79,54 +81,135 @@ public class EditorrNativePlugin extends Plugin {
     // ------------------------------------------------------------------ pick
 
     @PluginMethod
-    public void pickVideo(PluginCall call) {
+    public void pickVideos(PluginCall call) {
         Intent i = new Intent(Intent.ACTION_GET_CONTENT);
         i.setType("video/*");
         i.addCategory(Intent.CATEGORY_OPENABLE);
+        if (Boolean.TRUE.equals(call.getBoolean("multiple", false))) i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         startActivityForResult(call, Intent.createChooser(i, "Pick video"), "pickResult");
     }
 
     @ActivityCallback
     private void pickResult(PluginCall call, ActivityResult result) {
         if (call == null) return;
-        if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null || result.getData().getData() == null) {
+        Intent data = result.getData();
+        if (result.getResultCode() != Activity.RESULT_OK || data == null) {
             call.reject("Cancelled");
             return;
         }
-        final Uri uri = result.getData().getData();
+        final List<Uri> uris = new ArrayList<>();
+        ClipData clip = data.getClipData();
+        if (clip != null) {
+            for (int k = 0; k < clip.getItemCount(); k++) uris.add(clip.getItemAt(k).getUri());
+        } else if (data.getData() != null) {
+            uris.add(data.getData());
+        }
+        if (uris.isEmpty()) { call.reject("Cancelled"); return; }
+        final int ignored = Math.max(0, uris.size() - 2);
+        final List<Uri> use = uris.subList(0, Math.min(2, uris.size()));
         new Thread(() -> {
             try {
-                String name = displayName(uri);
-                // App files folder, NOT cache: Android may empty the cache at any time, but never this folder.
-                File dir = videoDir();
-                File out = new File(dir, System.currentTimeMillis() + "_" + name.replaceAll("[^A-Za-z0-9._-]", "_"));
-                try (InputStream in = getContext().getContentResolver().openInputStream(uri);
-                     OutputStream os = new FileOutputStream(out)) {
-                    byte[] buf = new byte[1 << 20];
-                    int n;
-                    while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
-                }
-                MediaMetadataRetriever r = new MediaMetadataRetriever();
-                r.setDataSource(out.getAbsolutePath());
-                long dur = parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
-                int w = (int) parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
-                int hgt = (int) parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
-                int rot = (int) parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION));
-                String fpsStr = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE);
-                r.release();
-                if (rot == 90 || rot == 270) { int t = w; w = hgt; hgt = t; }
-                JSObject o = new JSObject();
-                o.put("path", out.getAbsolutePath());
-                o.put("name", name);
-                o.put("durationMs", dur);
-                o.put("width", w);
-                o.put("height", hgt);
-                o.put("fps", fpsStr == null ? 30 : Math.round(Float.parseFloat(fpsStr)));
-                call.resolve(o);
+                JSArray videos = new JSArray();
+                for (int idx = 0; idx < use.size(); idx++) videos.put(copyAndProbe(use.get(idx), idx, use.size()));
+                JSObject res = new JSObject();
+                res.put("videos", videos);
+                res.put("ignored", ignored);
+                call.resolve(res);
             } catch (Exception e) {
                 call.reject("Could not read this video: " + e.getMessage());
             }
         }).start();
+    }
+
+    /** Copy one picked video into the app files folder (with progress), then read its metadata. */
+    private JSObject copyAndProbe(Uri uri, int index, int count) throws Exception {
+        String name = displayName(uri);
+        long total = querySize(uri);
+        File out = new File(videoDir(), System.currentTimeMillis() + "_" + index + "_" + name.replaceAll("[^A-Za-z0-9._-]", "_"));
+        emitCopy(index, count, 0);
+        try (InputStream in = getContext().getContentResolver().openInputStream(uri);
+             OutputStream os = new FileOutputStream(out)) {
+            if (in == null) throw new Exception("the file cannot be opened");
+            byte[] buf = new byte[1 << 20];
+            int n;
+            long done = 0;
+            int lastPct = 0;
+            while ((n = in.read(buf)) > 0) {
+                os.write(buf, 0, n);
+                done += n;
+                if (total > 0) {
+                    int pct = (int) Math.min(99, done * 100 / total);
+                    if (pct >= lastPct + 3) { lastPct = pct; emitCopy(index, count, pct); }
+                }
+            }
+        }
+        emitCopy(index, count, 100);
+        MediaMetadataRetriever r = new MediaMetadataRetriever();
+        long dur;
+        int w, hgt, rot;
+        String fpsStr;
+        try {
+            r.setDataSource(out.getAbsolutePath());
+            dur = parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
+            w = (int) parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
+            hgt = (int) parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+            rot = (int) parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION));
+            fpsStr = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE);
+        } finally {
+            r.release();
+        }
+        if (rot == 90 || rot == 270) { int t = w; w = hgt; hgt = t; }
+        JSObject o = new JSObject();
+        o.put("path", out.getAbsolutePath());
+        o.put("name", name);
+        o.put("durationMs", dur);
+        o.put("width", w);
+        o.put("height", hgt);
+        int fps = 30;
+        try { if (fpsStr != null) fps = Math.round(Float.parseFloat(fpsStr)); } catch (Exception ignored) { }
+        String codec = null;
+        MediaExtractor ex = new MediaExtractor();
+        try {
+            ex.setDataSource(out.getAbsolutePath());
+            for (int t = 0; t < ex.getTrackCount(); t++) {
+                MediaFormat fm = ex.getTrackFormat(t);
+                String mime = fm.getString(MediaFormat.KEY_MIME);
+                if (mime != null && mime.startsWith("video/")) {
+                    codec = mime;
+                    if (fpsStr == null) {
+                        try { fps = fm.getInteger(MediaFormat.KEY_FRAME_RATE); }
+                        catch (Exception e1) { try { fps = Math.round(fm.getFloat(MediaFormat.KEY_FRAME_RATE)); } catch (Exception e2) { /* keep default */ } }
+                    }
+                    break;
+                }
+            }
+        } catch (Exception ignored) {
+            // codec stays unknown
+        } finally {
+            ex.release();
+        }
+        o.put("fps", fps <= 0 ? 30 : fps);
+        if (codec != null) o.put("codec", codec);
+        if (dur > 0) o.put("bitrate", out.length() * 8000L / dur);
+        return o;
+    }
+
+    private void emitCopy(int index, int count, int percent) {
+        JSObject e = new JSObject();
+        e.put("index", index);
+        e.put("count", count);
+        e.put("percent", percent);
+        notifyListeners("copyProgress", e);
+    }
+
+    private long querySize(Uri uri) {
+        try (Cursor c = getContext().getContentResolver().query(uri, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(OpenableColumns.SIZE);
+                if (idx >= 0 && !c.isNull(idx)) return c.getLong(idx);
+            }
+        } catch (Exception ignored) { }
+        return -1;
     }
 
     private String displayName(Uri uri) {
@@ -182,6 +265,8 @@ public class EditorrNativePlugin extends Plugin {
         new File(cacheDir(), name + ".pcm16k").delete();
         new File(cacheDir(), "proxy_" + name + ".mp4").delete();
         new File(cacheDir(), "proxy_" + name + ".mp4.tmp").delete();
+        File[] cached = cacheDir().listFiles();
+        if (cached != null) for (File c : cached) if (c.getName().startsWith("thumb_" + name + "_")) c.delete();
     }
 
     private static String stripFileScheme(String p) {
@@ -316,67 +401,73 @@ public class EditorrNativePlugin extends Plugin {
 
                 try (FileOutputStream fos = new FileOutputStream(outFile)) {
                     while (!outDone) {
-                        if (!inDone) {
-                            int ii = codec.dequeueInputBuffer(10000);
-                            if (ii >= 0) {
-                                ByteBuffer b = codec.getInputBuffer(ii);
-                                int n = ex.readSampleData(b, 0);
-                                if (n < 0) {
-                                    codec.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
-                                    inDone = true;
-                                } else {
-                                    codec.queueInputBuffer(ii, 0, n, ex.getSampleTime(), 0);
-                                    ex.advance();
-                                }
+                        // 1. feed every input buffer the decoder will take right now (no waiting)
+                        while (!inDone) {
+                            int ii = codec.dequeueInputBuffer(0);
+                            if (ii < 0) break;
+                            ByteBuffer b = codec.getInputBuffer(ii);
+                            int n = ex.readSampleData(b, 0);
+                            if (n < 0) {
+                                codec.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                                inDone = true;
+                            } else {
+                                codec.queueInputBuffer(ii, 0, n, ex.getSampleTime(), 0);
+                                ex.advance();
                             }
                         }
-                        int oi = codec.dequeueOutputBuffer(info, 10000);
-                        if (oi >= 0) {
-                            ByteBuffer ob = codec.getOutputBuffer(oi);
-                            if (ob != null && info.size > 0) {
-                                ob.position(info.offset);
-                                ob.limit(info.offset + info.size);
-                                ByteBuffer src = ob.order(ByteOrder.LITTLE_ENDIAN);
-                                int frameBytes = (floatPcm ? 4 : 2) * channels;
-                                int frames = info.size / frameBytes;
-                                for (int f = 0; f < frames; f++) {
-                                    float s = 0;
-                                    for (int c = 0; c < channels; c++) {
-                                        s += floatPcm ? src.getFloat() : src.getShort() / 32768f;
+                        // 2. take everything that is ready; wait only a few ms when nothing is
+                        long waitUs = 4000;
+                        while (true) {
+                            int oi = codec.dequeueOutputBuffer(info, waitUs);
+                            if (oi == MediaCodec.INFO_TRY_AGAIN_LATER) break;
+                            if (oi >= 0) {
+                                waitUs = 0;
+                                ByteBuffer ob = codec.getOutputBuffer(oi);
+                                if (ob != null && info.size > 0) {
+                                    ob.position(info.offset);
+                                    ob.limit(info.offset + info.size);
+                                    ByteBuffer src = ob.order(ByteOrder.LITTLE_ENDIAN);
+                                    int frameBytes = (floatPcm ? 4 : 2) * channels;
+                                    int frames = info.size / frameBytes;
+                                    for (int f = 0; f < frames; f++) {
+                                        float s = 0;
+                                        for (int c = 0; c < channels; c++) {
+                                            s += floatPcm ? src.getFloat() : src.getShort() / 32768f;
+                                        }
+                                        s /= channels;
+                                        while (next <= idx) {
+                                            double frac = next - (idx - 1);
+                                            float v = prev + (s - prev) * (float) frac;
+                                            int q = Math.max(-32768, Math.min(32767, Math.round(v * 32767f)));
+                                            if (outBytes.remaining() < 2) { fos.write(outBytes.array(), 0, outBytes.position()); outBytes.clear(); }
+                                            outBytes.putShort((short) q);
+                                            samplesOut++;
+                                            next += step;
+                                        }
+                                        prev = s;
+                                        idx++;
                                     }
-                                    s /= channels;
-                                    while (next <= idx) {
-                                        double frac = next - (idx - 1);
-                                        float v = prev + (s - prev) * (float) frac;
-                                        int q = Math.max(-32768, Math.min(32767, Math.round(v * 32767f)));
-                                        if (outBytes.remaining() < 2) { fos.write(outBytes.array(), 0, outBytes.position()); outBytes.clear(); }
-                                        outBytes.putShort((short) q);
-                                        samplesOut++;
-                                        next += step;
+                                }
+                                if (durUs > 0) {
+                                    int pct = (int) Math.min(100, info.presentationTimeUs * 100 / durUs);
+                                    if (pct >= lastPct + 2) {
+                                        lastPct = pct;
+                                        JSObject pe = new JSObject();
+                                        pe.put("path", path);
+                                        pe.put("percent", pct);
+                                        notifyListeners("audioProgress", pe);
                                     }
-                                    prev = s;
-                                    idx++;
                                 }
+                                codec.releaseOutputBuffer(oi, false);
+                                if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) { outDone = true; break; }
+                            } else if (oi == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                                MediaFormat of = codec.getOutputFormat();
+                                channels = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
+                                int newRate = of.getInteger(MediaFormat.KEY_SAMPLE_RATE);
+                                if (newRate != rate) { rate = newRate; step = rate / (double) TARGET_RATE; }
+                                floatPcm = of.containsKey(MediaFormat.KEY_PCM_ENCODING)
+                                        && of.getInteger(MediaFormat.KEY_PCM_ENCODING) == android.media.AudioFormat.ENCODING_PCM_FLOAT;
                             }
-                            if (durUs > 0) {
-                                int pct = (int) Math.min(100, info.presentationTimeUs * 100 / durUs);
-                                if (pct >= lastPct + 2) {
-                                    lastPct = pct;
-                                    JSObject pe = new JSObject();
-                                    pe.put("path", path);
-                                    pe.put("percent", pct);
-                                    notifyListeners("audioProgress", pe);
-                                }
-                            }
-                            codec.releaseOutputBuffer(oi, false);
-                            if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) outDone = true;
-                        } else if (oi == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                            MediaFormat of = codec.getOutputFormat();
-                            channels = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
-                            int newRate = of.getInteger(MediaFormat.KEY_SAMPLE_RATE);
-                            if (newRate != rate) { rate = newRate; step = rate / (double) TARGET_RATE; }
-                            floatPcm = of.containsKey(MediaFormat.KEY_PCM_ENCODING)
-                                    && of.getInteger(MediaFormat.KEY_PCM_ENCODING) == android.media.AudioFormat.ENCODING_PCM_FLOAT;
                         }
                     }
                     if (outBytes.position() > 0) fos.write(outBytes.array(), 0, outBytes.position());
@@ -422,39 +513,46 @@ public class EditorrNativePlugin extends Plugin {
 
     // ------------------------------------------------------------ preview proxy
 
-    private Transformer proxyTransformer;
+    /** One Transformer per source video, so both previews can be made at the same time. */
+    private final java.util.Map<String, Transformer> proxyJobs = new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** Transcode one video to 480p H.264 so the WebView can preview it. Cached per source file. */
+    /** Transcode one video to a small H.264 file so the WebView can preview it smoothly. Cached per source file. */
     @PluginMethod
     public void makeProxy(PluginCall call) {
-        final String path = call.getString("path");
-        final int height = call.getInt("height", 480);
+        final String path = stripFileScheme(call.getString("path"));
+        final int height = call.getInt("height", 540);
+        final int pw = call.getInt("outW", 0);
+        final int ph = call.getInt("outH", 0);
         if (path == null) { call.reject("path missing"); return; }
         getActivity().runOnUiThread(() -> {
             try {
-                final File out = new File(getContext().getCacheDir(), "editorr/proxy_" + new File(path).getName() + ".mp4");
-                out.getParentFile().mkdirs();
+                final File out = new File(cacheDir(), "proxy_" + new File(path).getName() + ".mp4");
                 if (out.exists() && out.length() > 0) {
                     JSObject o = new JSObject();
                     o.put("proxyPath", out.getAbsolutePath());
                     call.resolve(o);
                     return;
                 }
+                if (proxyJobs.containsKey(path)) { call.reject("A preview copy of this video is already being made."); return; }
                 final File tmp = new File(out.getAbsolutePath() + ".tmp");
                 if (tmp.exists()) tmp.delete();
                 MediaItem mi = MediaItem.fromUri(Uri.fromFile(new File(path)));
-                ImmutableList<Effect> video = ImmutableList.of(Presentation.createForHeight(height));
+                ImmutableList<Effect> video = (pw > 0 && ph > 0)
+                        ? ImmutableList.<Effect>of(Presentation.createForWidthAndHeight(pw, ph, Presentation.LAYOUT_SCALE_TO_FIT))
+                        : ImmutableList.<Effect>of(Presentation.createForHeight(height));
                 EditedMediaItem item = new EditedMediaItem.Builder(mi)
                         .setEffects(new Effects(ImmutableList.of(), video))
                         .build();
                 final ProgressHolder holder = new ProgressHolder();
                 final Runnable[] poll = new Runnable[1];
-                proxyTransformer = new Transformer.Builder(getContext())
+                final Transformer[] self = new Transformer[1];
+                self[0] = new Transformer.Builder(getContext())
                         .setVideoMimeType(MimeTypes.VIDEO_H264)
                         .setAudioMimeType(MimeTypes.AUDIO_AAC)
                         .addListener(new Transformer.Listener() {
                             @Override public void onCompleted(@NonNull Composition c, @NonNull ExportResult r) {
                                 main.removeCallbacks(poll[0]);
+                                proxyJobs.remove(path);
                                 if (tmp.renameTo(out)) {
                                     JSObject o = new JSObject();
                                     o.put("proxyPath", out.getAbsolutePath());
@@ -463,28 +561,84 @@ public class EditorrNativePlugin extends Plugin {
                             }
                             @Override public void onError(@NonNull Composition c, @NonNull ExportResult r, @NonNull ExportException e) {
                                 main.removeCallbacks(poll[0]);
+                                proxyJobs.remove(path);
+                                tmp.delete();
                                 call.reject("Preview copy failed: " + e.getMessage());
                             }
                         })
                         .build();
+                proxyJobs.put(path, self[0]);
                 poll[0] = new Runnable() {
                     @Override public void run() {
-                        if (proxyTransformer == null) return;
-                        if (proxyTransformer.getProgress(holder) != Transformer.PROGRESS_STATE_NOT_STARTED) {
+                        if (!proxyJobs.containsKey(path)) return;
+                        if (self[0].getProgress(holder) != Transformer.PROGRESS_STATE_NOT_STARTED) {
                             JSObject e = new JSObject();
                             e.put("path", path);
                             e.put("percent", holder.progress);
                             notifyListeners("proxyProgress", e);
                         }
-                        main.postDelayed(this, 700);
+                        main.postDelayed(this, 500);
                     }
                 };
-                proxyTransformer.start(item, tmp.getAbsolutePath());
+                self[0].start(item, tmp.getAbsolutePath());
                 main.post(poll[0]);
             } catch (Exception e) {
+                proxyJobs.remove(path);
                 call.reject("Preview copy failed to start: " + e.getMessage());
             }
         });
+    }
+
+    // ---------------------------------------------------------------- thumbnails
+
+    /**
+     * Picture strip for the timeline: `count` frames spread over the video, saved as small JPEGs in the cache.
+     * Each finished frame is announced with a 'thumb' event so the timeline can fill in while it works.
+     */
+    @PluginMethod
+    public void makeThumbs(PluginCall call) {
+        final String path = stripFileScheme(call.getString("path"));
+        final int count = Math.max(1, Math.min(300, call.getInt("count", 1)));
+        final int height = Math.max(48, Math.min(720, call.getInt("height", 96)));
+        if (path == null) { call.reject("path missing"); return; }
+        new Thread(() -> {
+            MediaMetadataRetriever r = new MediaMetadataRetriever();
+            try {
+                r.setDataSource(path);
+                long durMs = parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
+                String base = new File(path).getName();
+                JSArray files = new JSArray();
+                for (int i = 0; i < count; i++) {
+                    File f = new File(cacheDir(), "thumb_" + base + "_" + count + "_" + i + ".jpg");
+                    if (!f.exists() || f.length() == 0) {
+                        long tUs = (long) (((i + 0.5) / count) * durMs * 1000.0);
+                        Bitmap bmp = r.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+                        if (bmp == null) { files.put(""); continue; }
+                        int w = Math.max(1, Math.round(bmp.getWidth() * (height / (float) bmp.getHeight())));
+                        Bitmap small = Bitmap.createScaledBitmap(bmp, w, height, true);
+                        try (FileOutputStream fo = new FileOutputStream(f)) {
+                            small.compress(Bitmap.CompressFormat.JPEG, 72, fo);
+                        }
+                        if (small != bmp) small.recycle();
+                        bmp.recycle();
+                    }
+                    files.put(f.getAbsolutePath());
+                    JSObject e = new JSObject();
+                    e.put("path", path);
+                    e.put("index", i);
+                    e.put("count", count);
+                    e.put("file", f.getAbsolutePath());
+                    notifyListeners("thumb", e);
+                }
+                JSObject res = new JSObject();
+                res.put("files", files);
+                call.resolve(res);
+            } catch (Exception e) {
+                call.reject("Could not make thumbnails: " + e.getMessage());
+            } finally {
+                try { r.release(); } catch (Exception ignored) { }
+            }
+        }).start();
     }
 
     // ----------------------------------------------------------------- export

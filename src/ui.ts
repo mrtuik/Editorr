@@ -29,6 +29,14 @@ export function fmtTime(ms: number, withMs = false): string {
   return withMs ? `${base}.${String(Math.floor(ms % 1000)).padStart(3, '0')}` : base;
 }
 
+/** CapCut-style clock: 00:34 (or 1:02:03 for long ones). */
+export function fmtClock(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hh = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+  const mm = String(m).padStart(2, '0'), ss = String(s).padStart(2, '0');
+  return hh ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
 export function fmtOffset(ms: number): string {
   return `${ms >= 0 ? '+' : '-'}${(Math.abs(ms) / 1000).toFixed(3)} s`;
 }
@@ -75,6 +83,18 @@ export function actionSheet(items: { label: string; danger?: boolean; run: () =>
       ...items.map((i) => h('button', { class: 'btn' + (i.danger ? ' danger' : ''), onclick: () => { m.remove(); i.run(); } }, i.label)),
       h('button', { class: 'btn', onclick: () => m.remove() }, 'Cancel')));
   document.body.append(m);
+}
+
+/** Round loading spinner (turns by CSS). */
+export function spinner(size = 18): SVGElement {
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('viewBox', '0 0 24 24');
+  s.setAttribute('width', String(size));
+  s.setAttribute('height', String(size));
+  s.setAttribute('class', 'spin');
+  s.setAttribute('aria-hidden', 'true');
+  s.innerHTML = '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-width="3"/><path d="M12 3a9 9 0 019 9" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>';
+  return s;
 }
 
 export function progressBar(): { el: HTMLElement; set: (pct: number) => void } {
@@ -125,6 +145,7 @@ export const ICON = {
   silence: '<path d="M2 12h3M19 12h3M8 8v8M12 5v14M16 8v8" /><path d="M3 3l18 18" />',
   folder: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />',
   chevR: '<path d="M9 5l7 7-7 7" />',
+  chevD: '<path d="M6 9l6 6 6-6" />',
   resume: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5l5 3.5-5 3.5z" fill="currentColor"/>',
   sync: '<path d="M4 12a8 8 0 0113.5-5.8L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 01-13.5 5.8L4 15.5M4 20v-4.5h4.5" />',
   more: '<circle cx="5" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="19" cy="12" r="1.5" fill="currentColor"/>',
