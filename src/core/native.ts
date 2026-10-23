@@ -1,5 +1,6 @@
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import { effectiveGain } from './gain';
 import { outputSize, type CropState, type Project } from './types';
 
 export interface ExportRequest {
@@ -7,8 +8,12 @@ export interface ExportRequest {
   constUri: string;
   offsetMs: number;
   durationMs: number;
-  /** short side: 720 or 1080 */
-  height: 720 | 1080;
+  /** short side in pixels (480 .. 2160) */
+  height: number;
+  /** target frame rate (the native side never goes above the source) */
+  fps: number;
+  /** video bitrate in bits per second */
+  bitrate: number;
   /** output frame in pixels (from aspect ratio) */
   outW: number;
   outH: number;
@@ -16,6 +21,8 @@ export interface ExportRequest {
   cropConst: CropState;
   mainAudio: 'host' | 'constant';
   normalize: boolean;
+  /** Gain applied to the kept audio (volume x normalize), 1 = unchanged. */
+  gain: number;
   segments: {
     startMs: number; endMs: number; style: string; main: string; corner: string; size: string;
   }[];
@@ -83,10 +90,11 @@ export async function loadPcm(pcmPath: string): Promise<Float32Array> {
   return out;
 }
 
-export function toExportRequest(p: Project, hostUri: string, constUri: string, height: 720 | 1080): ExportRequest {
+export function toExportRequest(p: Project, hostUri: string, constUri: string, height: number, fps: number, mbps: number): ExportRequest {
   const { w, h } = outputSize(p.aspect, height);
   return {
     hostUri, constUri,
+    fps, bitrate: Math.round(mbps * 1_000_000),
     offsetMs: p.offsetMs,
     durationMs: p.durationMs,
     height,
@@ -94,6 +102,7 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     cropHost: p.cropHost, cropConst: p.cropConst,
     mainAudio: p.mainAudio,
     normalize: p.normalize,
+    gain: effectiveGain(p, p.mainAudio),
     // sorted; parts removed by silence cut are simply not in this list
     segments: [...p.segments].sort((a, b) => a.startMs - b.startMs).map((s) => ({
       startMs: s.startMs, endMs: s.endMs, style: s.style, main: s.main, corner: s.corner, size: s.size,

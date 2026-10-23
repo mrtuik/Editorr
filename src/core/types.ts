@@ -54,7 +54,12 @@ export interface Segment {
 export interface Settings {
   sensitivity: Sensitivity;
   minSegmentMs: number;
-  resolution: 720 | 1080;
+  /** Export short side in pixels: 480, 720, 1080, 1440 (2K) or 2160 (4K). */
+  resolution: number;
+  /** Export frame rate: 24, 25, 30, 50 or 60. The real rate never goes above the source. */
+  fps: number;
+  /** Export bitrate in Mbps. 0 = automatic (recommended for the picked size). */
+  bitrateMbps: number;
   bothSpeaking: 'hold' | 'side';
   /** Silence cut: both people quiet for at least this long gets removed. */
   silenceMinMs: number;
@@ -76,6 +81,9 @@ export interface Project {
   segments: Segment[];
   mainAudio: Role;
   normalize: boolean;
+  /** Volume of each mic in percent, 0 to 1000 (100 = unchanged). */
+  volumeHost: number;
+  volumeConst: number;
   durationMs: number;
   aspect: Aspect;
   cropHost: CropState;
@@ -113,4 +121,15 @@ export function segmentColor(s: Segment): string {
   if (s.style === 'side') return STYLE_COLOR.side;
   if (s.style === 'updown') return STYLE_COLOR.updown;
   return STYLE_COLOR.popup;
+}
+
+export const RES_STEPS = [480, 720, 1080, 1440, 2160];
+export const FPS_STEPS = [24, 25, 30, 50, 60];
+export const BITRATE_STEPS = [5, 10, 20, 50, 100];
+export const resLabel = (r: number) => (r === 1440 ? '2K' : r === 2160 ? '4K' : `${r}p`);
+
+/** Recommended bitrate (Mbps) for a short side and frame rate, like CapCut's "Recommended for this video". */
+export function recommendedMbps(short: number, fps: number): number {
+  const base = short >= 2160 ? 40 : short >= 1440 ? 22 : short >= 1080 ? 10 : short >= 720 ? 6 : 3;
+  return Math.round(base * (fps > 30 ? 1.5 : 1));
 }

@@ -78,7 +78,7 @@ export function settingsScreen() {
         option<number>('Minimum segment length', 'Shorter parts are merged into their neighbour.', [[1000, '1.0 s'], [1500, '1.5 s'], [2500, '2.5 s'], [4000, '4 s']], s.minSegmentMs, (v) => { s.minSegmentMs = v; save(); }),
         option<'hold' | 'side'>('When both people talk', '', [['hold', 'Keep last speaker'], ['side', 'Side by side']], s.bothSpeaking, (v) => { s.bothSpeaking = v; save(); })),
       group('Export',
-        option<number>('Default resolution', 'Used when you open the editor. You can change it there too.', [[720, '720p'], [1080, '1080p']], s.resolution, (v) => { s.resolution = v as 720 | 1080; save(); })),
+        option<number>('Default resolution', 'Used when you open the editor. You can change it there too.', [[480, '480p'], [720, '720p'], [1080, '1080p'], [1440, '2K'], [2160, '4K']], s.resolution, (v) => { s.resolution = v; save(); })),
       group('Storage',
         storageBody,
         action('silence', 'Clear cache', clearCache),

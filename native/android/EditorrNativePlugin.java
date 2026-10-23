@@ -22,7 +22,10 @@ import android.graphics.Bitmap;
 
 import androidx.activity.result.ActivityResult;
 import androidx.annotation.NonNull;
+import androidx.media3.common.C;
 import androidx.media3.common.Effect;
+import androidx.media3.common.audio.AudioProcessor;
+import androidx.media3.common.audio.BaseAudioProcessor;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.Size;
@@ -31,7 +34,11 @@ import androidx.media3.common.VideoCompositorSettings;
 import androidx.media3.effect.StaticOverlaySettings;
 import androidx.media3.effect.Crop;
 import androidx.media3.effect.Presentation;
+import androidx.media3.effect.FrameDropEffect;
 import androidx.media3.transformer.Composition;
+import androidx.media3.transformer.DefaultEncoderFactory;
+import androidx.media3.transformer.VideoEncoderSettings;
+import android.view.WindowManager;
 import androidx.media3.transformer.EditedMediaItem;
 import androidx.media3.transformer.EditedMediaItemSequence;
 import androidx.media3.transformer.Effects;
@@ -677,9 +684,14 @@ public class EditorrNativePlugin extends Plugin {
             final int shortSide = call.getInt("height", 720);
             final int outW = call.getInt("outW", (shortSide * 16 / 9) / 2 * 2);
             final int outH = call.getInt("outH", shortSide);
+            final int fps = Math.max(10, Math.min(60, call.getInt("fps", 30)));
+            final int shortForRate = Math.min(outW, outH);
+            final int defBitrate = (shortForRate >= 2160 ? 40 : shortForRate >= 1440 ? 22 : shortForRate >= 1080 ? 10 : shortForRate >= 720 ? 6 : 3) * 1_000_000;
+            final int bitrate = Math.max(1_000_000, Math.min(100_000_000, call.getInt("bitrate", defBitrate)));
             final CropSpec cropHost = readCrop(call.getObject("cropHost"));
             final CropSpec cropConst = readCrop(call.getObject("cropConst"));
             final boolean hostAudio = "host".equals(call.getString("mainAudio", "host"));
+            final float gain = (float) Math.max(0.0, Math.min(10.0, call.getDouble("gain", 1.0)));
             final List<Seg> segs = new ArrayList<>();
             JSArray arr = call.getArray("segments");
             for (int i = 0; i < arr.length(); i++) {
@@ -691,7 +703,7 @@ public class EditorrNativePlugin extends Plugin {
                 segs.add(s);
             }
             getActivity().runOnUiThread(() ->
-                    startTransformer(call, hostUri, constUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst));
+                    startTransformer(call, hostUri, constUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, gain, fps, bitrate));
         } catch (JSONException e) {
             call.reject("Bad export request: " + e.getMessage());
         }
@@ -699,7 +711,7 @@ public class EditorrNativePlugin extends Plugin {
 
     private void startTransformer(PluginCall call, String hostUri, String constUri, long offsetMs, long durationMs,
                                   int outW, int outH, boolean hostAudio, List<Seg> segs,
-                                  CropSpec cropHost, CropSpec cropConst) {
+                                  CropSpec cropHost, CropSpec cropConst, float gain, int fps, int bitrate) {
         try {
             // Timeline time = Host time. The Constant video is offsetMs ahead of it.
             final long hostStart = Math.max(0, -offsetMs);
@@ -724,8 +736,8 @@ public class EditorrNativePlugin extends Plugin {
             List<EditedMediaItem> hostItems = new ArrayList<>();
             List<EditedMediaItem> constItems = new ArrayList<>();
             for (Range r : ranges) {
-                hostItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, !hostAudio, cropHost));
-                constItems.add(item(constUri, r.a + offsetMs, r.b - r.a, outW, outH, hostAudio, cropConst));
+                hostItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, !hostAudio, cropHost, hostAudio ? gain : 1f));
+                constItems.add(item(constUri, r.a + offsetMs, r.b - r.a, outW, outH, hostAudio, cropConst, hostAudio ? 1f : gain));
             }
 
             EditedMediaItemSequence hostSeq = new EditedMediaItemSequence.Builder(hostItems.toArray(new EditedMediaItem[0])).build();
@@ -742,9 +754,25 @@ public class EditorrNativePlugin extends Plugin {
                 }
             };
 
+            // Frame rate: drop frames to the chosen rate (never invents frames, so it also lowers the work per second).
             Composition composition = new Composition.Builder(ImmutableList.of(hostSeq, constSeq))
                     .setVideoCompositorSettings(settings)
+                    .setEffects(new Effects(
+                            ImmutableList.<AudioProcessor>of(),
+                            ImmutableList.<Effect>of(FrameDropEffect.createDefaultFrameDropEffect(fps))))
                     .build();
+
+            // Hardware H.264 encoder with the chosen bitrate. Fallback lets the phone pick the nearest size it supports (big 2K/4K).
+            DefaultEncoderFactory encoderFactory = new DefaultEncoderFactory.Builder(getContext())
+                    .setRequestedVideoEncoderSettings(new VideoEncoderSettings.Builder()
+                            .setBitrate(bitrate)
+                            .setiFrameIntervalSeconds(1f)
+                            .build())
+                    .setEnableFallback(true)
+                    .build();
+
+            // Like CapCut: keep the screen awake so the export is not paused when the screen turns off.
+            setKeepAwake(true);
 
             File out = new File(getContext().getCacheDir(), "editorr/export_" + System.currentTimeMillis() + ".mp4");
             out.getParentFile().mkdirs();
@@ -752,9 +780,11 @@ public class EditorrNativePlugin extends Plugin {
             transformer = new Transformer.Builder(getContext())
                     .setVideoMimeType(MimeTypes.VIDEO_H264)
                     .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                    .setEncoderFactory(encoderFactory)
                     .addListener(new Transformer.Listener() {
                         @Override public void onCompleted(@NonNull Composition c, @NonNull ExportResult r) {
                             stopPolling();
+                            setKeepAwake(false);
                             new Thread(() -> {
                                 try {
                                     Uri saved = saveToGallery(out);
@@ -768,6 +798,7 @@ public class EditorrNativePlugin extends Plugin {
                         }
                         @Override public void onError(@NonNull Composition c, @NonNull ExportResult r, @NonNull ExportException e) {
                             stopPolling();
+                            setKeepAwake(false);
                             call.reject("Export failed: " + e.getMessage());
                         }
                     })
@@ -775,11 +806,12 @@ public class EditorrNativePlugin extends Plugin {
             transformer.start(composition, out.getAbsolutePath());
             startPolling();
         } catch (Exception e) {
+            setKeepAwake(false);
             call.reject("Export failed to start: " + e.getMessage());
         }
     }
 
-    private EditedMediaItem item(String uri, long startMs, long totalMs, int w, int h, boolean removeAudio, CropSpec crop) {
+    private EditedMediaItem item(String uri, long startMs, long totalMs, int w, int h, boolean removeAudio, CropSpec crop, float gain) {
         MediaItem mi = new MediaItem.Builder()
                 .setUri(uri)
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
@@ -800,8 +832,42 @@ public class EditorrNativePlugin extends Plugin {
         }
         return new EditedMediaItem.Builder(mi)
                 .setRemoveAudio(removeAudio)
-                .setEffects(new Effects(ImmutableList.of(), video.build()))
+                .setEffects(new Effects(
+                        (removeAudio || Math.abs(gain - 1f) < 0.005f) ? ImmutableList.<AudioProcessor>of() : ImmutableList.<AudioProcessor>of(new GainProcessor(gain)),
+                        video.build()))
                 .build();
+    }
+
+    /** Volume gain for 16-bit or float PCM, with a soft clip so a big boost (up to 10x) does not hard-distort. */
+    private static final class GainProcessor extends BaseAudioProcessor {
+        private final float gain;
+        GainProcessor(float gain) { this.gain = gain; }
+
+        @Override
+        protected AudioProcessor.AudioFormat onConfigure(AudioProcessor.AudioFormat in) throws AudioProcessor.UnhandledAudioFormatException {
+            if (in.encoding != C.ENCODING_PCM_16BIT && in.encoding != C.ENCODING_PCM_FLOAT) throw new AudioProcessor.UnhandledAudioFormatException(in);
+            return in;
+        }
+
+        private static float soft(float x) {
+            float a = Math.abs(x);
+            if (a <= 0.8f) return x;
+            float y = 0.8f + 0.2f * (float) Math.tanh((a - 0.8f) / 0.2f);
+            return x < 0 ? -y : y;
+        }
+
+        @Override
+        public void queueInput(ByteBuffer input) {
+            int n = input.remaining();
+            if (n == 0) return;
+            ByteBuffer out = replaceOutputBuffer(n);
+            if (inputAudioFormat.encoding == C.ENCODING_PCM_16BIT) {
+                while (input.remaining() >= 2) out.putShort((short) Math.round(soft(input.getShort() / 32768f * gain) * 32767f));
+            } else {
+                while (input.remaining() >= 4) out.putFloat(soft(input.getFloat() * gain));
+            }
+            out.flip();
+        }
     }
 
     /** Layout math. inputId 0 = Host (bottom), 1 = Constant (top). Both are pre-scaled to the output frame. */
@@ -839,18 +905,32 @@ public class EditorrNativePlugin extends Plugin {
 
     private void startPolling() {
         final ProgressHolder holder = new ProgressHolder();
+        final int[] last = { -1 };
         progressPoll = new Runnable() {
             @Override public void run() {
                 if (transformer == null) return;
                 if (transformer.getProgress(holder) != Transformer.PROGRESS_STATE_NOT_STARTED) {
-                    JSObject o = new JSObject();
-                    o.put("percent", holder.progress);
-                    notifyListeners("exportProgress", o);
+                    int tenth = Math.round(holder.progress * 10f);
+                    if (tenth != last[0]) { // only talk to the WebView when the number changed: keeps the UI thread free for the encoder
+                        last[0] = tenth;
+                        JSObject o = new JSObject();
+                        o.put("percent", holder.progress);
+                        notifyListeners("exportProgress", o);
+                    }
                 }
-                main.postDelayed(this, 500);
+                main.postDelayed(this, 1000);
             }
         };
         main.post(progressPoll);
+    }
+
+    private void setKeepAwake(boolean on) {
+        try {
+            getActivity().runOnUiThread(() -> {
+                if (on) getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                else getActivity().getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            });
+        } catch (Exception ignored) { }
     }
 
     private void stopPolling() {
@@ -863,6 +943,7 @@ public class EditorrNativePlugin extends Plugin {
         getActivity().runOnUiThread(() -> {
             if (transformer != null) transformer.cancel();
             stopPolling();
+            setKeepAwake(false);
             call.resolve();
         });
     }
@@ -877,7 +958,7 @@ public class EditorrNativePlugin extends Plugin {
             Uri uri = getContext().getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, v);
             try (InputStream in = new java.io.FileInputStream(file);
                  OutputStream os = getContext().getContentResolver().openOutputStream(uri)) {
-                byte[] buf = new byte[1 << 16];
+                byte[] buf = new byte[1 << 20];
                 int n;
                 while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
             }
@@ -888,7 +969,7 @@ public class EditorrNativePlugin extends Plugin {
             dir.mkdirs();
             File dest = new File(dir, name);
             try (InputStream in = new java.io.FileInputStream(file); OutputStream os = new FileOutputStream(dest)) {
-                byte[] buf = new byte[1 << 16];
+                byte[] buf = new byte[1 << 20];
                 int n;
                 while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
             }

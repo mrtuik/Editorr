@@ -8,6 +8,8 @@ export const DEFAULT_SETTINGS: Settings = {
   sensitivity: 'medium',
   minSegmentMs: 1500,
   resolution: 720,
+  fps: 30,
+  bitrateMbps: 0,
   bothSpeaking: 'hold',
   silenceMinMs: 1000,
   silencePadMs: 150,
@@ -99,7 +101,7 @@ export function saveSettings(s: Settings): Promise<void> {
 
 /** Projects saved by older versions miss the newer fields. */
 function withDefaults(p: Project): Project {
-  return { ...p, aspect: p.aspect ?? '16:9', cropHost: p.cropHost ?? { ...NO_CROP }, cropConst: p.cropConst ?? { ...NO_CROP } };
+  return { ...p, aspect: p.aspect ?? '16:9', cropHost: p.cropHost ?? { ...NO_CROP }, cropConst: p.cropConst ?? { ...NO_CROP }, volumeHost: p.volumeHost ?? 100, volumeConst: p.volumeConst ?? 100 };
 }
 
 export async function listProjects(strict = false): Promise<Project[]> {
@@ -178,6 +180,8 @@ export function newProject(): Project {
     segments: [],
     mainAudio: 'host',
     normalize: false,
+    volumeHost: 100,
+    volumeConst: 100,
     durationMs: 0,
     aspect: '16:9',
     cropHost: { ...NO_CROP },

@@ -273,3 +273,41 @@ input[type=file] { display: none; }
 .saction:active { background: #262628; }
 .saction.danger { color: #ff5a5f; }
 .sfoot { font-size: 12px; color: #6f6f72; text-align: center; margin: 14px 8px 0; }
+
+/* ---------- CapCut style task dialog + list ---------- */
+.pill.tap { pointer-events: auto; font: inherit; font-size: 13px; cursor: pointer; }
+.pills { pointer-events: none; }
+.taskdialog-wrap { position: absolute; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.taskdialog { pointer-events: auto; position: relative; width: min(78%, 280px); background: rgba(38,38,40,.97); border: 1px solid #333; border-radius: 16px; padding: 22px 18px 16px; display: flex; flex-direction: column; align-items: center; gap: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.6); }
+.taskdialog > .iconbtn { position: absolute; top: 4px; right: 4px; width: 36px; height: 36px; min-height: 36px; opacity: .7; }
+.td-ring { color: #19e6c1; }
+.td-label { font-size: 14px; color: #fff; text-align: center; }
+.td-bar { width: 100%; height: 4px; border-radius: 2px; background: #3a3a3c; overflow: hidden; }
+.td-bar i { display: block; height: 100%; background: #19e6c1; transition: width .2s; }
+.td-bar i.indet { width: 35%; animation: indet 1s ease-in-out infinite alternate; }
+@keyframes indet { from { margin-left: 0; } to { margin-left: 65%; } }
+.td-min { border: 1px solid #555; background: transparent; color: #fff; border-radius: 8px; padding: 6px 22px; font: inherit; font-size: 13px; }
+.tl-title { font-weight: 600; margin-bottom: 4px; }
+.tl-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.tl-main { flex: 1; min-width: 0; }
+.tl-pct { font-size: 12px; color: var(--text2); }
+
+/* ---------- Export screen (CapCut style) ---------- */
+.xexport { min-height: 44px; padding: 0 22px; border-radius: 12px; border: 0; font: inherit; font-weight: 600; color: #04121a; background: linear-gradient(90deg, #e9ecff, #b9fbff); }
+.xexport:active { opacity: .8; }
+.xwrap { padding-top: 4px; }
+.xsec { margin-bottom: 26px; }
+.xhead { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.xlabel { font-size: 17px; font-weight: 500; }
+.xhint { font-size: 12.5px; color: var(--text2); text-align: right; }
+.xrange { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; background: transparent; margin: 0; --p: 0%; }
+.xrange::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(90deg, #19c6d9 var(--p), #3a3a3a var(--p)); }
+.xrange::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; margin-top: -9.5px; border-radius: 50%; background: #fff; border: 0; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.xticks { display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: var(--text2); }
+.xsize { text-align: center; color: var(--text2); font-size: 13px; padding: 6px 0 22px; border-top: 1px solid var(--border); }
+.xrun { padding-top: 56px; text-align: center; }
+.xtitle { font-size: 24px; font-weight: 500; }
+.xtitle.ok { color: var(--text); } .xtitle.err { color: var(--error); font-size: 17px; }
+.xsub { margin-top: 10px; color: var(--text2); font-size: 14px; }
+.xbox { width: 62%; max-width: 260px; aspect-ratio: 9 / 16; margin: 36px auto 0; border: 6px solid #fff; background: #090a0d; display: flex; align-items: center; justify-content: center; }
+.xpct { font-size: 34px; font-weight: 400; }

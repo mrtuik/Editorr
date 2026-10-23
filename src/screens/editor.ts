@@ -8,13 +8,14 @@ import { fileSrc, isNative, tick } from '../core/native';
 import { ensureAudio, nextPaint, runAutoSwitch, runSync } from '../core/pipeline';
 import { ensureProxy, needsProxy } from '../core/proxy';
 import { makeStrip, type Strip } from '../core/thumbs';
-import { endTask, onTasks, startTask, updateTask, type Task } from '../core/tasks';
+import { effectiveGain } from '../core/gain';
+import { endTask, minimizeAllDialogs, minimizeTask, onTasks, startTask, updateTask, type Task } from '../core/tasks';
 import {
   coverage, defaultSegments, deleteSegment, dropSlivers, fitSegmentsToDuration, intersectRanges, isKept, keptMs, mergeWithPrev,
   moveBoundary, nextKeptStart, overlapDuration, segmentAt, splitAt, subtractRanges, updateSegment, type Range,
 } from '../core/timeline';
-import { Aspect, ASPECTS, aspectValue, Corner, CropState, LayoutStyle, NO_CROP, PopupSize, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
-import { actionSheet, confirmDialog, fmtClock, h, ICON, icon, iconButton, progressBar, spinner, toast } from '../ui';
+import { Aspect, ASPECTS, aspectValue, Corner, CropState, LayoutStyle, NO_CROP, PopupSize, RES_STEPS, resLabel, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
+import { actionSheet, confirmDialog, fmtClock, h, ICON, icon, iconButton, spinner, toast } from '../ui';
 
 type Panel = 'none' | 'ratio' | 'crop' | 'silence' | 'sync' | 'layout' | 'main' | 'audio';
 
@@ -71,7 +72,8 @@ export function editorScreen() {
   const guideV = h('div', { class: 'guide v' });
   const guideH = h('div', { class: 'guide h' });
   const pillsEl = h('div', { class: 'pills' });
-  const preview = h('div', { class: 'preview' }, stage, guideV, guideH, pillsEl);
+  const dialogHost = h('div', { class: 'taskdialog-wrap' });
+  const preview = h('div', { class: 'preview' }, stage, guideV, guideH, pillsEl, dialogHost);
 
   /** Fit the stage (project aspect ratio) inside the preview area, like a real editor. */
   function fitStage() {
@@ -237,7 +239,37 @@ export function editorScreen() {
     return null;
   }
 
+  // ----- volume: Web Audio gain (HTML video.volume stops at 100 %) + soft limiter -----
+  let actx: AudioContext | null = null;
+  const gainNodes: Partial<Record<Role, GainNode>> = {};
+  function ensureGraph(): boolean {
+    if (actx) return true;
+    try {
+      const AC = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx: AudioContext = new AC();
+      const lim = ctx.createDynamicsCompressor();
+      lim.threshold.value = -6; lim.knee.value = 6; lim.ratio.value = 12; lim.attack.value = 0.003; lim.release.value = 0.15;
+      lim.connect(ctx.destination);
+      (['host', 'constant'] as Role[]).forEach((r) => {
+        const g = ctx.createGain();
+        ctx.createMediaElementSource(vid(r)).connect(g); g.connect(lim);
+        gainNodes[r] = g;
+      });
+      actx = ctx;
+      return true;
+    } catch { return false; }
+  }
+  /** Push the current volumes (and normalize) to the preview. Only builds the audio graph once a gain other than 100 % is needed. */
+  function applyVolume() {
+    const roles: Role[] = ['host', 'constant'];
+    if (!actx && roles.every((r) => Math.abs(effectiveGain(p, r) - 1) < 0.01)) return;
+    if (!ensureGraph()) { roles.forEach((r) => { vid(r).volume = Math.min(1, effectiveGain(p, r)); }); return; }
+    roles.forEach((r) => { if (gainNodes[r]) gainNodes[r]!.gain.value = effectiveGain(p, r); });
+    if (actx!.state === 'suspended') actx!.resume().catch(() => {});
+  }
+
   function setPlaying(on: boolean) {
+    if (on && actx && actx.state === 'suspended') actx.resume().catch(() => {});
     if (on && playReason()) { toast(playReason()!); on = false; }
     playing = on;
     if (on) {
@@ -722,16 +754,14 @@ export function editorScreen() {
     if (!runtime.hostMotion || !runtime.constMotion) {
       scanning = true; scanCancel = false;
       setPlaying(false);
-      const pb = progressBar();
-      const box = h('div', { class: 'scanbox' }, icon('lips', 22), pb.el, iconButton('close', 'Cancel scan', () => { scanCancel = true; }));
-      preview.append(box);
+      startTask('lips', 'Scanning lips', 0, { modal: true, cancel: () => { scanCancel = true; } });
       try {
         const dur = p.durationMs;
-        const a = await scanMotion(hostV.currentSrc || hostV.src, 0, dur, (x) => pb.set(x / 2), () => scanCancel);
-        const b = a ? await scanMotion(constV.currentSrc || constV.src, p.offsetMs, dur, (x) => pb.set(50 + x / 2), () => scanCancel) : null;
+        const a = await scanMotion(hostV.currentSrc || hostV.src, 0, dur, (x) => updateTask('lips', undefined, x / 2), () => scanCancel);
+        const b = a ? await scanMotion(constV.currentSrc || constV.src, p.offsetMs, dur, (x) => updateTask('lips', undefined, 50 + x / 2), () => scanCancel) : null;
         if (a && b) { runtime.hostMotion = a; runtime.constMotion = b; }
       } catch { /* fall through */ }
-      box.remove(); scanning = false;
+      endTask('lips'); scanning = false;
       if (!runtime.hostMotion || !runtime.constMotion) {
         if (scanCancel) { toast('Scan cancelled'); return; }
         toast('Could not read the video frames for the lips scan. Using voice only.');
@@ -880,7 +910,7 @@ export function editorScreen() {
     if (!needAudio()) return;
     hist.push(snap());
     const old = p.durationMs;
-    startTask('sync', 'Syncing audio');
+    startTask('sync', 'Syncing audio', 0, { modal: true });
     await nextPaint();
     const r = runSync(p);
     endTask('sync');
@@ -937,9 +967,19 @@ export function editorScreen() {
         ptile(icon('user', 26), 'Constant', () => patch({ main: 'constant' as Role }), { sel: seg?.main === 'constant', disabled: lock }),
         ptile(icon('swap', 26), 'Swap all', () => { doSwap(); renderPanel(); })));
     } else if (panel === 'audio') {
-      setPanel('Audio', pstrip(
-        ptile(icon('volume', 26), 'Host mic', () => { setAudio('host'); renderPanel(); }, { sel: p.mainAudio === 'host' }),
-        ptile(icon('volume', 26), 'Constant mic', () => { setAudio('constant'); renderPanel(); }, { sel: p.mainAudio === 'constant' })));
+      const vkey = p.mainAudio === 'host' ? 'volumeHost' : 'volumeConst';
+      const vol = p[vkey];
+      const setVol = (v: number) => { p[vkey] = v; applyVolume(); scheduleSave(); };
+      const vs = slider('Volume', 0, 1000, 5, vol, (v) => `${Math.round(v)}%`, setVol);
+      setPanel('Audio',
+        pstrip(
+          ptile(icon('volume', 26), 'Host mic', () => { setAudio('host'); renderPanel(); }, { sel: p.mainAudio === 'host' }),
+          ptile(icon('volume', 26), 'Constant mic', () => { setAudio('constant'); renderPanel(); }, { sel: p.mainAudio === 'constant' })),
+        vs.row,
+        h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Boost'),
+          chipRow<number>([[100, '100%'], [200, '200%'], [400, '400%'], [700, '700%'], [1000, '1000%']], vol, (v) => { setVol(v); renderPanel(); })),
+        h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Normalize'),
+          chipRow<string>([['off', 'Off'], ['on', 'On']], p.normalize ? 'on' : 'off', (v) => { p.normalize = v === 'on'; applyVolume(); scheduleSave(); renderPanel(); })));
     } else if (panel === 'crop') {
       const c: CropState = cropRole === 'host' ? p.cropHost : p.cropConst;
       const reset = h('button', { class: 'chip', onclick: () => { Object.assign(c, NO_CROP); applyCrop(cropRole); positionCropFrame(); scheduleSave(); } }, icon('trash', 16), 'Reset');
@@ -1157,11 +1197,12 @@ export function editorScreen() {
     }
     if (destroyed) return;
     computePeaks(); requestDraw();
+    applyVolume();
 
     if (!p.segments.length) {
       // first time in the editor with these two videos
       if (audioReady()) {
-        startTask('sync', 'Syncing audio');
+        startTask('sync', 'Syncing audio', 0, { modal: true });
         await nextPaint();
         if (destroyed) { endTask('sync'); return; }
         const r = runSync(p);
@@ -1170,7 +1211,7 @@ export function editorScreen() {
         p.segments = defaultSegments(p.durationMs, p.mainAudio);
         selectedId = p.segments[0].id;
         syncReady = true; refresh(); updatePlayState();
-        startTask('switch', 'Detecting who is speaking');
+        startTask('switch', 'Detecting who is speaking', 0, { modal: true });
         await nextPaint();
         if (destroyed) { endTask('switch'); return; }
         p.segments = runAutoSwitch(p, app.settings);
@@ -1202,8 +1243,8 @@ export function editorScreen() {
 
   // ======================================================================= Screen
   const resChip = h('button', { class: 'reschip', 'aria-label': 'Export resolution', onclick: () => {
-    actionSheet([720, 1080].map((r) => ({ label: `${r}P${app.settings.resolution === r ? '  (selected)' : ''}`, run: () => { app.settings.resolution = r as 720 | 1080; saveSettings(app.settings); resChip.firstChild!.textContent = `${r}P`; } })));
-  } }, h('span', {}, `${app.settings.resolution}P`), icon('chevD', 14));
+    actionSheet(RES_STEPS.map((r) => ({ label: `${resLabel(r)}${app.settings.resolution === r ? '  (selected)' : ''}`, run: () => { app.settings.resolution = r; saveSettings(app.settings); resChip.firstChild!.textContent = resLabel(r); } })));
+  } }, h('span', {}, resLabel(app.settings.resolution)), icon('chevD', 14));
 
   const el = h('div', { class: 'screen editor' },
     h('div', { class: 'edtop' },
@@ -1217,14 +1258,58 @@ export function editorScreen() {
     preview, controls, tl, toolbar, panelEl);
 
   app.onBack = () => {
+    if (minimizeAllDialogs()) return true;
     if (stage.classList.contains('full')) { exitFull(); return true; }
     if (panel !== 'none') { closePanel(); return true; }
     if (selectedId || selClip) { selectedId = null; selClip = null; renderBar(); draw(); return true; }
     return false;
   };
 
+  // ----- CapCut style: dialog with % + Minimize -> small "Applying N features" pill -> tap = bottom sheet -----
+  let listSheet: HTMLElement | null = null;
+  let lastTasks: Task[] = [];
+  const dialogEl = dialogHost;
+  function closeListSheet() { listSheet?.remove(); listSheet = null; }
+  function renderListSheet() {
+    if (!listSheet) return;
+    const rows = lastTasks.filter((t) => t.modal);
+    if (!rows.length) { closeListSheet(); return; }
+    const body = listSheet.querySelector('.sheet') as HTMLElement;
+    body.replaceChildren(
+      h('div', { class: 'tl-title' }, 'In progress'),
+      ...rows.map((t) => h('div', { class: 'tl-row' },
+        spinner(18),
+        h('div', { class: 'tl-main' }, h('div', {}, t.label), h('div', { class: 'tl-pct' }, t.pct ? `${t.pct}%` : 'Working...')),
+        t.cancel ? iconButton('close', 'Cancel', () => t.cancel!(), 'plain') : null,
+        h('button', { class: 'chip', onclick: () => { closeListSheet(); minimizeTask(t.id, false); } }, 'Show'))),
+      h('button', { class: 'btn', onclick: closeListSheet }, 'Close'));
+  }
+  function openListSheet() {
+    closeListSheet();
+    listSheet = h('div', { class: 'menu', onclick: (ev: Event) => { if (ev.target === listSheet) closeListSheet(); } }, h('div', { class: 'sheet' }));
+    document.body.append(listSheet);
+    renderListSheet();
+  }
+
   offTasks = onTasks((list: Task[]) => {
-    pillsEl.replaceChildren(...list.map((t) => h('div', { class: 'pill', role: 'status' }, spinner(16), h('span', {}, t.label + (t.pct !== undefined && t.pct > 0 ? ` ${t.pct}%` : '')))));
+    lastTasks = list;
+    // 1) dialog for the first modal task that is not minimized
+    const dlg = list.find((t) => t.modal && !t.minimized);
+    if (dlg) {
+      const pct = dlg.pct ?? 0;
+      dialogEl.replaceChildren(h('div', { class: 'taskdialog', role: 'dialog' },
+        iconButton('close', dlg.cancel ? 'Cancel' : 'Minimize', () => { if (dlg.cancel) dlg.cancel(); else minimizeTask(dlg.id); }, 'plain'),
+        h('div', { class: 'td-ring' }, spinner(34)),
+        h('div', { class: 'td-label' }, dlg.label + (pct > 0 ? `... ${pct}%` : '...')),
+        h('div', { class: 'td-bar' }, h('i', { style: pct > 0 ? `width:${pct}%` : '', class: pct > 0 ? '' : 'indet' })),
+        h('button', { class: 'td-min', onclick: () => minimizeTask(dlg.id) }, 'Minimize')));
+    } else dialogEl.replaceChildren();
+    // 2) pills: normal tasks keep their label; minimized dialogs fold into one tappable pill
+    const minimized = list.filter((t) => t.modal && t.minimized);
+    const pills: Node[] = list.filter((t) => !t.modal).map((t) => h('div', { class: 'pill', role: 'status' }, spinner(16), h('span', {}, t.label + (t.pct !== undefined && t.pct > 0 ? ` ${t.pct}%` : ''))));
+    if (minimized.length) pills.push(h('button', { class: 'pill tap', onclick: openListSheet }, spinner(16), h('span', {}, `Applying ${minimized.length} feature${minimized.length === 1 ? '' : 's'}`)));
+    pillsEl.replaceChildren(...pills);
+    renderListSheet();
     if (!destroyed) updatePlayState();
   });
 
@@ -1247,7 +1332,8 @@ export function editorScreen() {
       hostV.pause(); constV.pause();
       hostStrip?.cancel(); constStrip?.cancel();
       offTasks();
-      endTask('audio'); endTask('sync'); endTask('switch'); endTask('proxy-host'); endTask('proxy-constant');
+      endTask('audio'); endTask('sync'); endTask('switch'); endTask('proxy-host'); endTask('proxy-constant'); endTask('lips'); scanCancel = true; closeListSheet();
+      try { actx?.close(); } catch { /* ignore */ }
       window.removeEventListener('resize', onResize);
       ro.disconnect();
       (screen.orientation as any)?.unlock?.();
