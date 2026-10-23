@@ -13,6 +13,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.StatFs;
 import android.provider.MediaStore;
@@ -91,6 +92,26 @@ public class EditorrNativePlugin extends Plugin {
     private volatile boolean cancelDenoise;
     private final Handler main = new Handler(Looper.getMainLooper());
     private Runnable progressPoll;
+    /** Export runs on its own thread so the WebView (UI thread) stays smooth while encoding. */
+    private HandlerThread exportThread;
+    private Handler exportHandler;
+
+    private synchronized Handler exportHandler() {
+        if (exportThread == null || !exportThread.isAlive()) {
+            exportThread = new HandlerThread("editorr-export");
+            exportThread.start();
+            exportHandler = new Handler(exportThread.getLooper());
+        }
+        return exportHandler;
+    }
+
+    /** Stop preview-copy jobs so they do not fight the export for the video encoder. */
+    private void cancelProxyJobs() {
+        main.post(() -> {
+            for (Transformer t : proxyJobs.values()) { try { t.cancel(); } catch (Exception ignored) { } }
+            proxyJobs.clear();
+        });
+    }
 
     // ------------------------------------------------------------------ pick
 
@@ -1093,7 +1114,8 @@ public class EditorrNativePlugin extends Plugin {
                 s.corner = o.getString("corner"); s.size = o.getString("size");
                 segs.add(s);
             }
-            getActivity().runOnUiThread(() ->
+            cancelProxyJobs();
+            exportHandler().post(() ->
                     startTransformer(call, hostUri, constUri, cleanAudioUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate));
         } catch (JSONException e) {
             call.reject("Bad export request: " + e.getMessage());
@@ -1181,6 +1203,7 @@ public class EditorrNativePlugin extends Plugin {
             out.getParentFile().mkdirs();
 
             transformer = new Transformer.Builder(getContext())
+                    .setLooper(exportHandler().getLooper())
                     .setVideoMimeType(MimeTypes.VIDEO_H264)
                     .setAudioMimeType(MimeTypes.AUDIO_AAC)
                     .setEncoderFactory(encoderFactory)
@@ -1375,10 +1398,10 @@ public class EditorrNativePlugin extends Plugin {
                         notifyListeners("exportProgress", o);
                     }
                 }
-                main.postDelayed(this, 1000);
+                exportHandler().postDelayed(this, 1000);
             }
         };
-        main.post(progressPoll);
+        exportHandler().post(progressPoll);
     }
 
     private void setKeepAwake(boolean on) {
@@ -1391,7 +1414,7 @@ public class EditorrNativePlugin extends Plugin {
     }
 
     private void stopPolling() {
-        if (progressPoll != null) main.removeCallbacks(progressPoll);
+        if (progressPoll != null) exportHandler().removeCallbacks(progressPoll);
         progressPoll = null;
     }
 
@@ -1400,7 +1423,7 @@ public class EditorrNativePlugin extends Plugin {
         cancelDenoise = true;
         Thread job = denoiseThread;
         if (job != null) job.interrupt();
-        getActivity().runOnUiThread(() -> {
+        exportHandler().post(() -> {
             if (transformer != null) transformer.cancel();
             stopPolling();
             setKeepAwake(false);

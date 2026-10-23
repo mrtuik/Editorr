@@ -10,6 +10,7 @@ import { ensureAudio, nextPaint, runAutoSwitch, runSync } from '../core/pipeline
 import { ensureProxy, needsProxy } from '../core/proxy';
 import { makeStrip, type Strip } from '../core/thumbs';
 import { effectiveGain } from '../core/gain';
+import { openExportSheet, resChipText } from './exportSheet';
 import { endTask, minimizeAllDialogs, minimizeTask, onTasks, startTask, updateTask, type Task } from '../core/tasks';
 import {
   coverage, defaultSegments, deleteSegment, dropSlivers, fitSegmentsToDuration, intersectRanges, isKept, keptMs, mergeWithPrev,
@@ -1563,14 +1564,23 @@ export function editorScreen() {
   }
 
   // ======================================================================= Screen
+  function goExport() {
+    if (!syncReady || !p.segments.length) { toast('Wait until syncing is done.'); return; }
+    setPlaying(false);
+    app.go('export'); // the screen's destroy() saves the project; no extra wait here keeps the tap instant
+  }
+  const resChip = h('button', { class: 'reschip', 'aria-label': 'Export settings', onclick: () => {
+    if (!syncReady || !p.segments.length) { toast('Wait until syncing is done.'); return; }
+    openExportSheet(p, { onChange: () => setResChip(), onExport: goExport });
+  } }, h('span', {}, resChipText(p)), icon('chevD', 14));
+  function setResChip() { (resChip.firstElementChild as HTMLElement).textContent = resChipText(p); }
+
   const el = h('div', { class: 'screen editor' },
     h('div', { class: 'edtop' },
       iconButton('close', 'Close', async () => { setPlaying(false); await saveProject(p); app.go('home'); }, 'plain'),
       h('div', { class: 'grow' }),
-      h('button', { class: 'exportbtn', 'aria-label': 'Export', onclick: async () => {
-        if (!syncReady || !p.segments.length) { toast('Wait until syncing is done.'); return; }
-        setPlaying(false); await saveProject(p); app.go('export');
-      } }, 'Export')),
+      resChip,
+      h('button', { class: 'exportbtn', 'aria-label': 'Export', onclick: goExport }, 'Export')),
     preview, controls, tl, toolbar, panelEl);
 
   app.onBack = () => {

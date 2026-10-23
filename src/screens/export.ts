@@ -2,23 +2,17 @@ import { app } from '../app';
 import { EditorrNative, isNative, toExportRequest } from '../core/native';
 import { h, toast } from '../ui';
 import { LocalNotifications } from '@capacitor/local-notifications';
-import { RES_STEPS, recommendedMbps, resLabel } from '../core/types';
+import { resLabel } from '../core/types';
+import { estimateMb, resolveExport } from '../core/exportOpts';
 
 export function exportScreen() {
   const p = app.project;
   const st = app.settings;
-  const srcShort = Math.min(p.host?.width ?? 0, p.host?.height ?? 0) || 1080;
-  const srcFps = Math.max(1, Math.min(60, Math.round(p.host?.fps || 30)));
-  // Export runs straight away: resolution from Settings (never above the source), source frame rate, recommended bitrate.
-  const wanted = RES_STEPS.includes(st.resolution) ? st.resolution : 720;
-  const fits = RES_STEPS.filter((r) => r <= srcShort);
-  const res = wanted <= srcShort ? wanted : (fits.length ? fits[fits.length - 1] : RES_STEPS[0]);
-  const fps = srcFps;
-  const mbps = recommendedMbps(res, fps);
+  // Values come from the export settings sheet in the editor (resolution, frame rate, bitrate), never above the source.
+  const { res, fps, mbps } = resolveExport(p, st);
   let running = false;
 
-  const keptMs = () => p.segments.reduce((a, s) => a + (s.endMs - s.startMs), 0) || p.durationMs;
-  const sizeMb = () => Math.round(((mbps * 1_000_000 + 128_000) * (keptMs() / 1000)) / 8 / 1_000_000);
+  const sizeMb = () => estimateMb(p, mbps);
 
   // ------------------------------------------------------------ progress + done screens
   const pct = h('div', { class: 'xpct' }, '0%');
@@ -82,7 +76,7 @@ export function exportScreen() {
     } catch (e) {
       running = false;
       status.className = 'xtitle err'; status.textContent = (e as Error).message || 'Export failed.';
-      sub.textContent = 'Try a lower resolution in Settings, or close other apps.'; sub.style.display = '';
+      sub.textContent = 'Try a lower resolution or bitrate in the export settings, or close other apps.'; sub.style.display = '';
       pct.textContent = '!'; cancelBtn.textContent = 'Back'; cancelBtn.onclick = () => { app.go('editor'); };
     }
   }
@@ -106,6 +100,8 @@ export function exportScreen() {
   }
 
   const el = h('div', { class: 'screen' }, h('div', { class: 'topbar' }, h('h1', {}, 'Export')), h('div', { class: 'content' }, runBox, doneBox));
-  setTimeout(start, 0); // no settings page: exporting begins as soon as the screen opens
+  // Exporting begins as soon as the screen opens, but only after it has painted and the editor is torn down.
+  // Starting in the same frame made the UI stutter while the encoder spun up.
+  requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(start, 350)));
   return { el };
 }
