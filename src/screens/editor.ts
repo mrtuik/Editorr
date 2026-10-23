@@ -22,15 +22,17 @@ import { confirmDialog, fmtClock, h, ICON, icon, iconButton, spinner, toast } fr
 type Panel = 'none' | 'ratio' | 'crop' | 'silence' | 'sync' | 'layout' | 'main' | 'audio';
 
 // ---- timeline geometry (CSS px) ----
-const G = 46;            // left column with the lane icons (like CapCut)
-const RULER = 26;
-const LANE = 44;         // one video clip row
-const LAY = 36;          // layout row
-const GAP = 4;
+const G = 34;            // left column with the lane icons (like CapCut)
+const RULER = 22;
+const LANE = 34;         // one video clip row
+const AUD = 26;          // audio waveform row
+const LAY = 28;          // layout row
+const GAP = 3;
 const HOST_Y = RULER + GAP;
 const CONST_Y = HOST_Y + LANE + GAP;
-const LAY_Y = CONST_Y + LANE + GAP;
-const TL_H = LAY_Y + LAY + 8;
+const AUD_Y = CONST_Y + LANE + GAP;
+const LAY_Y = AUD_Y + AUD + GAP;
+const TL_H = LAY_Y + LAY + 6;
 const CYAN = '#19e6c1';
 const CROP_RATIOS: [CropRatio, string][] = [
   ['custom', 'Custom'], ['9:16', '9:16'], ['16:9', '16:9'], ['1:1', '1:1'], ['4:3', '4:3'], ['2:3', '2:3'],
@@ -476,58 +478,127 @@ export function editorScreen() {
     g.beginPath(); g.roundRect(x, y, Math.max(1, w), hh, r);
   }
 
-  /** One video clip: picture strip, waveform, name. `x1` = where the video's own 0:00 sits on the timeline. */
-  function drawClip(g: CanvasRenderingContext2D, role: Role, x1: number, y: number, durMs: number, strip: Strip | undefined, arr: Float32Array | undefined, color: string) {
-    const x2 = x1 + (durMs / 1000) * pxPerSec;
-    if (x2 < G || x1 > W) return;
-    const vx1 = Math.max(x1, G), vx2 = Math.min(x2, W);
+  /** One video clip row: thumbnails ONLY, no waveform or darkening. Clamped to [0 .. p.durationMs]. */
+  function drawVideoRow(g: CanvasRenderingContext2D, role: Role, y: number, durMs: number, strip: Strip | undefined, offsetMs: number) {
+    const bx1 = xOf(0), bx2 = xOf(p.durationMs);
+    if (bx2 < G || bx1 > W) return;
+    const bw = bx2 - bx1;
+
     g.save();
-    rrect(g, x1, y, x2 - x1, LANE, 6); g.clip();
-    g.fillStyle = role === 'host' ? '#1d1d1d' : '#14231a'; g.fillRect(x1, y, x2 - x1, LANE);
-    // picture strip
+    rrect(g, bx1, y, bw, LANE, 6);
+    g.clip();
+
+    // Plain dark strip background (shows through where there is no video content)
+    g.fillStyle = role === 'host' ? '#181818' : '#141d17';
+    g.fillRect(bx1, y, bw, LANE);
+
+    // Picture strip (content slides inside the fixed block based on offsetMs)
     if (strip) {
-      const tw = Math.max(20, Math.round(LANE * strip.aspect));
-      const k0 = Math.max(0, Math.floor((vx1 - x1) / tw)), k1 = Math.floor((vx2 - x1) / tw);
-      for (let k = k0; k <= k1; k++) {
-        const tMs = ((k + 0.5) * tw / pxPerSec) * 1000;
-        const idx = Math.max(0, Math.min(strip.count - 1, Math.floor((tMs / durMs) * strip.count)));
-        const img = strip.frames[idx] ?? strip.frames.find((f) => !!f);
-        if (img) { g.globalAlpha = strip.frames[idx] ? 1 : 0.45; g.drawImage(img, x1 + k * tw, y, tw, LANE); g.globalAlpha = 1; }
+      const x1 = xOf(-offsetMs);
+      const x2 = x1 + (durMs / 1000) * pxPerSec;
+      const vx1 = Math.max(bx1, G, x1);
+      const vx2 = Math.min(bx2, W, x2);
+      if (vx2 > vx1) {
+        const tw = Math.max(16, Math.round(LANE * strip.aspect));
+        const k0 = Math.max(0, Math.floor((vx1 - x1) / tw));
+        const k1 = Math.floor((vx2 - x1) / tw);
+        for (let k = k0; k <= k1; k++) {
+          const tMs = ((k + 0.5) * tw / pxPerSec) * 1000;
+          if (tMs < 0 || tMs >= durMs) continue;
+          const idx = Math.max(0, Math.min(strip.count - 1, Math.floor((tMs / durMs) * strip.count)));
+          const img = strip.frames[idx] ?? strip.frames.find((f) => !!f);
+          if (img) {
+            g.globalAlpha = strip.frames[idx] ? 1 : 0.45;
+            g.drawImage(img, x1 + k * tw, y, tw, LANE);
+            g.globalAlpha = 1;
+          }
+        }
       }
     }
-    // darken the lower half so the waveform reads on top of pictures
-    const grad = g.createLinearGradient(0, y + LANE * 0.35, 0, y + LANE);
-    grad.addColorStop(0, 'rgba(0,0,0,0)'); grad.addColorStop(1, 'rgba(0,0,0,.72)');
-    g.fillStyle = grad; g.fillRect(x1, y, x2 - x1, LANE);
-    // waveform (bars grow up from the bottom, like CapCut audio)
-    if (arr) {
-      g.fillStyle = color;
-      for (let x = Math.floor(vx1); x < vx2; x += 2) {
-        const localMs = ((x - x1) / pxPerSec) * 1000;
-        const v = arr[Math.round((localMs / 1000) * PEAKS_PER_SEC)];
-        if (v === undefined) continue;
-        const bh = Math.max(1, v * LANE * 0.5);
-        g.fillRect(x, y + LANE - 3 - bh, 1.5, bh);
+
+    // Small label pill in the top-left corner
+    const label = `${role === 'host' ? 'Host' : 'Constant'}  ${fmtClock(durMs)}`;
+    g.font = '600 9px Roboto, sans-serif';
+    g.textBaseline = 'middle';
+    const lw = g.measureText(label).width;
+    const tx = Math.max(bx1, G) + 4;
+    if (tx + lw + 8 < bx2) {
+      rrect(g, tx, y + 3, lw + 8, 13, 3);
+      g.fillStyle = role === 'host' ? 'rgba(0,0,0,0.65)' : 'rgba(10,30,16,0.75)';
+      g.fill();
+      if (role === 'constant') {
+        g.strokeStyle = 'rgba(74,222,128,0.45)';
+        g.lineWidth = 0.8;
+        g.stroke();
       }
+      g.fillStyle = role === 'host' ? '#ffffff' : '#4ade80';
+      g.fillText(label, tx + 4, y + 9.5);
     }
-    // name + length
-    g.font = '600 10px Roboto, sans-serif'; g.textBaseline = 'top';
-    g.fillStyle = 'rgba(0,0,0,.55)';
-    const txt = `${role === 'host' ? 'Host' : 'Constant'}  ${fmtClock(durMs)}`;
-    const tx = Math.max(x1, G) + 6;
-    g.fillRect(tx - 3, y + 3, g.measureText(txt).width + 6, 14);
-    g.fillStyle = '#fff'; g.fillText(txt, tx, y + 5);
+
     g.restore();
-    g.strokeStyle = 'rgba(255,255,255,.16)'; g.lineWidth = 1;
-    rrect(g, x1 + 0.5, y + 0.5, x2 - x1 - 1, LANE - 1, 6); g.stroke();
+
+    // Outer border
     if (selClip === role) {
-      g.strokeStyle = '#fff'; g.lineWidth = 2;
-      rrect(g, x1 + 1, y + 1, x2 - x1 - 2, LANE - 2, 6); g.stroke();
+      g.strokeStyle = '#ffffff';
+      g.lineWidth = 2;
+      rrect(g, bx1 + 1, y + 1, bw - 2, LANE - 2, 6);
+      g.stroke();
+    } else {
+      g.strokeStyle = role === 'host' ? 'rgba(255,255,255,0.16)' : 'rgba(74,222,128,0.32)';
+      g.lineWidth = 1;
+      rrect(g, bx1 + 0.5, y + 0.5, bw - 1, LANE - 1, 6);
+      g.stroke();
     }
   }
 
+  /** Single audio waveform row for the selected sound (p.mainAudio). Centered mirrored bars. */
+  function drawAudioRow(g: CanvasRenderingContext2D) {
+    const bx1 = xOf(0), bx2 = xOf(p.durationMs);
+    if (bx2 < G || bx1 > W) return;
+    const bw = bx2 - bx1;
+
+    g.save();
+    rrect(g, bx1, AUD_Y, bw, AUD, 6);
+    g.clip();
+
+    g.fillStyle = '#141414';
+    g.fillRect(bx1, AUD_Y, bw, AUD);
+
+    const isHost = p.mainAudio === 'host';
+    const arr = isHost ? hostPeaks : constPeaks;
+    const offset = isHost ? 0 : p.offsetMs;
+    const durMs = isHost ? hostDur : constDur;
+    const color = isHost ? '#ffffff' : '#4ade80';
+
+    if (arr) {
+      g.fillStyle = color;
+      const cy = AUD_Y + AUD / 2;
+      const maxBh = (AUD - 6) / 2;
+      const vx1 = Math.max(bx1, G);
+      const vx2 = Math.min(bx2, W);
+      for (let x = Math.floor(vx1); x < vx2; x += 2) {
+        const ms = msOf(x);
+        if (ms < 0 || ms > p.durationMs) continue;
+        const localMs = ms + offset;
+        if (localMs < 0 || localMs >= durMs) continue;
+        const peakIdx = Math.round((localMs / 1000) * PEAKS_PER_SEC);
+        const v = arr[peakIdx];
+        if (v === undefined || v <= 0) continue;
+        const bh = Math.max(1, Math.min(maxBh, v * maxBh));
+        g.fillRect(x, cy - bh, 1.5, bh * 2);
+      }
+    }
+
+    g.restore();
+
+    g.strokeStyle = p.mainAudio === 'constant' ? 'rgba(74,222,128,0.25)' : 'rgba(255,255,255,0.16)';
+    g.lineWidth = 1;
+    rrect(g, bx1 + 0.5, AUD_Y + 0.5, bw - 1, AUD - 1, 6);
+    g.stroke();
+  }
+
   function drawGlyph(g: CanvasRenderingContext2D, s: Segment, cx: number, cy: number) {
-    g.save(); g.translate(cx, cy); g.scale(0.62, 0.62); cx = 0; cy = 0;
+    g.save(); g.translate(cx, cy); g.scale(0.52, 0.52); cx = 0; cy = 0;
     g.fillStyle = '#000000'; g.strokeStyle = '#000000'; g.lineWidth = 2;
     if (s.style === 'one') {
       g.beginPath(); g.arc(cx, cy - 4, 4, 0, 6.3); g.fill();
@@ -546,27 +617,32 @@ export function editorScreen() {
       actSrc = [runtime.hostMotion, runtime.constMotion];
       actH = motionToActivity(runtime.hostMotion); actC = motionToActivity(runtime.constMotion);
     }
-    const bars = (arr: Float32Array, y: number) => {
+    const bars = (arr: Float32Array, y: number, offsetMs: number) => {
       g.fillStyle = 'rgba(245,158,11,.9)';
-      for (let x = G; x < W; x += 3) {
+      const maxBh = 5;
+      const bx1 = Math.max(G, xOf(0)), bx2 = Math.min(W, xOf(p.durationMs));
+      for (let x = Math.floor(bx1); x < bx2; x += 3) {
         const ms = msOf(x); if (ms < 0 || ms > p.durationMs) continue;
-        const v = Math.max(0, Math.min(1.5, arr[Math.round(ms / 100)] ?? 0)) / 1.5;
-        const bh = v * LANE * 0.35; if (bh > 0.5) g.fillRect(x, y + LANE - 2 - bh, 2, bh);
+        const local = ms + offsetMs; if (local < 0) continue;
+        const v = Math.max(0, Math.min(1.5, arr[Math.round(local / 100)] ?? 0)) / 1.5;
+        const bh = v * maxBh; if (bh > 0.5) g.fillRect(x, y + LANE - 2 - bh, 2, bh);
       }
     };
-    bars(actH!, HOST_Y); bars(actC!, CONST_Y);
+    bars(actH!, HOST_Y, 0); bars(actC!, CONST_Y, p.offsetMs);
   }
 
   const personGlyph = (g: CanvasRenderingContext2D, cx: number, cy: number, color: string) => {
     g.fillStyle = color;
-    g.beginPath(); g.arc(cx, cy - 4, 4, 0, 6.3); g.fill();
-    g.beginPath(); g.arc(cx, cy + 9, 7.5, Math.PI, 0); g.fill();
+    g.beginPath(); g.arc(cx, cy - 4, 3.5, 0, 6.3); g.fill();
+    g.beginPath(); g.arc(cx, cy + 7, 6.5, Math.PI, 0); g.fill();
   };
-  const speakerGlyph = (g: CanvasRenderingContext2D, cx: number, cy: number, color: string, on: boolean) => {
-    g.fillStyle = color; g.strokeStyle = color; g.lineWidth = 1.5; g.lineCap = 'round';
-    g.beginPath(); g.moveTo(cx - 5, cy - 2.5); g.lineTo(cx - 2, cy - 2.5); g.lineTo(cx + 1.5, cy - 5.5); g.lineTo(cx + 1.5, cy + 5.5); g.lineTo(cx - 2, cy + 2.5); g.lineTo(cx - 5, cy + 2.5); g.closePath(); g.fill();
-    if (on) { g.beginPath(); g.arc(cx + 2, cy, 4.5, -0.9, 0.9); g.stroke(); }
-    else { g.beginPath(); g.moveTo(cx + 4, cy - 3.5); g.lineTo(cx + 9, cy + 3.5); g.moveTo(cx + 9, cy - 3.5); g.lineTo(cx + 4, cy + 3.5); g.stroke(); }
+  const speakerGlyph = (g: CanvasRenderingContext2D, cx: number, cy: number, color: string) => {
+    g.fillStyle = color; g.strokeStyle = color; g.lineWidth = 1.4; g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(cx - 4.5, cy - 2.5); g.lineTo(cx - 2, cy - 2.5); g.lineTo(cx + 1, cy - 5); g.lineTo(cx + 1, cy + 5); g.lineTo(cx - 2, cy + 2.5); g.lineTo(cx - 4.5, cy + 2.5);
+    g.closePath(); g.fill();
+    g.beginPath(); g.arc(cx + 1, cy, 3.5, -0.85, 0.85); g.stroke();
+    g.beginPath(); g.arc(cx + 1, cy, 6, -0.85, 0.85); g.stroke();
   };
 
   const stepFor = () => [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600].find((s) => s * pxPerSec >= 72) ?? 3600;
@@ -583,47 +659,61 @@ export function editorScreen() {
     // ---- ruler: 00:00 • 00:01 • (labels with a dot half way)
     const step = stepFor();
     const startS = Math.max(0, Math.floor(msOf(G) / 1000 / step) * step - step);
-    g.font = '10px Roboto, sans-serif'; g.textBaseline = 'middle';
+    g.font = '9px Roboto, sans-serif'; g.textBaseline = 'middle';
     for (let s = startS; s * 1000 <= Math.min(p.durationMs + step * 1000, msOf(W)); s += step) {
       const x = xOf(s * 1000);
       g.fillStyle = '#8a8a8a'; g.fillText(fmtClock(s * 1000), x + 3, RULER / 2);
-      g.fillRect(x, RULER - 6, 1, 6);
+      g.fillRect(x, RULER - 5, 1, 5);
       const mx = x + (step * pxPerSec) / 2;
       g.beginPath(); g.arc(mx, RULER / 2, 1.4, 0, 6.3); g.fill();
     }
 
-    // ---- clips. Host starts at 0. Constant starts where its own 0:00 lands: -offset.
-    drawClip(g, 'host', xOf(0), HOST_Y, hostDur, hostStrip, hostPeaks, 'rgba(255,255,255,.9)');
-    drawClip(g, 'constant', xOf(-p.offsetMs), CONST_Y, constDur, constStrip, constPeaks, '#4ade80');
+    // ---- video and audio rows (all clipped to 0 .. p.durationMs)
+    drawVideoRow(g, 'host', HOST_Y, hostDur, hostStrip, 0);
+    drawVideoRow(g, 'constant', CONST_Y, constDur, constStrip, p.offsetMs);
+    drawAudioRow(g);
     drawMotion(g);
 
     // ---- layout lane
-    g.fillStyle = '#0d0d0d'; g.fillRect(G, LAY_Y, W - G, LAY);
-    {
-      const kept = coverage(p.segments);
-      const holes: Range[] = [];
-      let at = 0;
-      for (const r of kept) { if (r.startMs > at) holes.push({ startMs: at, endMs: r.startMs }); at = r.endMs; }
-      if (kept.length && at < p.durationMs) holes.push({ startMs: at, endMs: p.durationMs });
-      for (const r of holes) {
-        const x1 = Math.max(G, xOf(r.startMs)), x2 = Math.min(W, xOf(r.endMs));
-        if (x2 - x1 < 2) continue;
-        g.save(); g.beginPath(); g.rect(x1, LAY_Y, x2 - x1, LAY); g.clip();
-        g.strokeStyle = '#3a3a3a'; g.lineWidth = 1;
-        for (let k = x1 - LAY; k < x2; k += 6) { g.beginPath(); g.moveTo(k, LAY_Y + LAY); g.lineTo(k + LAY, LAY_Y); g.stroke(); }
-        g.restore();
+    const lbx1 = xOf(0), lbx2 = xOf(p.durationMs);
+    const lbw = lbx2 - lbx1;
+    if (lbx2 >= G && lbx1 <= W) {
+      g.save();
+      rrect(g, lbx1, LAY_Y, lbw, LAY, 6);
+      g.clip();
+      g.fillStyle = '#0d0d0d';
+      g.fillRect(lbx1, LAY_Y, lbw, LAY);
+      {
+        const kept = coverage(p.segments);
+        const holes: Range[] = [];
+        let at = 0;
+        for (const r of kept) { if (r.startMs > at) holes.push({ startMs: at, endMs: r.startMs }); at = r.endMs; }
+        if (kept.length && at < p.durationMs) holes.push({ startMs: at, endMs: p.durationMs });
+        for (const r of holes) {
+          const x1 = Math.max(G, xOf(r.startMs)), x2 = Math.min(W, xOf(r.endMs));
+          if (x2 - x1 < 2) continue;
+          g.save(); g.beginPath(); g.rect(x1, LAY_Y, x2 - x1, LAY); g.clip();
+          g.strokeStyle = '#3a3a3a'; g.lineWidth = 1;
+          for (let k = x1 - LAY; k < x2; k += 6) { g.beginPath(); g.moveTo(k, LAY_Y + LAY); g.lineTo(k + LAY, LAY_Y); g.stroke(); }
+          g.restore();
+        }
       }
-    }
-    for (const s of p.segments) {
-      const x1 = xOf(s.startMs), x2 = xOf(s.endMs);
-      if (x2 < G || x1 > W) continue;
-      g.fillStyle = segmentColor(s);
-      rrect(g, x1 + 0.5, LAY_Y + 1, x2 - x1 - 1, LAY - 2, 6); g.fill();
-      if (s.id === selectedId) {
-        g.strokeStyle = '#FFFFFF'; g.lineWidth = 2;
-        rrect(g, x1 + 1, LAY_Y + 1, x2 - x1 - 2, LAY - 2, 6); g.stroke();
+      for (const s of p.segments) {
+        const x1 = xOf(s.startMs), x2 = xOf(s.endMs);
+        if (x2 < G || x1 > W) continue;
+        g.fillStyle = segmentColor(s);
+        rrect(g, x1 + 0.5, LAY_Y + 1, x2 - x1 - 1, LAY - 2, 6); g.fill();
+        if (s.id === selectedId) {
+          g.strokeStyle = '#FFFFFF'; g.lineWidth = 2;
+          rrect(g, x1 + 1, LAY_Y + 1, x2 - x1 - 2, LAY - 2, 6); g.stroke();
+        }
+        if (x2 - x1 > 24) drawGlyph(g, s, Math.max(x1, G) + 14, LAY_Y + LAY / 2);
       }
-      if (x2 - x1 > 24) drawGlyph(g, s, Math.max(x1, G) + 14, LAY_Y + LAY / 2);
+      g.restore();
+      g.strokeStyle = 'rgba(255,255,255,.16)';
+      g.lineWidth = 1;
+      rrect(g, lbx1 + 0.5, LAY_Y + 0.5, lbw - 1, LAY - 1, 6);
+      g.stroke();
     }
 
     // silence found but not cut yet
@@ -638,31 +728,31 @@ export function editorScreen() {
     // sync snap guide
     if (snapMs !== null) {
       const sx = xOf(snapMs);
-      g.fillStyle = CYAN; g.fillRect(sx - 0.75, HOST_Y - 2, 1.5, LANE * 2 + GAP + 4);
+      g.fillStyle = CYAN; g.fillRect(sx - 0.75, HOST_Y - 2, 1.5, CONST_Y + LANE - HOST_Y + 4);
     }
 
     // ---- left column (lane icons), drawn over the clips
     g.fillStyle = '#000'; g.fillRect(0, RULER, G, H - RULER);
     g.fillStyle = '#262626'; g.fillRect(G - 1, RULER, 1, H - RULER);
     const audioHost = p.mainAudio === 'host';
-    personGlyph(g, 14, HOST_Y + LANE / 2 - 1, '#ffffff');
-    speakerGlyph(g, 34, HOST_Y + LANE / 2, audioHost ? '#ffffff' : '#666', audioHost);
-    personGlyph(g, 14, CONST_Y + LANE / 2 - 1, '#4ade80');
-    speakerGlyph(g, 34, CONST_Y + LANE / 2, !audioHost ? '#4ade80' : '#666', !audioHost);
-    g.strokeStyle = '#d6d6d6'; g.fillStyle = '#d6d6d6'; g.lineWidth = 1.6;
-    const lx = 16, ly = LAY_Y + LAY / 2;
-    g.strokeRect(lx - 7, ly - 7, 6, 6); g.strokeRect(lx + 1, ly - 7, 6, 6); g.strokeRect(lx - 7, ly + 1, 6, 6); g.strokeRect(lx + 1, ly + 1, 6, 6);
+    personGlyph(g, G / 2, HOST_Y + LANE / 2, '#ffffff');
+    personGlyph(g, G / 2, CONST_Y + LANE / 2, '#4ade80');
+    speakerGlyph(g, G / 2, AUD_Y + AUD / 2, audioHost ? '#ffffff' : '#4ade80');
+    const lx = G / 2, ly = LAY_Y + LAY / 2;
+    g.strokeStyle = '#d6d6d6'; g.lineWidth = 1.4;
+    g.strokeRect(lx - 6, ly - 6, 5, 5); g.strokeRect(lx + 1, ly - 6, 5, 5);
+    g.strokeRect(lx - 6, ly + 1, 5, 5); g.strokeRect(lx + 1, ly + 1, 5, 5);
 
     // ---- time (top left, like CapCut): 00:34 / 10:22
     const cur = fmtClock(playMs), tot = ` / ${fmtClock(p.durationMs)}`;
     const kept = keptMs(p.segments);
     const note = p.segments.length && p.durationMs - kept > 500 ? `  (${fmtClock(kept)} kept)` : '';
-    g.font = '11px Roboto, sans-serif';
+    g.font = '10px Roboto, sans-serif';
     const wCur = g.measureText(cur).width, wTot = g.measureText(tot).width, wNote = g.measureText(note).width;
-    g.fillStyle = '#000'; g.fillRect(0, 0, 12 + wCur + wTot + wNote, RULER);
+    g.fillStyle = '#000'; g.fillRect(0, 0, 10 + wCur + wTot + wNote, RULER);
     g.textBaseline = 'middle';
-    g.fillStyle = '#fff'; g.fillText(cur, 8, RULER / 2);
-    g.fillStyle = '#8a8a8a'; g.fillText(tot + note, 8 + wCur, RULER / 2);
+    g.fillStyle = '#fff'; g.fillText(cur, 6, RULER / 2);
+    g.fillStyle = '#8a8a8a'; g.fillText(tot + note, 6 + wCur, RULER / 2);
 
     // ---- playhead (fixed at the center)
     g.fillStyle = '#FFFFFF'; g.fillRect(W / 2 - 1, 0, 2, H);
@@ -677,11 +767,12 @@ export function editorScreen() {
 
   const localX = (e: PointerEvent) => e.clientX - tl.getBoundingClientRect().left;
   const localY = (e: PointerEvent) => e.clientY - tl.getBoundingClientRect().top;
-  type Lane = 'ruler' | 'host' | 'const' | 'lay' | 'none';
+  type Lane = 'ruler' | 'host' | 'const' | 'audio' | 'lay' | 'none';
   function laneAt(y: number): Lane {
     if (y < RULER) return 'ruler';
     if (y < HOST_Y + LANE + GAP / 2) return 'host';
     if (y < CONST_Y + LANE + GAP / 2) return 'const';
+    if (y < AUD_Y + AUD + GAP / 2) return 'audio';
     if (y < LAY_Y + LAY + 6) return 'lay';
     return 'none';
   }
@@ -780,24 +871,43 @@ export function editorScreen() {
   function onTap(x: number, y: number) {
     const lane = laneAt(y);
     if (x < G) {
-      // left column: tap the speaker to use that video's sound
-      if (lane === 'host') setAudio('host');
-      else if (lane === 'const') setAudio('constant');
+      // left column: tap the speaker icon in the audio row to toggle sound
+      if (lane === 'audio') {
+        setAudio(p.mainAudio === 'host' ? 'constant' : 'host');
+      } else if (lane === 'host') {
+        setAudio('host');
+      } else if (lane === 'const') {
+        setAudio('constant');
+      }
       return;
     }
-    if (lane === 'lay' || lane === 'ruler' || lane === 'none') {
+    if (lane === 'lay' || lane === 'ruler' || lane === 'audio' || lane === 'none') {
       const s = lane === 'lay' ? hitSegment(x) : undefined;
       if (s) { if (panel !== 'none') closePanel(); selectSeg(s.id); tick(); }
       else if (lane !== 'ruler') { selClip = null; selectedId = null; renderBar(); draw(); }
       return;
     }
-    // a video clip: tap selects it; tapping the green clip opens Sync
-    if (lane === 'const') {
-      const cx1 = xOf(-p.offsetMs), cx2 = cx1 + (constDur / 1000) * pxPerSec;
-      if (x >= cx1 && x <= cx2) { selClip = 'constant'; selectedId = null; tick(); openPanel('sync'); return; }
-    } else {
-      const hx2 = xOf(0) + (hostDur / 1000) * pxPerSec;
-      if (x >= xOf(0) && x <= hx2) { if (panel !== 'none') closePanel(); selClip = 'host'; selectedId = null; renderBar(); draw(); tick(); return; }
+    // a video clip: tap selects it and switches sound; tapping the green clip opens Sync
+    const bx1 = xOf(0), bx2 = xOf(p.durationMs);
+    if (x >= bx1 && x <= bx2) {
+      if (lane === 'const') {
+        selClip = 'constant';
+        selectedId = null;
+        setAudio('constant');
+        tick();
+        openPanel('sync');
+        return;
+      }
+      if (lane === 'host') {
+        if (panel !== 'none') closePanel();
+        selClip = 'host';
+        selectedId = null;
+        setAudio('host');
+        renderBar();
+        draw();
+        tick();
+        return;
+      }
     }
     selClip = null; renderBar(); draw();
   }
