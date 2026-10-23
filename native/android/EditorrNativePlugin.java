@@ -723,7 +723,7 @@ public class EditorrNativePlugin extends Plugin {
             float[] ring = new float[ringSize], weights = new float[ringSize];
             long cursor = 0;
             try (PcmWavWriter writer = new PcmWavWriter(wavFile, sampleRate, samples)) {
-                int reportEvery = Math.max(1, frameCount / 70);
+                int writeReportEvery = Math.max(1, frameCount / 70);
                 for (int f = 0; f < frameCount; f++) {
                     checkDenoiseCancelled();
                     long start = (long) f * DENOISE_HOP - DENOISE_HALF;
@@ -765,7 +765,7 @@ public class EditorrNativePlugin extends Plugin {
                         weights[slot] = 0f;
                         cursor++;
                     }
-                    if (f % reportEvery == 0)
+                    if (f % writeReportEvery == 0)
                         reportDenoiseProgress(sourcePath, 30 + (int) (f * 70L / frameCount));
                 }
                 while (cursor < samples) {
