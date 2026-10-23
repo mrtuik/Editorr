@@ -65,9 +65,9 @@ export function homeScreen() {
 
   function options(p: Project) {
     projectActionSheet(p, [
-      { label: 'Rename', run: async () => { const n = await promptDialog('Rename project', p.name); if (n) { p.name = n; await saveProject(p); reload(); } } },
-      { label: 'Duplicate', run: () => duplicateProject(p) },
-      { label: 'Delete', danger: true, run: async () => { if (await confirmDialog('Delete project?', 'The project and its saved video copies are removed. The originals in your gallery stay.')) { await removeProjectMedia(p); await deleteProject(p.id); reload(); } } },
+      { label: 'Rename', iconName: 'edit', run: async () => { const n = await promptDialog('Rename project', p.name); if (n) { p.name = n; await saveProject(p); reload(); } } },
+      { label: 'Duplicate', iconName: 'duplicate', run: () => duplicateProject(p) },
+      { label: 'Delete', iconName: 'trash', danger: true, run: async () => { if (await confirmDialog('Delete project?', 'The project and its saved video copies are removed. The originals in your gallery stay.')) { await removeProjectMedia(p); await deleteProject(p.id); reload(); } } },
     ]);
   }
 

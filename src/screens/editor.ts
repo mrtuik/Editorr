@@ -22,17 +22,17 @@ import { confirmDialog, fmtClock, h, ICON, icon, iconButton, spinner, toast } fr
 type Panel = 'none' | 'ratio' | 'crop' | 'silence' | 'sync' | 'layout' | 'main' | 'audio';
 
 // ---- timeline geometry (CSS px) ----
-const G = 34;            // left column with the lane icons (like CapCut)
-const RULER = 22;
-const LANE = 34;         // one video clip row
-const AUD = 26;          // audio waveform row
+const G = 36;            // left column with the lane icons (like CapCut)
+const RULER = 24;
+const LANE = 54;         // video clip row (CapCut filmstrip height)
+const AUD = 32;          // audio waveform row
 const LAY = 28;          // layout row
-const GAP = 3;
+const GAP = 4;
 const HOST_Y = RULER + GAP;
 const CONST_Y = HOST_Y + LANE + GAP;
 const AUD_Y = CONST_Y + LANE + GAP;
 const LAY_Y = AUD_Y + AUD + GAP;
-const TL_H = LAY_Y + LAY + 6;
+const TL_H = LAY_Y + LAY + 8;
 const CYAN = '#19e6c1';
 const CROP_RATIOS: [CropRatio, string][] = [
   ['custom', 'Custom'], ['9:16', '9:16'], ['16:9', '16:9'], ['1:1', '1:1'], ['4:3', '4:3'], ['2:3', '2:3'],
@@ -290,7 +290,9 @@ export function editorScreen() {
   const previewPtrs = new Map<number, { x: number; y: number }>();
   let previewDownX = 0, previewDownY = 0, previewDownT = 0;
   let previewMoved = false;
-  let previewGesturePushed = false;
+  let previewGestureRaf = 0;
+  let gestureSnapshot: Snapshot | null = null;
+  let gestureChanged = false;
   let pinchStartDist = 0;
   let pinchStartZoom = 1;
   let startCropX = 0, startCropY = 0;
@@ -306,9 +308,10 @@ export function editorScreen() {
     previewDownY = e.clientY;
     previewDownT = Date.now();
     previewMoved = false;
-    previewGesturePushed = false;
 
     if (previewPtrs.size === 1) {
+      gestureSnapshot = snap();
+      gestureChanged = false;
       const hitRole = hitRoleAt(e.clientX, e.clientY);
       if (hitRole) {
         if (selClip !== hitRole) {
@@ -323,6 +326,7 @@ export function editorScreen() {
         startCropY = c.y;
       }
     } else if (previewPtrs.size === 2 && selClip) {
+      if (!gestureSnapshot) gestureSnapshot = snap();
       const [p1, p2] = [...previewPtrs.values()];
       pinchStartDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
       const c = selClip === 'host' ? p.cropHost : p.cropConst;
@@ -341,11 +345,7 @@ export function editorScreen() {
     const c = selClip === 'host' ? p.cropHost : p.cropConst;
 
     if (previewPtrs.size === 1 && previewMoved) {
-      if (!previewGesturePushed) {
-        hist.push(snap());
-        updateBtns();
-        previewGesturePushed = true;
-      }
+      gestureChanged = true;
       const zoom = Math.max(0.2, Math.min(6.0, c.zoom || 1));
       const shiftRangeX = Math.max(cell.clientWidth / 2, (zoom - 1) * cell.clientWidth / 2);
       const shiftRangeY = Math.max(cell.clientHeight / 2, (zoom - 1) * cell.clientHeight / 2);
@@ -357,20 +357,26 @@ export function editorScreen() {
       if (shiftRangeY > 0) {
         c.y = Math.max(-2, Math.min(2, startCropY + dy / shiftRangeY));
       }
-      applyCrop(selClip);
-      scheduleSave();
-    } else if (previewPtrs.size === 2) {
-      if (!previewGesturePushed) {
-        hist.push(snap());
-        updateBtns();
-        previewGesturePushed = true;
+      if (!previewGestureRaf) {
+        const roleToUpdate = selClip;
+        previewGestureRaf = requestAnimationFrame(() => {
+          previewGestureRaf = 0;
+          applyCrop(roleToUpdate);
+        });
       }
+    } else if (previewPtrs.size === 2) {
+      gestureChanged = true;
       const [p1, p2] = [...previewPtrs.values()];
       const currentDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
       const factor = currentDist / (pinchStartDist || 1);
       c.zoom = Math.max(0.2, Math.min(6.0, pinchStartZoom * factor));
-      applyCrop(selClip);
-      scheduleSave();
+      if (!previewGestureRaf) {
+        const roleToUpdate = selClip;
+        previewGestureRaf = requestAnimationFrame(() => {
+          previewGestureRaf = 0;
+          applyCrop(roleToUpdate);
+        });
+      }
     }
   });
 
@@ -378,6 +384,22 @@ export function editorScreen() {
     if (!previewPtrs.has(e.pointerId)) return;
     previewPtrs.delete(e.pointerId);
     if (preview.hasPointerCapture(e.pointerId)) preview.releasePointerCapture(e.pointerId);
+
+    if (previewPtrs.size === 0) {
+      if (previewGestureRaf) {
+        cancelAnimationFrame(previewGestureRaf);
+        previewGestureRaf = 0;
+      }
+      if (selClip) applyCrop(selClip);
+
+      if (gestureChanged && gestureSnapshot) {
+        hist.push(gestureSnapshot);
+        updateBtns();
+        scheduleSave();
+      }
+      gestureSnapshot = null;
+      gestureChanged = false;
+    }
 
     if (!previewMoved && Date.now() - previewDownT < 350 && previewPtrs.size === 0) {
       const hitRole = hitRoleAt(previewDownX, previewDownY);
@@ -399,7 +421,6 @@ export function editorScreen() {
         }
       }
     }
-    previewGesturePushed = false;
   };
   preview.addEventListener('pointerup', onPreviewEnd);
   preview.addEventListener('pointercancel', onPreviewEnd);
@@ -1313,13 +1334,13 @@ export function editorScreen() {
   function updatePlayState() {
     const busy = !!playReason();
     playBtn.classList.toggle('wait', busy && !playing);
-    playBtn.replaceChildren(busy && !playing ? spinner(22) : icon(playing ? 'pause' : 'play', 24));
+    playBtn.replaceChildren(busy && !playing ? spinner(18) : icon(playing ? 'pause' : 'play', 20));
     playBtn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
   }
 
   const controls = h('div', { class: 'edcontrols' },
-    h('div', { class: 'left' }, fsBtn),
-    h('div', { class: 'center' }, playBtn, hudTimeBadge),
+    h('div', { class: 'left' }, fsBtn, hudTimeBadge),
+    h('div', { class: 'center' }, playBtn),
     h('div', { class: 'right' }, undoBtn, redoBtn));
 
   // ---------- history ----------
@@ -1598,6 +1619,10 @@ export function editorScreen() {
     if (n === 'silence') { if (!needAudio()) { panel = 'none'; return; } runDetect(); }
     cropView.classList.toggle('on', n === 'crop');
     updateSelFrame();
+    const topOffset = preview.offsetTop + preview.offsetHeight;
+    panelEl.style.top = `${topOffset}px`;
+    panelEl.style.display = 'flex';
+    toolbar.style.display = 'none';
     renderPanel(); draw(); tick();
     if (n === 'crop') requestAnimationFrame(layoutCrop);
   }
@@ -1605,6 +1630,8 @@ export function editorScreen() {
     panel = 'none'; pendingCuts = []; snapMs = null;
     if (selClip === 'constant') selClip = null;
     cropView.classList.remove('on'); guideV.classList.remove('on'); guideH.classList.remove('on');
+    panelEl.style.display = 'none';
+    toolbar.style.display = '';
     updateSelFrame();
     renderPanel(); renderBar(); draw();
   }
@@ -1614,7 +1641,8 @@ export function editorScreen() {
     h('button', { class: 'pcancel', 'aria-label': 'Cancel', title: 'Cancel', onclick: closePanel }, icon('close', 20)),
     h('div', { class: 'ptitle' }, title),
     h('button', { class: 'pcheck', 'aria-label': 'Done', title: 'Done', onclick: closePanel }, icon('check', 24)));
-  const setPanel = (title: string, ...body: Node[]) => panelEl.replaceChildren(h('div', { class: 'pbody' }, ...body), pFoot(title));
+  const pHandle = () => h('div', { class: 'panel-drag-handle' });
+  const setPanel = (title: string, ...body: Node[]) => panelEl.replaceChildren(pHandle(), h('div', { class: 'pbody' }, ...body), pFoot(title));
   /** CapCut tile: rounded square with an icon, label under it. Selected = white outline. */
   const ptile = (inner: Node, label: string, run: () => void, o: { sel?: boolean; disabled?: boolean } = {}) =>
     h('button', { class: 'ptile' + (o.sel ? ' sel' : ''), disabled: !!o.disabled, 'aria-label': label, onclick: run },
@@ -1706,8 +1734,10 @@ export function editorScreen() {
 
   function renderPanel() {
     toolbar.style.display = panel === 'none' ? '' : 'none';
-    panelEl.style.display = panel === 'none' ? 'none' : '';
+    panelEl.style.display = panel === 'none' ? 'none' : 'flex';
     if (panel === 'none') return;
+    const topOffset = preview.offsetTop + preview.offsetHeight;
+    if (topOffset) panelEl.style.top = `${topOffset}px`;
     const s = app.settings;
     const seg = target();
 
@@ -2278,7 +2308,15 @@ export function editorScreen() {
     loop();
     bootstrap();
   });
-  const onResize = () => { applyPreviewHeight(); fitStage(); draw(); };
+  const onResize = () => {
+    applyPreviewHeight();
+    fitStage();
+    if (panel !== 'none') {
+      const topOffset = preview.offsetTop + preview.offsetHeight;
+      if (topOffset) panelEl.style.top = `${topOffset}px`;
+    }
+    draw();
+  };
   window.addEventListener('resize', onResize);
 
   return {

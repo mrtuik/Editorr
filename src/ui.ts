@@ -86,26 +86,40 @@ export function actionSheet(items: { label: string; danger?: boolean; run: () =>
 }
 
 export function projectActionSheet(
-  p: { name: string; thumb?: string },
-  items: { label: string; danger?: boolean; run: () => void }[]
+  p: { name: string; thumb?: string; durationMs?: number; updatedAt?: number },
+  items: { label: string; iconName: keyof typeof ICON; danger?: boolean; run: () => void }[]
 ): void {
   const thumbEl = p.thumb
     ? h('div', { class: 'project-sheet-thumb', style: `background-image:url(${p.thumb})` })
     : h('div', { class: 'project-sheet-thumb' }, icon('play', 20));
+
+  const metaParts: string[] = [];
+  if (p.durationMs) metaParts.push(fmtClock(p.durationMs));
+  if (p.updatedAt) metaParts.push(new Date(p.updatedAt).toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' }));
+  const metaText = metaParts.length ? metaParts.join(' · ') : 'Local project';
+
+  const handleBar = h('div', { class: 'project-sheet-drag-handle' });
   const head = h('div', { class: 'project-sheet-header' },
     thumbEl,
-    h('div', { class: 'project-sheet-title' }, p.name));
-  const actions = h('div', { class: 'project-sheet-actions' },
+    h('div', { class: 'project-sheet-info' },
+      h('div', { class: 'project-sheet-title' }, p.name),
+      h('div', { class: 'project-sheet-meta' }, metaText)));
+
+  const actionList = h('div', { class: 'project-sheet-list' },
     ...items.map((i) =>
       h('button', {
-        class: 'project-sheet-btn' + (i.danger ? ' danger' : ''),
+        class: 'project-sheet-item' + (i.danger ? ' danger' : ''),
         onclick: () => { m.remove(); i.run(); },
-      }, i.label)));
+      },
+      icon(i.iconName, 20),
+      h('span', {}, i.label))));
+
   const cancelBtn = h('button', {
-    class: 'project-sheet-btn project-sheet-cancel',
+    class: 'project-sheet-cancel-item',
     onclick: () => m.remove(),
   }, 'Cancel');
-  const sheet = h('div', { class: 'project-sheet' }, head, actions, cancelBtn);
+
+  const sheet = h('div', { class: 'project-sheet' }, handleBar, head, actionList, cancelBtn);
   const m = h('div', { class: 'menu', onclick: (e: Event) => { if (e.target === m) m.remove(); } }, sheet);
   document.body.append(m);
 }
@@ -129,6 +143,8 @@ export function progressBar(): { el: HTMLElement; set: (pct: number) => void } {
 }
 
 export const ICON = {
+  edit: '<path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />',
+  duplicate: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />',
   back: '<path d="M15 5l-7 7 7 7" />',
   plus: '<path d="M12 5v14M5 12h14" />',
   play: '<path d="M8 5l11 7-11 7z" fill="currentColor"/>',
