@@ -85,6 +85,31 @@ export function actionSheet(items: { label: string; danger?: boolean; run: () =>
   document.body.append(m);
 }
 
+export function projectActionSheet(
+  p: { name: string; thumb?: string },
+  items: { label: string; danger?: boolean; run: () => void }[]
+): void {
+  const thumbEl = p.thumb
+    ? h('div', { class: 'project-sheet-thumb', style: `background-image:url(${p.thumb})` })
+    : h('div', { class: 'project-sheet-thumb' }, icon('play', 20));
+  const head = h('div', { class: 'project-sheet-header' },
+    thumbEl,
+    h('div', { class: 'project-sheet-title' }, p.name));
+  const actions = h('div', { class: 'project-sheet-actions' },
+    ...items.map((i) =>
+      h('button', {
+        class: 'project-sheet-btn' + (i.danger ? ' danger' : ''),
+        onclick: () => { m.remove(); i.run(); },
+      }, i.label)));
+  const cancelBtn = h('button', {
+    class: 'project-sheet-btn project-sheet-cancel',
+    onclick: () => m.remove(),
+  }, 'Cancel');
+  const sheet = h('div', { class: 'project-sheet' }, head, actions, cancelBtn);
+  const m = h('div', { class: 'menu', onclick: (e: Event) => { if (e.target === m) m.remove(); } }, sheet);
+  document.body.append(m);
+}
+
 /** Round loading spinner (turns by CSS). */
 export function spinner(size = 18): SVGElement {
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

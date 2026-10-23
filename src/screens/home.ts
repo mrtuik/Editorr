@@ -2,7 +2,7 @@ import { app, startNewProject, type Intent } from '../app';
 import { deleteProject, listProjects, runtime, saveProject } from '../core/store';
 import type { Project } from '../core/types';
 import { attachProjectMedia, isLoaded, removeProjectMedia } from '../core/media';
-import { actionSheet, confirmDialog, fmtTime, h, ICON, icon, promptDialog, spinner, tabBar, TabName, toast } from '../ui';
+import { actionSheet, confirmDialog, fmtTime, h, ICON, icon, projectActionSheet, promptDialog, spinner, tabBar, TabName, toast } from '../ui';
 
 /**
  * Home, laid out like CapCut: search at the top, big "Get started" heading, two big cards,
@@ -64,7 +64,7 @@ export function homeScreen() {
   }
 
   function options(p: Project) {
-    actionSheet([
+    projectActionSheet(p, [
       { label: 'Rename', run: async () => { const n = await promptDialog('Rename project', p.name); if (n) { p.name = n; await saveProject(p); reload(); } } },
       { label: 'Duplicate', run: () => duplicateProject(p) },
       { label: 'Delete', danger: true, run: async () => { if (await confirmDialog('Delete project?', 'The project and its saved video copies are removed. The originals in your gallery stay.')) { await removeProjectMedia(p); await deleteProject(p.id); reload(); } } },

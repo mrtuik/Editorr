@@ -123,7 +123,7 @@ export function editorScreen() {
   const dialogHost = h('div', { class: 'taskdialog-wrap' });
   const hudTimeBadge = h('div', { class: 'hud-time-badge' }, `${fmtClock(playMs)} / ${fmtClock(p.durationMs)}`);
   const playRipple = h('div', { class: 'preview-play-ripple' }, icon('play', 28));
-  const preview = h('div', { class: 'preview' }, stage, guideV, guideH, hudTimeBadge, playRipple, pillsEl, dialogHost);
+  const preview = h('div', { class: 'preview' }, stage, guideV, guideH, playRipple, pillsEl, dialogHost);
 
   function triggerPlayRipple(isPlaying: boolean) {
     playRipple.replaceChildren(icon(isPlaying ? 'play' : 'pause', 28));
@@ -181,63 +181,14 @@ export function editorScreen() {
     stage.style.touchAction = 'none';
   }
 
-  // Resizable preview height (CapCut style) with persistence
-  const PREVIEW_RATIO_KEY = 'editorr_preview_ratio';
-  function loadPreviewRatio(): number {
-    try {
-      const v = localStorage.getItem(PREVIEW_RATIO_KEY);
-      if (v) {
-        const n = parseFloat(v);
-        if (!isNaN(n) && n >= 0.28 && n <= 0.62) return n;
-      }
-    } catch { /* ignore */ }
-    return 0.40;
-  }
-  function savePreviewRatio(ratio: number) {
-    try {
-      localStorage.setItem(PREVIEW_RATIO_KEY, ratio.toFixed(4));
-    } catch { /* ignore */ }
-  }
-
-  let previewRatio = loadPreviewRatio();
+  // Fixed responsive preview stage height (CapCut style)
   function applyPreviewHeight() {
     const screenH = window.innerHeight || 800;
-    const minH = Math.round(screenH * 0.28);
-    const maxH = Math.round(screenH * 0.62);
-    const hPx = Math.max(minH, Math.min(maxH, Math.round(screenH * previewRatio)));
+    const hPx = Math.round(screenH * 0.40);
     preview.style.height = `${hPx}px`;
     preview.style.flex = 'none';
   }
   applyPreviewHeight();
-
-  const handleBar = h('i', { class: 'handle-bar' });
-  const previewHandle = h('div', { class: 'preview-handle', 'aria-label': 'Resize preview' }, handleBar);
-  let handleStartY = 0, handleStartH = 0;
-  previewHandle.addEventListener('pointerdown', (e: PointerEvent) => {
-    previewHandle.setPointerCapture(e.pointerId);
-    handleStartY = e.clientY;
-    handleStartH = preview.clientHeight;
-  });
-  previewHandle.addEventListener('pointermove', (e: PointerEvent) => {
-    if (!previewHandle.hasPointerCapture(e.pointerId)) return;
-    const dy = e.clientY - handleStartY;
-    const screenH = window.innerHeight || 800;
-    const minH = Math.round(screenH * 0.28);
-    const maxH = Math.round(screenH * 0.62);
-    const newH = Math.max(minH, Math.min(maxH, handleStartH + dy));
-    previewRatio = newH / screenH;
-    preview.style.height = `${newH}px`;
-    preview.style.flex = 'none';
-    fitStage();
-    draw();
-  });
-  const onHandleEnd = (e: PointerEvent) => {
-    if (!previewHandle.hasPointerCapture(e.pointerId)) return;
-    previewHandle.releasePointerCapture(e.pointerId);
-    savePreviewRatio(previewRatio);
-  };
-  previewHandle.addEventListener('pointerup', onHandleEnd);
-  previewHandle.addEventListener('pointercancel', onHandleEnd);
 
   /** Fit the stage (project aspect ratio) inside the preview area, like a real editor. */
   function fitStage() {
@@ -251,24 +202,24 @@ export function editorScreen() {
     stage.style.height = `${Math.floor(w / ar)}px`;
     updateSelFrame();
   }
-  const ro = new ResizeObserver(() => { fitStage(); layoutCrop(); });
+  const ro = new ResizeObserver(() => { applyPreviewHeight(); fitStage(); layoutCrop(); });
   ro.observe(preview);
 
-  /** Crop = zoom + move inside the frame. Same math is used by the exporter. */
+  /** Crop = zoom + move inside the frame. Uniform scale, zero distortion. */
   function applyCrop(role: Role) {
     const c = role === 'host' ? p.cropHost : p.cropConst;
     const v = role === 'host' ? hostV : constV;
     const cell = v.parentElement;
     const aspect = cell && cell.clientWidth > 0 && cell.clientHeight > 0 ? cell.clientWidth / cell.clientHeight : aspectValue(p.aspect);
-    const ratio = c.ratio === 'custom' || !c.ratio ? (c.frameRatio ?? aspect) : cropRatioValue(c.ratio, aspect);
-    const zoomX = Math.max(1, c.zoom || 1, aspect / ratio);
-    const zoomY = Math.max(1, zoomX * ratio / aspect);
+    const zoom = Math.max(0.2, Math.min(6.0, c.zoom || 1));
     const rotate = c.rotate ?? 0;
     const cover = rotationCoverZoom(rotate, aspect);
     const mirrored = role === 'host' ? p.mirrorHost : p.mirrorConst;
-    v.style.transform = zoomX <= 1.001 && zoomY <= 1.001 && Math.abs(rotate) < 0.001 && !mirrored
+    const tx = zoom > 1 ? c.x * (zoom - 1) * 50 : c.x * 50;
+    const ty = zoom > 1 ? c.y * (zoom - 1) * 50 : c.y * 50;
+    v.style.transform = Math.abs(zoom - 1) < 0.001 && Math.abs(c.x) < 0.001 && Math.abs(c.y) < 0.001 && Math.abs(rotate) < 0.001 && !mirrored
       ? ''
-      : `translate(${c.x * (zoomX - 1) * 50}%, ${c.y * (zoomY - 1) * 50}%) scale(${zoomX}, ${zoomY}) rotate(${rotate}deg) scale(${cover})${mirrored ? ' scaleX(-1)' : ''}`;
+      : `translate(${tx}%, ${ty}%) scale(${zoom}, ${zoom}) rotate(${rotate}deg) scale(${cover})${mirrored ? ' scaleX(-1)' : ''}`;
   }
   applyCrop('host'); applyCrop('constant');
 
@@ -340,8 +291,8 @@ export function editorScreen() {
   let previewDownX = 0, previewDownY = 0, previewDownT = 0;
   let previewMoved = false;
   let previewGesturePushed = false;
-  let pinchStartDist = 0, pinchStartAngle = 0;
-  let pinchStartZoom = 1, pinchStartRotate = 0;
+  let pinchStartDist = 0;
+  let pinchStartZoom = 1;
   let startCropX = 0, startCropY = 0;
   let lastTapTime = 0, lastTapX = 0, lastTapY = 0;
 
@@ -374,10 +325,8 @@ export function editorScreen() {
     } else if (previewPtrs.size === 2 && selClip) {
       const [p1, p2] = [...previewPtrs.values()];
       pinchStartDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-      pinchStartAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * (180 / Math.PI);
       const c = selClip === 'host' ? p.cropHost : p.cropConst;
-      pinchStartZoom = Math.max(1, c.zoom || 1);
-      pinchStartRotate = c.rotate ?? 0;
+      pinchStartZoom = Math.max(0.2, c.zoom || 1);
     }
   });
 
@@ -390,8 +339,6 @@ export function editorScreen() {
 
     const cell = selClip === 'host' ? hostCell : constCell;
     const c = selClip === 'host' ? p.cropHost : p.cropConst;
-    const aspect = cell.clientWidth > 0 && cell.clientHeight > 0 ? cell.clientWidth / cell.clientHeight : aspectValue(p.aspect);
-    const ratio = c.ratio === 'custom' || !c.ratio ? (c.frameRatio ?? aspect) : cropRatioValue(c.ratio, aspect);
 
     if (previewPtrs.size === 1 && previewMoved) {
       if (!previewGesturePushed) {
@@ -399,17 +346,16 @@ export function editorScreen() {
         updateBtns();
         previewGesturePushed = true;
       }
-      const zoomX = Math.max(1, c.zoom || 1, aspect / ratio);
-      const zoomY = Math.max(1, zoomX * ratio / aspect);
-      const maxShiftX = (zoomX - 1) * cell.clientWidth / 2;
-      const maxShiftY = (zoomY - 1) * cell.clientHeight / 2;
+      const zoom = Math.max(0.2, Math.min(6.0, c.zoom || 1));
+      const shiftRangeX = Math.max(cell.clientWidth / 2, (zoom - 1) * cell.clientWidth / 2);
+      const shiftRangeY = Math.max(cell.clientHeight / 2, (zoom - 1) * cell.clientHeight / 2);
       const dx = e.clientX - previewDownX;
       const dy = e.clientY - previewDownY;
-      if (maxShiftX > 0.5) {
-        c.x = Math.max(-1, Math.min(1, startCropX + dx / maxShiftX));
+      if (shiftRangeX > 0) {
+        c.x = Math.max(-2, Math.min(2, startCropX + dx / shiftRangeX));
       }
-      if (maxShiftY > 0.5) {
-        c.y = Math.max(-1, Math.min(1, startCropY + dy / maxShiftY));
+      if (shiftRangeY > 0) {
+        c.y = Math.max(-2, Math.min(2, startCropY + dy / shiftRangeY));
       }
       applyCrop(selClip);
       scheduleSave();
@@ -421,13 +367,8 @@ export function editorScreen() {
       }
       const [p1, p2] = [...previewPtrs.values()];
       const currentDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-      const currentAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * (180 / Math.PI);
       const factor = currentDist / (pinchStartDist || 1);
-      c.zoom = Math.max(1, Math.min(8, pinchStartZoom * factor));
-      let dAngle = currentAngle - pinchStartAngle;
-      while (dAngle > 180) dAngle -= 360;
-      while (dAngle < -180) dAngle += 360;
-      c.rotate = Math.max(-45, Math.min(45, Math.round(pinchStartRotate + dAngle)));
+      c.zoom = Math.max(0.2, Math.min(6.0, pinchStartZoom * factor));
       applyCrop(selClip);
       scheduleSave();
     }
@@ -573,6 +514,7 @@ export function editorScreen() {
     const dur = isFinite(v.duration) ? v.duration : Infinity;
     t = Math.min(t, Math.max(0, dur - 0.05));
     if (v.readyState < 1) return; // metadata not there yet; loadedmetadata seeks again
+    if (Math.abs(v.currentTime - t) < 0.025) return;
     if (v.seeking) { pendingSeek.set(v, t); return; }
     try {
       if (typeof (v as any).fastSeek === 'function') {
@@ -589,6 +531,7 @@ export function editorScreen() {
       const t = pendingSeek.get(v);
       if (t === undefined) return;
       pendingSeek.delete(v);
+      if (Math.abs(v.currentTime - t) < 0.025) return;
       try {
         if (typeof (v as any).fastSeek === 'function') {
           (v as any).fastSeek(t);
@@ -603,28 +546,25 @@ export function editorScreen() {
 
   // Smooth seek-lock / RAF debouncer during timeline scrubbing (CapCut 60fps responsiveness)
   let scrubPendingMs: number | null = null;
-  let isScrubSeeking = false;
+  let scrubRafId = 0;
   function executeScrub() {
-    if (scrubPendingMs === null) {
-      isScrubSeeking = false;
-      return;
-    }
-    isScrubSeeking = true;
+    if (scrubPendingMs === null) return;
     const target = scrubPendingMs;
     scrubPendingMs = null;
     playMs = target;
-    syncHost(true);
-    syncConst(true);
-    requestAnimationFrame(() => {
-      if (scrubPendingMs !== null) executeScrub();
-      else isScrubSeeking = false;
-    });
+    syncHost(false);
+    syncConst(false);
   }
   function scheduleScrub(ms: number) {
     playMs = Math.max(0, Math.min(p.durationMs, ms));
     scrubPendingMs = playMs;
     refresh();
-    if (!isScrubSeeking) executeScrub();
+    if (!scrubRafId) {
+      scrubRafId = requestAnimationFrame(() => {
+        scrubRafId = 0;
+        executeScrub();
+      });
+    }
   }
 
   let lastConstSeek = 0;
@@ -636,6 +576,7 @@ export function editorScreen() {
     if (!inRange) {
       if (!constV.paused) constV.pause();
       constV.playbackRate = 1.0;
+      if (ct < 0 && Math.abs(constV.currentTime) > 0.03) seekVideo(constV, 0);
       return;
     }
     const drift = constV.currentTime - ct; // positive = ahead, negative = behind
@@ -643,7 +584,7 @@ export function editorScreen() {
 
     if (force || !playing) {
       constV.playbackRate = 1.0;
-      if (force || absDrift > 0.05) {
+      if (force || absDrift > 0.033) {
         seekVideo(constV, ct);
       }
     } else {
@@ -674,9 +615,10 @@ export function editorScreen() {
     if (!inRange) {
       if (!hostV.paused) hostV.pause();
       hostV.playbackRate = 1.0;
+      if (t < 0 && Math.abs(hostV.currentTime) > 0.03) seekVideo(hostV, 0);
       return;
     }
-    if (force || Math.abs(hostV.currentTime - t) > 0.05) seekVideo(hostV, t);
+    if (force || Math.abs(hostV.currentTime - t) > 0.033) seekVideo(hostV, t);
   }
 
   const firstStart = () => (p.segments.length ? Math.min(...p.segments.map((s) => s.startMs)) : 0);
@@ -893,8 +835,8 @@ export function editorScreen() {
     g.textBaseline = 'middle';
     const lw = g.measureText(label).width;
     const tx = Math.max(bx1, G) + 4;
-    if (tx + lw + 8 < bx2) {
-      rrect(g, tx, y + 3, lw + 8, 13, 3);
+    if (tx + lw + 22 < bx2) {
+      rrect(g, tx, y + 3, lw + 20, 14, 3);
       g.fillStyle = role === 'host' ? 'rgba(0,0,0,0.65)' : 'rgba(10,30,16,0.75)';
       g.fill();
       if (role === 'constant') {
@@ -902,8 +844,13 @@ export function editorScreen() {
         g.lineWidth = 0.8;
         g.stroke();
       }
+      if (role === 'host') {
+        micGlyph(g, tx + 7.5, y + 10, '#ffffff');
+      } else {
+        cameraGlyph(g, tx + 7.5, y + 10, '#4ade80');
+      }
       g.fillStyle = role === 'host' ? '#ffffff' : '#4ade80';
-      g.fillText(label, tx + 4, y + 9.5);
+      g.fillText(label, tx + 16, y + 10);
     }
 
     g.restore();
@@ -1002,10 +949,43 @@ export function editorScreen() {
     bars(actH!, HOST_Y, 0); bars(actC!, CONST_Y, p.offsetMs);
   }
 
-  const personGlyph = (g: CanvasRenderingContext2D, cx: number, cy: number, color: string) => {
+  const micGlyph = (g: CanvasRenderingContext2D, cx: number, cy: number, color: string) => {
+    g.save();
+    g.strokeStyle = color;
     g.fillStyle = color;
-    g.beginPath(); g.arc(cx, cy - 4, 3.5, 0, 6.3); g.fill();
-    g.beginPath(); g.arc(cx, cy + 7, 6.5, Math.PI, 0); g.fill();
+    g.lineWidth = 1.3;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    rrect(g, cx - 3, cy - 7, 6, 8.5, 3);
+    g.fill();
+    g.beginPath();
+    g.arc(cx, cy - 2.5, 5.2, 0.1 * Math.PI, 0.9 * Math.PI);
+    g.stroke();
+    g.beginPath();
+    g.moveTo(cx, cy + 2.7);
+    g.lineTo(cx, cy + 6);
+    g.moveTo(cx - 3.5, cy + 6);
+    g.lineTo(cx + 3.5, cy + 6);
+    g.stroke();
+    g.restore();
+  };
+  const cameraGlyph = (g: CanvasRenderingContext2D, cx: number, cy: number, color: string) => {
+    g.save();
+    g.strokeStyle = color;
+    g.fillStyle = color;
+    g.lineWidth = 1.3;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    rrect(g, cx - 6.5, cy - 4.5, 8.5, 9, 2);
+    g.fill();
+    g.beginPath();
+    g.moveTo(cx + 2.8, cy - 2);
+    g.lineTo(cx + 6.8, cy - 4.2);
+    g.lineTo(cx + 6.8, cy + 4.2);
+    g.lineTo(cx + 2.8, cy + 2);
+    g.closePath();
+    g.fill();
+    g.restore();
   };
   const speakerGlyph = (g: CanvasRenderingContext2D, cx: number, cy: number, color: string) => {
     g.fillStyle = color; g.strokeStyle = color; g.lineWidth = 1.4; g.lineCap = 'round';
@@ -1114,8 +1094,8 @@ export function editorScreen() {
     g.fillStyle = '#000'; g.fillRect(0, RULER, G, H - RULER);
     g.fillStyle = '#262626'; g.fillRect(G - 1, RULER, 1, H - RULER);
     const audioHost = p.mainAudio === 'host';
-    personGlyph(g, G / 2, HOST_Y + LANE / 2, '#ffffff');
-    personGlyph(g, G / 2, CONST_Y + LANE / 2, '#4ade80');
+    micGlyph(g, G / 2, HOST_Y + LANE / 2, '#ffffff');
+    cameraGlyph(g, G / 2, CONST_Y + LANE / 2, '#4ade80');
     speakerGlyph(g, G / 2, AUD_Y + AUD / 2, audioHost ? '#ffffff' : '#4ade80');
     const lx = G / 2, ly = LAY_Y + LAY / 2;
     g.strokeStyle = '#d6d6d6'; g.lineWidth = 1.4;
@@ -1339,7 +1319,7 @@ export function editorScreen() {
 
   const controls = h('div', { class: 'edcontrols' },
     h('div', { class: 'left' }, fsBtn),
-    playBtn,
+    h('div', { class: 'center' }, playBtn, hudTimeBadge),
     h('div', { class: 'right' }, undoBtn, redoBtn));
 
   // ---------- history ----------
@@ -1768,18 +1748,21 @@ export function editorScreen() {
       const vkey = p.mainAudio === 'host' ? 'volumeHost' : 'volumeConst';
       const vol = p[vkey];
       const setVol = (v: number) => { p[vkey] = v; applyVolume(); scheduleSave(); };
-      const vs = slider('Volume', 0, 1000, 5, vol, (v) => `${Math.round(v)}%`, setVol);
-      setPanel('Audio',
+      const vs = slider('Master volume', 0, 1000, 5, vol, (v) => `${Math.round(v)}%`, setVol);
+      setPanel('Audio Settings',
+        h('div', { style: 'font-size:12px;color:#8a8a8a;margin-bottom:6px;font-weight:500;text-transform:uppercase;letter-spacing:0.5px' }, 'Audio Source'),
         pstrip(
           ptile(icon('volume', 26), 'Host mic', () => { setAudio('host'); renderPanel(); }, { sel: p.mainAudio === 'host' }),
           ptile(icon('volume', 26), 'Constant mic', () => { setAudio('constant'); renderPanel(); }, { sel: p.mainAudio === 'constant' })),
+        h('div', { style: 'margin:12px 0 6px;font-size:12px;color:#8a8a8a;font-weight:500;text-transform:uppercase;letter-spacing:0.5px' }, 'Volume & Gain'),
         vs.row,
-        noiseControl('host'),
-        noiseControl('constant'),
-        h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Boost'),
+        h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Quick boost'),
           chipRow<number>([[100, '100%'], [200, '200%'], [400, '400%'], [700, '700%'], [1000, '1000%']], vol, (v) => { setVol(v); renderPanel(); })),
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Normalize'),
-          chipRow<string>([['off', 'Off'], ['on', 'On']], p.normalize ? 'on' : 'off', (v) => { p.normalize = v === 'on'; applyVolume(); scheduleSave(); renderPanel(); })));
+          chipRow<string>([['off', 'Off'], ['on', 'On']], p.normalize ? 'on' : 'off', (v) => { p.normalize = v === 'on'; applyVolume(); scheduleSave(); renderPanel(); })),
+        h('div', { style: 'margin:14px 0 6px;font-size:12px;color:#8a8a8a;font-weight:500;text-transform:uppercase;letter-spacing:0.5px' }, 'Noise Reduction'),
+        noiseControl('host'),
+        noiseControl('constant'));
     } else if (panel === 'crop') {
       const c: CropState = cropRole === 'host' ? p.cropHost : p.cropConst;
       const reset = h('button', { class: 'chip crop-reset', onclick: () => {
@@ -1815,12 +1798,10 @@ export function editorScreen() {
             if ((c.ratio ?? 'custom') === ratio) return;
             hist.push(snap()); updateBtns();
             const oldRatio = currentCropRatio();
-            const currentAspect = cropViewAspect();
             c.ratio = ratio;
             if (ratio === 'custom') c.frameRatio = oldRatio;
             else c.frameRatio = undefined;
-            const ratioValue = ratio === 'custom' ? oldRatio : cropRatioValue(ratio, currentAspect);
-            c.zoom = Math.max(1, c.zoom || 1, currentAspect / ratioValue);
+            c.zoom = Math.max(0.2, c.zoom || 1);
             c.x = 0; c.y = 0;
             applyCrop(cropRole); positionCropFrame(); scheduleSave(); renderPanel();
           },
@@ -1838,18 +1819,31 @@ export function editorScreen() {
     } else {
       const total = pendingCuts.reduce((a, r) => a + (r.endMs - r.startMs), 0);
       const info = pendingCuts.length
-        ? h('div', { class: 'pinfo' }, 'Found ', h('b', {}, `${pendingCuts.length} silent ${pendingCuts.length === 1 ? 'part' : 'parts'}`), ' - ', h('b', {}, secText(total)), ' will be removed from both videos. Red on the timeline.')
-        : h('div', { class: 'pinfo' }, 'No silence this long. Try a shorter time or higher sensitivity.');
+        ? h('div', { class: 'pinfo', style: 'background:rgba(25,230,193,0.08);border:1px solid rgba(25,230,193,0.2);border-radius:10px;padding:10px 12px;margin:8px 0 14px;color:#e0e0e0' },
+            'Found ', h('b', { style: 'color:#19e6c1' }, `${pendingCuts.length} silent ${pendingCuts.length === 1 ? 'part' : 'parts'}`),
+            ' (', h('b', { style: 'color:#fff' }, secText(total)), ') to remove. Marked red on the timeline.')
+        : h('div', { class: 'pinfo', style: 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 12px;margin:8px 0 14px;color:#8a8a8a' },
+            'No silence found matching current settings. Try shorter duration or higher sensitivity.');
       const go = (pt: Partial<typeof s>) => { Object.assign(s, pt); saveSettings(s); runDetect(); renderPanel(); draw(); };
-      const apply = h('button', { class: 'btn primary', disabled: !pendingCuts.length, onclick: applySilence }, pendingCuts.length ? `Cut ${pendingCuts.length} ${pendingCuts.length === 1 ? 'silence' : 'silences'}` : 'Nothing to cut');
-      setPanel('Silence cut', info,
-        h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Both quiet for'),
-          chipRow<number>([[300, '0.3 s'], [500, '0.5 s'], [1000, '1 s'], [1500, '1.5 s'], [2000, '2 s'], [3000, '3 s'], [5000, '5 s']], s.silenceMinMs, (v) => go({ silenceMinMs: v }))),
-        h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Keep around'),
-          chipRow<number>([[0, 'None'], [100, '0.1 s'], [150, '0.15 s'], [250, '0.25 s'], [400, '0.4 s']], s.silencePadMs, (v) => go({ silencePadMs: v }))),
-        h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Sensitivity'),
+      const applyBtn = h('button', {
+        class: 'btn primary',
+        style: 'width:100%;min-height:48px;margin-top:16px;border-radius:12px;border:0;background:linear-gradient(135deg,#00f2fe,#19e6c1);color:#000;font-size:15px;font-weight:700;letter-spacing:0.3px;box-shadow:0 4px 16px rgba(0,242,254,0.25);cursor:pointer',
+        disabled: !pendingCuts.length,
+        onclick: applySilence
+      }, pendingCuts.length ? `Apply Silence Cut (${pendingCuts.length} ${pendingCuts.length === 1 ? 'cut' : 'cuts'})` : 'No Silence to Cut');
+
+      const minDurSlider = slider('Silence duration', 200, 5000, 100, s.silenceMinMs, (v) => `${(v / 1000).toFixed(1)} s`, (v) => go({ silenceMinMs: v }));
+      const padSlider = slider('Padding margin', 0, 500, 50, s.silencePadMs, (v) => `${(v / 1000).toFixed(2)} s`, (v) => go({ silencePadMs: v }));
+
+      setPanel('Silence Cut',
+        h('div', { style: 'font-size:16px;font-weight:600;color:#fff;margin-bottom:4px' }, 'Smart Silence Cut'),
+        info,
+        minDurSlider.row,
+        padSlider.row,
+        h('div', { class: 'prow', style: 'margin-top:10px' },
+          h('div', { class: 'plabel' }, 'Sensitivity'),
           chipRow<SilenceSens>([['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], s.silenceSens, (v) => go({ silenceSens: v }))),
-        apply);
+        applyBtn);
     }
   }
 
@@ -1911,8 +1905,10 @@ export function editorScreen() {
   };
   const frameRect = () => {
     const c = cropState(); const ratio = currentCropRatio();
-    const z = Math.max(1, c.zoom || 1, cropAr / ratio);
-    const w = cm.w / z, hh = w / ratio;
+    const z = Math.max(0.2, c.zoom || 1);
+    const maxW = Math.min(cm.w, cm.h * ratio);
+    const w = Math.min(cm.w, maxW / z);
+    const hh = w / ratio;
     const cx = cm.x + cm.w / 2 - c.x * (cm.w - w) / 2, cy = cm.y + cm.h / 2 - c.y * (cm.h - hh) / 2;
     return { l: cx - w / 2, t: cy - hh / 2, w, h: hh };
   };
@@ -2163,7 +2159,7 @@ export function editorScreen() {
       h('div', { class: 'grow' }),
       resChip,
       h('button', { class: 'exportbtn', 'aria-label': 'Export', onclick: goExport }, 'Export')),
-    preview, previewHandle, controls, tlWrap, toolbar, panelEl);
+    preview, controls, tlWrap, toolbar, panelEl);
 
   app.onBack = () => {
     if (taskSheetEl) { closeListSheet(); return true; }
@@ -2266,7 +2262,7 @@ export function editorScreen() {
           if (taskSheetEl) closeListSheet();
           else openListSheet();
         },
-      }, spinner(16), h('span', {}, label));
+      }, h('div', { class: 'td-ring' }, spinner(20)), h('span', {}, label));
       pillsEl.replaceChildren(pillBtn);
     }
     renderListSheet();

@@ -1325,16 +1325,14 @@ public class EditorrNativePlugin extends Plugin {
                     .build());
         }
         if (crop != null) {
-            // Same math as the preview: the visible window is 1/zoom of the frame, moved by x,y.
-            float zoomX = Math.max(1f, crop.zoom);
-            float ratio = crop.ratio > 0f ? crop.ratio : crop.frameRatio > 0f ? crop.frameRatio : aspect;
-            float zoomY = Math.max(1f, zoomX * ratio / aspect);
-            if (zoomX > 1.001f || zoomY > 1.001f) {
-                float halfX = 1f / zoomX, halfY = 1f / zoomY;
-                float cx = -crop.x * (1f - halfX);
-                float cy = crop.y * (1f - halfY); // picture moves down -> window moves up (NDC y is up)
-                video.add(new Crop(cx - halfX, cx + halfX, cy - halfY, cy + halfY));
-                video.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_STRETCH_TO_FIT));
+            // Same math as the preview: uniform scale without stretching distortion.
+            float zoom = Math.max(0.2f, Math.min(6.0f, crop.zoom));
+            if (Math.abs(zoom - 1f) > 0.001f || Math.abs(crop.x) > 0.001f || Math.abs(crop.y) > 0.001f) {
+                float half = 1f / zoom;
+                float cx = -crop.x * (zoom > 1f ? (1f - half) : 1f);
+                float cy = crop.y * (zoom > 1f ? (1f - half) : 1f); // picture moves down -> window moves up (NDC y is up)
+                video.add(new Crop(cx - half, cx + half, cy - half, cy + half));
+                video.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
             }
         }
         return new EditedMediaItem.Builder(mi)
