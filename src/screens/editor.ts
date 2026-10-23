@@ -1,8 +1,9 @@
 import { app, type Intent } from '../app';
-import { peaks, PEAKS_PER_SEC } from '../core/audio';
+import { peaks, PEAKS_PER_SEC, SAMPLE_RATE } from '../core/audio';
+import { startDenoise } from '../core/denoise';
 import { detectSpeakers, lastMethod, lastSeparationDb, lastUsedLips, lastVoiceQuality } from '../core/speaker';
 import { motionToActivity, scanMotion } from '../core/motion';
-import { History, runtime, saveProject, saveSettings, type Snapshot } from '../core/store';
+import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
 import { detectSilence } from '../core/silence';
 import { fileSrc, isNative, tick } from '../core/native';
 import { ensureAudio, nextPaint, runAutoSwitch, runSync } from '../core/pipeline';
@@ -14,7 +15,7 @@ import {
   coverage, defaultSegments, deleteSegment, dropSlivers, fitSegmentsToDuration, intersectRanges, isKept, keptMs, mergeWithPrev,
   moveBoundary, nextKeptStart, overlapDuration, segmentAt, splitAt, subtractRanges, updateSegment, type Range,
 } from '../core/timeline';
-import { Aspect, ASPECTS, aspectValue, Corner, CropState, LayoutStyle, NO_CROP, PopupSize, RES_STEPS, resLabel, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
+import { Aspect, ASPECTS, aspectValue, Corner, CropRatio, CropState, LayoutStyle, NO_CROP, PopupSize, RES_STEPS, resLabel, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
 import { actionSheet, confirmDialog, fmtClock, h, ICON, icon, iconButton, spinner, toast } from '../ui';
 
 type Panel = 'none' | 'ratio' | 'crop' | 'silence' | 'sync' | 'layout' | 'main' | 'audio';
@@ -30,6 +31,19 @@ const CONST_Y = HOST_Y + LANE + GAP;
 const LAY_Y = CONST_Y + LANE + GAP;
 const TL_H = LAY_Y + LAY + 8;
 const CYAN = '#19e6c1';
+const CROP_RATIOS: [CropRatio, string][] = [
+  ['custom', 'Custom'], ['9:16', '9:16'], ['16:9', '16:9'], ['1:1', '1:1'], ['4:3', '4:3'], ['2:3', '2:3'],
+];
+function cropRatioValue(ratio: CropRatio | undefined, base: number): number {
+  if (!ratio || ratio === 'custom') return base;
+  const [w, h] = ratio.split(':').map(Number);
+  return h ? w / h : base;
+}
+function rotationCoverZoom(degrees: number, aspect: number): number {
+  const rad = Math.abs(degrees) * Math.PI / 180;
+  const c = Math.abs(Math.cos(rad)), s = Math.abs(Math.sin(rad));
+  return Math.max(c + s / aspect, c + s * aspect);
+}
 
 export function editorScreen() {
   const p = app.project;
@@ -55,17 +69,34 @@ export function editorScreen() {
   let hostPeaks: Float32Array | undefined;
   let constPeaks: Float32Array | undefined;
   const audioReady = () => !!(runtime.hostPcm && runtime.constPcm);
+  const sourcePcm = (role: Role) => role === 'host' ? runtime.hostPcm : runtime.constPcm;
+  const noiseStrength = (role: Role) => role === 'host' ? p.noiseHost : p.noiseConst;
+  function denoiseCache(role: Role, source: Float32Array, create = true): DenoiseCache | undefined {
+    let cache = role === 'host' ? runtime.hostDenoiseCache : runtime.constDenoiseCache;
+    if (cache?.source !== source) {
+      if (!create) return undefined;
+      cache = { source, values: new Map<number, Float32Array>() };
+      if (role === 'host') runtime.hostDenoiseCache = cache; else runtime.constDenoiseCache = cache;
+    }
+    return cache;
+  }
+  function cleanedPcm(role: Role): Float32Array | undefined {
+    const source = sourcePcm(role);
+    if (!source || noiseStrength(role) <= 0) return source;
+    return denoiseCache(role, source, false)?.values.get(noiseStrength(role)) ?? source;
+  }
   function computePeaks() {
-    if (runtime.hostPcm) hostPeaks = peaks(runtime.hostPcm, Math.ceil((runtime.hostPcm.length / 16000) * PEAKS_PER_SEC));
-    if (runtime.constPcm) constPeaks = peaks(runtime.constPcm, Math.ceil((runtime.constPcm.length / 16000) * PEAKS_PER_SEC));
+    const host = cleanedPcm('host'), constant = cleanedPcm('constant');
+    if (host) hostPeaks = peaks(host, Math.ceil((host.length / SAMPLE_RATE) * PEAKS_PER_SEC));
+    if (constant) constPeaks = peaks(constant, Math.ceil((constant.length / SAMPLE_RATE) * PEAKS_PER_SEC));
   }
   computePeaks();
 
   // ======================================================================= Preview
   const hostV = h('video', { playsInline: true, preload: 'auto', 'aria-label': 'Host video' }) as HTMLVideoElement;
   const constV = h('video', { playsInline: true, preload: 'auto', 'aria-label': 'Constant video' }) as HTMLVideoElement;
-  hostV.muted = p.mainAudio !== 'host';
-  constV.muted = p.mainAudio !== 'constant';
+  hostV.muted = p.mainAudio !== 'host' || p.noiseHost > 0;
+  constV.muted = p.mainAudio !== 'constant' || p.noiseConst > 0;
   const hostCell = h('div', { class: 'cell' }, hostV);
   const constCell = h('div', { class: 'cell' }, constV);
   const stage = h('div', { class: 'stage' }, hostCell, constCell);
@@ -93,8 +124,17 @@ export function editorScreen() {
   function applyCrop(role: Role) {
     const c = role === 'host' ? p.cropHost : p.cropConst;
     const v = role === 'host' ? hostV : constV;
-    const z = Math.max(1, c.zoom);
-    v.style.transform = z <= 1.001 ? '' : `translate(${c.x * (z - 1) * 50}%, ${c.y * (z - 1) * 50}%) scale(${z})`;
+    const cell = v.parentElement;
+    const aspect = cell && cell.clientWidth > 0 && cell.clientHeight > 0 ? cell.clientWidth / cell.clientHeight : aspectValue(p.aspect);
+    const ratio = c.ratio === 'custom' || !c.ratio ? (c.frameRatio ?? aspect) : cropRatioValue(c.ratio, aspect);
+    const zoomX = Math.max(1, c.zoom || 1, aspect / ratio);
+    const zoomY = Math.max(1, zoomX * ratio / aspect);
+    const rotate = c.rotate ?? 0;
+    const cover = rotationCoverZoom(rotate, aspect);
+    const mirrored = role === 'host' ? p.mirrorHost : p.mirrorConst;
+    v.style.transform = zoomX <= 1.001 && zoomY <= 1.001 && Math.abs(rotate) < 0.001 && !mirrored
+      ? ''
+      : `translate(${c.x * (zoomX - 1) * 50}%, ${c.y * (zoomY - 1) * 50}%) scale(${zoomX}, ${zoomY}) rotate(${rotate}deg) scale(${cover})${mirrored ? ' scaleX(-1)' : ''}`;
   }
   applyCrop('host'); applyCrop('constant');
 
@@ -108,7 +148,11 @@ export function editorScreen() {
   function hide(v: HTMLElement) { v.style.display = 'none'; }
 
   function applyLayout(seg: Segment | undefined) {
-    if (!seg) { place(hostCell, 0, 0, 100, 100); hide(constCell); return; } // nothing decided yet: show the Host
+    if (!seg) {
+      place(hostCell, 0, 0, 100, 100); hide(constCell);
+      applyCrop('host'); applyCrop('constant');
+      return;
+    } // nothing decided yet: show the Host
     const main = seg.main === 'host' ? hostCell : constCell;
     const other = seg.main === 'host' ? constCell : hostCell;
     if (seg.style === 'one') { place(main, 0, 0, 100, 100); hide(other); }
@@ -123,6 +167,7 @@ export function editorScreen() {
       const y = seg.corner === 'tl' || seg.corner === 'tr' ? m * 1.6 : 100 - heightPct - m * 1.6;
       place(other, x, y, w, heightPct, true);
     }
+    applyCrop('host'); applyCrop('constant');
   }
 
   // ---------- video sources: original, or a small preview copy when the phone's format is heavy ----------
@@ -242,6 +287,12 @@ export function editorScreen() {
   // ----- volume: Web Audio gain (HTML video.volume stops at 100 %) + soft limiter -----
   let actx: AudioContext | null = null;
   const gainNodes: Partial<Record<Role, GainNode>> = {};
+  let cleanSource: AudioBufferSourceNode | null = null;
+  const audioBuffers = new WeakMap<Float32Array, AudioBuffer>();
+  function updateVideoAudioMute() {
+    hostV.muted = p.mainAudio !== 'host' || (!!actx && p.noiseHost > 0);
+    constV.muted = p.mainAudio !== 'constant' || (!!actx && p.noiseConst > 0);
+  }
   function ensureGraph(): boolean {
     if (actx) return true;
     try {
@@ -262,10 +313,56 @@ export function editorScreen() {
   /** Push the current volumes (and normalize) to the preview. Only builds the audio graph once a gain other than 100 % is needed. */
   function applyVolume() {
     const roles: Role[] = ['host', 'constant'];
-    if (!actx && roles.every((r) => Math.abs(effectiveGain(p, r) - 1) < 0.01)) return;
-    if (!ensureGraph()) { roles.forEach((r) => { vid(r).volume = Math.min(1, effectiveGain(p, r)); }); return; }
+    const denoiseOn = p.noiseHost > 0 || p.noiseConst > 0;
+    if (!actx && !denoiseOn && roles.every((r) => Math.abs(effectiveGain(p, r) - 1) < 0.01)) { updateVideoAudioMute(); return; }
+    if (!ensureGraph()) {
+      roles.forEach((r) => { vid(r).volume = Math.min(1, effectiveGain(p, r)); });
+      hostV.muted = p.mainAudio !== 'host';
+      constV.muted = p.mainAudio !== 'constant';
+      return;
+    }
     roles.forEach((r) => { if (gainNodes[r]) gainNodes[r]!.gain.value = effectiveGain(p, r); });
+    updateVideoAudioMute();
     if (actx!.state === 'suspended') actx!.resume().catch(() => {});
+  }
+
+  function stopCleanAudio() {
+    const source = cleanSource;
+    cleanSource = null;
+    if (!source) return;
+    source.onended = null;
+    try { source.stop(); } catch { /* already ended */ }
+    try { source.disconnect(); } catch { /* already disconnected */ }
+  }
+  function startCleanAudio() {
+    stopCleanAudio();
+    if (!playing) return;
+    const role = p.mainAudio;
+    const raw = sourcePcm(role), pcm = cleanedPcm(role);
+    if (noiseStrength(role) <= 0 || !raw || !pcm || pcm === raw) return;
+    if (!ensureGraph() || !actx || !gainNodes[role]) return;
+    let buffer = audioBuffers.get(pcm);
+    if (!buffer) {
+      buffer = actx.createBuffer(1, pcm.length, SAMPLE_RATE);
+      buffer.copyToChannel(pcm, 0);
+      audioBuffers.set(pcm, buffer);
+    }
+    const source = actx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(gainNodes[role]!);
+    const sourceMs = playMs + (role === 'constant' ? p.offsetMs : 0);
+    const delay = Math.max(0, -sourceMs) / 1000;
+    const offset = Math.max(0, sourceMs) / 1000;
+    const remaining = Math.max(0, p.durationMs - playMs) / 1000 - delay;
+    const duration = Math.min(buffer.duration - offset, remaining);
+    if (duration <= 0) { source.disconnect(); return; }
+    if (actx.state === 'suspended') actx.resume().catch(() => {});
+    cleanSource = source;
+    source.onended = () => {
+      if (cleanSource === source) cleanSource = null;
+      try { source.disconnect(); } catch { /* already disconnected */ }
+    };
+    source.start(actx.currentTime + delay, offset, duration);
   }
 
   function setPlaying(on: boolean) {
@@ -276,8 +373,13 @@ export function editorScreen() {
       if (playMs >= lastEnd() - 50) playMs = firstStart();
       if (!isKept(p.segments, playMs) && p.segments.length) { const nx = nextKeptStart(p.segments, playMs); if (nx !== null) playMs = nx; }
       syncHost(true); syncConst(true);
-      hostV.play().catch(() => {});
-    } else { hostV.pause(); constV.pause(); }
+      hostV.play().then(() => {
+        if (!playing) return;
+        playMs = hostV.currentTime * 1000;
+        syncConst(true);
+        startCleanAudio();
+      }).catch(() => {});
+    } else { stopCleanAudio(); hostV.pause(); constV.pause(); }
     updatePlayState();
   }
 
@@ -677,12 +779,36 @@ export function editorScreen() {
     h('div', { class: 'right' }, undoBtn, redoBtn));
 
   // ---------- history ----------
-  const snap = (): Snapshot => ({ segments: p.segments, offsetMs: p.offsetMs, durationMs: p.durationMs });
+  const snap = (): Snapshot => ({
+    segments: p.segments, offsetMs: p.offsetMs, durationMs: p.durationMs,
+    cropHost: p.cropHost, cropConst: p.cropConst, mirrorHost: p.mirrorHost, mirrorConst: p.mirrorConst,
+    noiseHost: p.noiseHost, noiseConst: p.noiseConst,
+  });
   function restore(s: Snapshot) {
     p.segments = s.segments; p.offsetMs = s.offsetMs; p.durationMs = s.durationMs;
+    p.cropHost = s.cropHost; p.cropConst = s.cropConst;
+    p.mirrorHost = s.mirrorHost; p.mirrorConst = s.mirrorConst;
+    p.noiseHost = s.noiseHost; p.noiseConst = s.noiseConst;
     playMs = Math.min(playMs, p.durationMs);
+    applyCrop('host'); applyCrop('constant');
+    applyVolume(); computePeaks();
+    if (playing && !hostV.seeking) startCleanAudio();
+    void restoreNoiseCaches(p.noiseHost, p.noiseConst);
     syncHost(true); syncConst(true);
     afterEdit();
+    if (panel === 'crop') { drawCropCanvas(); positionCropFrame(); renderPanel(); }
+    if (panel === 'audio') renderPanel();
+  }
+  function toggleMirror(role: Role) {
+    hist.push(snap()); updateBtns();
+    if (role === 'host') p.mirrorHost = !p.mirrorHost; else p.mirrorConst = !p.mirrorConst;
+    applyCrop(role);
+    if (panel === 'crop' && cropRole === role) { drawCropCanvas(); positionCropFrame(); renderPanel(); }
+    scheduleSave();
+  }
+  function toggleMirrorForScreen() {
+    const role = segmentAt(p.segments, playMs)?.main ?? 'host';
+    toggleMirror(role);
   }
   function edit(next: Segment[]) { hist.push(snap()); p.segments = next; afterEdit(); }
   function afterEdit() {
@@ -734,6 +860,85 @@ export function editorScreen() {
     return false;
   };
 
+  let denoiseCancel: (() => void) | null = null;
+  let denoiseRun = 0;
+  function cancelDenoiseJob() {
+    if (!denoiseCancel) return;
+    denoiseCancel();
+    denoiseCancel = null;
+    endTask('denoise');
+  }
+  type NoiseOptions = { history?: boolean; persist?: boolean; resetOnFailure?: boolean };
+  function commitNoise(role: Role, strength: number, options: NoiseOptions = {}) {
+    const key = role === 'host' ? 'noiseHost' : 'noiseConst';
+    if (p[key] !== strength && options.history !== false) { hist.push(snap()); updateBtns(); }
+    p[key] = strength;
+    applyVolume();
+    computePeaks();
+    draw();
+    if (playing) startCleanAudio();
+    if (options.persist !== false) scheduleSave();
+  }
+  async function applyNoiseReduction(role: Role, requested: number, options: NoiseOptions = {}) {
+    const strength = Math.max(0, Math.min(100, Math.round(requested)));
+    const source = sourcePcm(role);
+    if (!source) {
+      if (options.resetOnFailure) {
+        commitNoise(role, 0, { history: false, persist: true });
+      } else toast('Audio is still being read. Try again in a moment.');
+      return;
+    }
+
+    const cache = denoiseCache(role, source);
+    if (strength === 0 || cache?.values.has(strength)) {
+      denoiseRun++;
+      cancelDenoiseJob();
+      commitNoise(role, strength, options);
+      if (panel === 'audio') renderPanel();
+      return;
+    }
+
+    const runId = ++denoiseRun;
+    cancelDenoiseJob();
+    const job = startDenoise(source, strength, (percent) => updateTask('denoise', undefined, percent));
+    denoiseCancel = job.cancel;
+    startTask('denoise', 'Reducing noise', 0, { modal: true, cancel: () => job.cancel() });
+    try {
+      const cleaned = await job.promise;
+      if (runId !== denoiseRun || source !== sourcePcm(role)) return;
+      const currentCache = denoiseCache(role, source)!;
+      currentCache.values.set(strength, cleaned);
+      while (currentCache.values.size > 3) {
+        const oldest = currentCache.values.keys().next().value as number | undefined;
+        if (oldest === undefined) break;
+        currentCache.values.delete(oldest);
+      }
+      commitNoise(role, strength, options);
+    } catch (error) {
+      if (runId === denoiseRun) {
+        const cancelled = error instanceof Error && error.message.includes('cancel');
+        if (options.resetOnFailure) commitNoise(role, 0, { history: false, persist: true });
+        else if (!cancelled) toast(error instanceof Error ? error.message : 'Noise reduction failed.');
+      }
+    } finally {
+      if (runId === denoiseRun) {
+        denoiseCancel = null;
+        endTask('denoise');
+        if (panel === 'audio') renderPanel();
+      }
+    }
+  }
+  async function restoreNoiseCaches(hostStrength: number, constStrength: number) {
+    if (noiseStrength('host') === hostStrength && hostStrength > 0
+        && sourcePcm('host') && cleanedPcm('host') === sourcePcm('host')) {
+      await applyNoiseReduction('host', hostStrength, { history: false, persist: false });
+    }
+    if (noiseStrength('constant') === constStrength && constStrength > 0
+        && sourcePcm('constant') && cleanedPcm('constant') === sourcePcm('constant')) {
+      await applyNoiseReduction('constant', constStrength, { history: false, persist: false });
+    }
+  }
+
   function doAutoSwitch(useLips: boolean) {
     if (!needAudio()) return;
     const motion = useLips && runtime.hostMotion && runtime.constMotion ? { host: runtime.hostMotion, constant: runtime.constMotion } : undefined;
@@ -784,8 +989,8 @@ export function editorScreen() {
 
   function setAudio(role: Role) {
     p.mainAudio = role;
-    hostV.muted = role !== 'host';
-    constV.muted = role !== 'constant';
+    updateVideoAudioMute();
+    if (playing) startCleanAudio();
     renderBar(); draw(); scheduleSave(); tick();
   }
 
@@ -803,6 +1008,7 @@ export function editorScreen() {
         tool('user', 'On screen', () => openPanel('main')),
         tool('volume', 'Audio', () => openPanel('audio')),
         tool('crop', 'Crop', () => openPanel('crop')),
+        tool('mirror', 'Mirror', toggleMirrorForScreen),
         tool('ratio', 'Ratio', () => openPanel('ratio')),
         tool('zoomOut', 'Zoom out', () => { pxPerSec = Math.max(minPx(), pxPerSec / 1.5); draw(); }),
         tool('zoomIn', 'Zoom in', () => { pxPerSec = Math.min(300, pxPerSec * 1.5); draw(); }),
@@ -815,6 +1021,7 @@ export function editorScreen() {
         tool('user', 'On screen', () => openPanel('main')),
         tool('volume', 'Audio', () => openPanel('audio')),
         tool('crop', 'Crop', () => openPanel('crop')),
+        tool('mirror', 'Mirror', toggleMirrorForScreen),
         tool('merge', 'Merge', doMerge),
         tool('trash', 'Delete', doDelete),
         tool('swap', 'Swap', doSwap));
@@ -926,6 +1133,21 @@ export function editorScreen() {
     if (el) el.textContent = shiftText();
   }
 
+  function noiseControl(role: Role): HTMLElement {
+    const label = role === 'host' ? 'Host mic' : 'Constant mic';
+    const input = h('input', {
+      type: 'range', min: 0, max: 100, step: 1, value: noiseStrength(role),
+      'aria-label': `${label} noise reduction`,
+    }) as HTMLInputElement;
+    const value = h('span', { class: 'noise-value' }, `${noiseStrength(role)}%`);
+    input.disabled = !sourcePcm(role);
+    input.addEventListener('input', () => { value.textContent = `${input.value}%`; });
+    input.addEventListener('change', () => { void applyNoiseReduction(role, Number(input.value)); });
+    return h('div', { class: 'noise-control' },
+      h('div', { class: 'noise-head' }, h('span', {}, `${label} noise reduction`), value),
+      input);
+  }
+
   function renderPanel() {
     toolbar.style.display = panel === 'none' ? '' : 'none';
     panelEl.style.display = panel === 'none' ? 'none' : '';
@@ -976,16 +1198,66 @@ export function editorScreen() {
           ptile(icon('volume', 26), 'Host mic', () => { setAudio('host'); renderPanel(); }, { sel: p.mainAudio === 'host' }),
           ptile(icon('volume', 26), 'Constant mic', () => { setAudio('constant'); renderPanel(); }, { sel: p.mainAudio === 'constant' })),
         vs.row,
+        noiseControl('host'),
+        noiseControl('constant'),
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Boost'),
           chipRow<number>([[100, '100%'], [200, '200%'], [400, '400%'], [700, '700%'], [1000, '1000%']], vol, (v) => { setVol(v); renderPanel(); })),
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Normalize'),
           chipRow<string>([['off', 'Off'], ['on', 'On']], p.normalize ? 'on' : 'off', (v) => { p.normalize = v === 'on'; applyVolume(); scheduleSave(); renderPanel(); })));
     } else if (panel === 'crop') {
       const c: CropState = cropRole === 'host' ? p.cropHost : p.cropConst;
-      const reset = h('button', { class: 'chip', onclick: () => { Object.assign(c, NO_CROP); applyCrop(cropRole); positionCropFrame(); scheduleSave(); } }, icon('trash', 16), 'Reset');
+      const reset = h('button', { class: 'chip crop-reset', onclick: () => {
+        if (c.zoom === 1 && c.x === 0 && c.y === 0 && (c.rotate ?? 0) === 0
+          && (c.ratio ?? 'custom') === 'custom' && (!c.frameRatio || Math.abs(c.frameRatio - cropViewAspect()) < 0.001)) return;
+        hist.push(snap()); updateBtns();
+        Object.assign(c, NO_CROP); delete c.frameRatio;
+        applyCrop(cropRole); drawCropCanvas(); positionCropFrame(); scheduleSave(); renderPanel();
+      } }, icon('trash', 16), 'Reset');
+      const mirrorEnabled = cropRole === 'host' ? p.mirrorHost : p.mirrorConst;
+      const mirrorChip = h('button', {
+        class: 'chip crop-mirror' + (mirrorEnabled ? ' on' : ''),
+        'aria-label': `${mirrorEnabled ? 'Unmirror' : 'Mirror'} ${cropRole === 'host' ? 'Host' : 'Constant'}`,
+        onclick: () => toggleMirror(cropRole),
+      }, icon('mirror', 16), 'Mirror');
+      const rotateValue = h('b', { class: 'crop-rotate-value' }, `${Math.round(c.rotate ?? 0)}°`);
+      const rotateInput = h('input', { class: 'crop-rotate-input', type: 'range', min: '-45', max: '45', step: '1', value: String(c.rotate ?? 0), 'aria-label': 'Rotate from minus 45 to plus 45 degrees' }) as HTMLInputElement;
+      const rememberRotate = () => { hist.push(snap()); updateBtns(); };
+      rotateInput.addEventListener('pointerdown', rememberRotate);
+      rotateInput.addEventListener('keydown', (e) => { if (!e.repeat && ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageDown', 'PageUp'].includes(e.key)) rememberRotate(); });
+      rotateInput.addEventListener('input', () => {
+        c.rotate = Number(rotateInput.value);
+        rotateValue.textContent = `${Math.round(c.rotate)}°`;
+        applyCrop(cropRole); drawCropCanvas(); scheduleSave();
+      });
+      const rulerTicks = Array.from({ length: 19 }, (_, i) =>
+        h('i', { class: `crop-tick${i % 3 === 0 ? ' major' : ''}${i === 9 ? ' center' : ''}`, style: `left:${(i / 18) * 100}%` }));
+      const ratios = h('div', { class: 'chips crop-ratios' }, ...CROP_RATIOS.map(([ratio, label]) =>
+        h('button', {
+          class: 'chip' + ((c.ratio ?? 'custom') === ratio ? ' on' : ''),
+          'aria-label': `Crop aspect ratio ${label}`,
+          onclick: () => {
+            if ((c.ratio ?? 'custom') === ratio) return;
+            hist.push(snap()); updateBtns();
+            const oldRatio = currentCropRatio();
+            const currentAspect = cropViewAspect();
+            c.ratio = ratio;
+            if (ratio === 'custom') c.frameRatio = oldRatio;
+            else c.frameRatio = undefined;
+            const ratioValue = ratio === 'custom' ? oldRatio : cropRatioValue(ratio, currentAspect);
+            c.zoom = Math.max(1, c.zoom || 1, currentAspect / ratioValue);
+            c.x = 0; c.y = 0;
+            applyCrop(cropRole); positionCropFrame(); scheduleSave(); renderPanel();
+          },
+        }, label)));
       setPanel('Crop',
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Video'),
-          chipRow<Role>([['host', 'Host'], ['constant', 'Constant']], cropRole, (v) => { cropRole = v; renderPanel(); layoutCrop(); }), reset),
+          chipRow<Role>([['host', 'Host'], ['constant', 'Constant']], cropRole, (v) => { cropRole = v; renderPanel(); layoutCrop(); })),
+        h('div', { class: 'crop-rotate' },
+          h('div', { class: 'crop-rotate-head' }, h('span', {}, 'Rotate'), rotateValue),
+          h('div', { class: 'crop-ruler' }, ...rulerTicks, rotateInput),
+          h('div', { class: 'crop-ruler-labels' }, h('span', {}, '−45°'), h('span', {}, '0°'), h('span', {}, '+45°'))),
+        h('div', { class: 'prow crop-ratio-row' }, h('div', { class: 'plabel' }, 'Aspect ratio'), ratios),
+        h('div', { class: 'crop-actions' }, mirrorChip, reset),
         h('div', { class: 'pinfo' }, 'Drag the corners or pinch to crop. Drag inside the frame to move it.'));
     } else {
       const total = pendingCuts.reduce((a, r) => a + (r.endMs - r.startMs), 0);
@@ -1006,8 +1278,7 @@ export function editorScreen() {
   }
 
   // ----- CapCut-style crop: the picture is shown big, a frame with corner handles picks the part that is kept -----
-  // The frame keeps the shape of the video's box in the layout. Position/size are stored as CropState (zoom, x, y),
-  // the same numbers the exporter uses.
+  // The frame keeps the layout cell's shape until Custom is chosen; position, size and angle are stored in CropState.
   const cropCanvas = h('canvas', { class: 'cropcanvas' }) as HTMLCanvasElement;
   const cropGrid = h('div', { class: 'grid' });
   const cropFrame = h('div', { class: 'cropframe' }, cropGrid,
@@ -1016,6 +1287,7 @@ export function editorScreen() {
   preview.append(cropView);
   let cm = { x: 0, y: 0, w: 0, h: 0 }; // the big picture area inside the preview
   let cropAr = 16 / 9;
+  function cropViewAspect(): number { return cropAr; }
 
   function layoutCrop() {
     if (panel !== 'crop') return;
@@ -1042,12 +1314,29 @@ export function editorScreen() {
     if (!vw || !vh) return;
     let sx = 0, sy = 0, sw = vw, sh = vh;
     if (vw / vh > cropAr) { sw = vh * cropAr; sx = (vw - sw) / 2; } else { sh = vw / cropAr; sy = (vh - sh) / 2; }
-    try { ctx.drawImage(v, sx, sy, sw, sh, 0, 0, cropCanvas.width, cropCanvas.height); } catch { /* frame not decoded yet */ }
+    const rotate = cropState().rotate ?? 0;
+    const cover = rotationCoverZoom(rotate, cropAr);
+    try {
+      ctx.save();
+      ctx.translate(cropCanvas.width / 2, cropCanvas.height / 2);
+      ctx.scale(cover, cover);
+      ctx.rotate(rotate * Math.PI / 180);
+      const mirrored = cropRole === 'host' ? p.mirrorHost : p.mirrorConst;
+      if (mirrored) ctx.scale(-1, 1);
+      ctx.translate(-cropCanvas.width / 2, -cropCanvas.height / 2);
+      ctx.drawImage(v, sx, sy, sw, sh, 0, 0, cropCanvas.width, cropCanvas.height);
+      ctx.restore();
+    } catch { ctx.restore(); /* frame not decoded yet */ }
   }
   const cropState = () => (cropRole === 'host' ? p.cropHost : p.cropConst);
+  const currentCropRatio = () => {
+    const c = cropState();
+    return c.ratio === 'custom' || !c.ratio ? (c.frameRatio ?? cropAr) : cropRatioValue(c.ratio, cropAr);
+  };
   const frameRect = () => {
-    const c = cropState(); const z = Math.max(1, c.zoom);
-    const w = cm.w / z, hh = cm.h / z;
+    const c = cropState(); const ratio = currentCropRatio();
+    const z = Math.max(1, c.zoom || 1, cropAr / ratio);
+    const w = cm.w / z, hh = w / ratio;
     const cx = cm.x + cm.w / 2 - c.x * (cm.w - w) / 2, cy = cm.y + cm.h / 2 - c.y * (cm.h - hh) / 2;
     return { l: cx - w / 2, t: cy - hh / 2, w, h: hh };
   };
@@ -1055,17 +1344,28 @@ export function editorScreen() {
     const r = frameRect();
     cropFrame.style.cssText = `left:${r.l}px;top:${r.t}px;width:${r.w}px;height:${r.h}px`;
   }
-  /** Store a frame (left, top, width) as CropState, with limits and snapping to the center. */
-  function setFrame(l: number, t: number, w: number, snap = true) {
-    w = Math.max(cm.w / 3, Math.min(cm.w, w));
-    const hh = w / cropAr;
+  /** Store a frame (left, top, width, height) as CropState, with limits and snapping to the center. */
+  function setFrame(l: number, t: number, w: number, h0?: number, snap = true) {
+    const c = cropState();
+    const isCustom = (c.ratio ?? 'custom') === 'custom';
+    const ratio = currentCropRatio();
+    let hh: number;
+    if (isCustom) {
+      w = Math.max(cm.w / 3, Math.min(cm.w, w));
+      hh = Math.max(cm.h / 3, Math.min(cm.h, h0 ?? w / ratio));
+    } else {
+      const maxW = Math.min(cm.w, cm.h * ratio);
+      w = Math.max(maxW / 3, Math.min(maxW, w));
+      hh = w / ratio;
+    }
+    const frameRatio = w / hh;
     l = Math.max(cm.x, Math.min(cm.x + cm.w - w, l));
     t = Math.max(cm.y, Math.min(cm.y + cm.h - hh, t));
     const ux = l + w / 2 - (cm.x + cm.w / 2), uy = t + hh / 2 - (cm.y + cm.h / 2);
     const rx = (cm.w - w) / 2, ry = (cm.h - hh) / 2;
-    const c = cropState();
     c.zoom = cm.w / w;
-    if (c.zoom < 1.002) { c.zoom = 1; c.x = 0; c.y = 0; }
+    if (isCustom) c.frameRatio = frameRatio;
+    if (c.zoom < 1.002 && Math.abs(hh - cm.h) < 1 && isCustom) { c.zoom = 1; c.x = 0; c.y = 0; c.frameRatio = cropAr; }
     else {
       c.x = rx > 0.5 ? Math.max(-1, Math.min(1, -ux / rx)) : 0;
       c.y = ry > 0.5 ? Math.max(-1, Math.min(1, -uy / ry)) : 0;
@@ -1073,16 +1373,18 @@ export function editorScreen() {
       if (snap && Math.abs(uy) < 5) c.y = 0;
     }
     guideV.classList.toggle('on', c.zoom > 1 && c.x === 0);
-    guideH.classList.toggle('on', c.zoom > 1 && c.y === 0);
+    guideH.classList.toggle('on', (cm.h / hh > 1.001) && c.y === 0);
     applyCrop(cropRole); positionCropFrame(); scheduleSave();
   }
 
   type CropDrag = { mode: 'move' | 'resize'; corner?: string; ax?: number; ay?: number; dx?: number; dy?: number };
   const cropPtrs = new Map<number, Ptr>();
   let cropDrag: CropDrag | null = null;
-  let pinchStart = { d: 0, w: 0 };
+  let pinchStart = { d: 0, w: 0, h: 0 };
+  let cropGesturePushed = false;
   cropView.addEventListener('pointerdown', (e) => {
     if (panel !== 'crop') return;
+    if (!cropPtrs.size && !cropGesturePushed) { hist.push(snap()); updateBtns(); cropGesturePushed = true; }
     cropView.setPointerCapture(e.pointerId);
     const rect = cropView.getBoundingClientRect();
     const px = e.clientX - rect.left, py = e.clientY - rect.top;
@@ -1091,7 +1393,7 @@ export function editorScreen() {
     const r = frameRect();
     if (cropPtrs.size === 2) {
       const [a, b] = [...cropPtrs.values()];
-      pinchStart = { d: Math.hypot(a.x - b.x, a.y - b.y), w: r.w };
+      pinchStart = { d: Math.hypot(a.x - b.x, a.y - b.y), w: r.w, h: r.h };
       cropDrag = null;
       return;
     }
@@ -1111,20 +1413,30 @@ export function editorScreen() {
     const r = frameRect();
     if (cropPtrs.size === 2) {
       const [a, b] = [...cropPtrs.values()];
-      const w = pinchStart.w * (Math.hypot(a.x - b.x, a.y - b.y) / (pinchStart.d || 1));
+      const factor = Math.hypot(a.x - b.x, a.y - b.y) / (pinchStart.d || 1);
+      const w = pinchStart.w * factor, hh = pinchStart.h * factor;
       const cx = r.l + r.w / 2, cy = r.t + r.h / 2;
-      setFrame(cx - w / 2, cy - w / cropAr / 2, w);
+      setFrame(cx - w / 2, cy - hh / 2, w, hh);
     } else if (cropDrag?.mode === 'move') {
-      setFrame(px - cropDrag.dx!, py - cropDrag.dy!, r.w);
+      setFrame(px - cropDrag.dx!, py - cropDrag.dy!, r.w, r.h);
     } else if (cropDrag?.mode === 'resize') {
       const { ax, ay, corner } = cropDrag as Required<CropDrag>;
       const dirX = corner.endsWith('r') ? 1 : -1, dirY = corner.startsWith('b') ? 1 : -1;
       const spaceX = dirX > 0 ? cm.x + cm.w - ax : ax - cm.x;
       const spaceY = dirY > 0 ? cm.y + cm.h - ay : ay - cm.y;
-      let w = Math.max(Math.abs(px - ax), Math.abs(py - ay) * cropAr);
-      w = Math.max(cm.w / 3, Math.min(w, spaceX, spaceY * cropAr));
-      const hh = w / cropAr;
-      setFrame(dirX > 0 ? ax : ax - w, dirY > 0 ? ay : ay - hh, w, false);
+      const ratio = currentCropRatio();
+      const custom = (cropState().ratio ?? 'custom') === 'custom';
+      let w: number, hh: number;
+      if (custom) {
+        w = Math.max(cm.w / 3, Math.min(Math.abs(px - ax), spaceX));
+        hh = Math.max(cm.h / 3, Math.min(Math.abs(py - ay), spaceY));
+      } else {
+        w = Math.max(Math.abs(px - ax), Math.abs(py - ay) * ratio);
+        const maxW = Math.min(spaceX, spaceY * ratio);
+        w = Math.max(Math.min(cm.w, cm.h * ratio) / 3, Math.min(w, maxW));
+        hh = w / ratio;
+      }
+      setFrame(dirX > 0 ? ax : ax - w, dirY > 0 ? ay : ay - hh, w, hh, false);
     }
   });
   const cropEnd = (e: PointerEvent) => {
@@ -1133,13 +1445,16 @@ export function editorScreen() {
       const [pt] = [...cropPtrs.values()]; const r = frameRect();
       cropDrag = { mode: 'move', dx: pt.x - r.l, dy: pt.y - r.t };
     } else if (!cropPtrs.size) {
-      cropDrag = null; cropGrid.classList.remove('on');
+      cropDrag = null; cropGesturePushed = false; cropGrid.classList.remove('on');
       guideV.classList.remove('on'); guideH.classList.remove('on');
     }
   };
   cropView.addEventListener('pointerup', cropEnd);
   cropView.addEventListener('pointercancel', cropEnd);
-  hostV.addEventListener('seeked', () => { if (panel === 'crop' && cropRole === 'host') drawCropCanvas(); });
+  hostV.addEventListener('seeked', () => {
+    if (panel === 'crop' && cropRole === 'host') drawCropCanvas();
+    if (playing && !hostV.seeking) startCleanAudio();
+  });
   constV.addEventListener('seeked', () => { if (panel === 'crop' && cropRole === 'constant') drawCropCanvas(); });
   hostV.addEventListener('loadeddata', () => { if (panel === 'crop' && cropRole === 'host') drawCropCanvas(); });
   constV.addEventListener('loadeddata', () => { if (panel === 'crop' && cropRole === 'constant') drawCropCanvas(); });
@@ -1196,6 +1511,12 @@ export function editorScreen() {
       endTask('audio');
     }
     if (destroyed) return;
+    for (const role of ['host', 'constant'] as Role[]) {
+      if (noiseStrength(role) > 0) {
+        await applyNoiseReduction(role, noiseStrength(role), { history: false, persist: false, resetOnFailure: true });
+        if (destroyed) return;
+      }
+    }
     computePeaks(); requestDraw();
     applyVolume();
 
@@ -1328,8 +1649,11 @@ export function editorScreen() {
     el,
     destroy: () => {
       destroyed = true;
+      denoiseRun++;
+      cancelDenoiseJob();
+      endTask('denoise');
       cancelAnimationFrame(raf); clearTimeout(saveTimer); saveProject(p);
-      hostV.pause(); constV.pause();
+      stopCleanAudio(); hostV.pause(); constV.pause();
       hostStrip?.cancel(); constStrip?.cancel();
       offTasks();
       endTask('audio'); endTask('sync'); endTask('switch'); endTask('proxy-host'); endTask('proxy-constant'); endTask('lips'); scanCancel = true; closeListSheet();

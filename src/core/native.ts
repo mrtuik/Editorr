@@ -19,7 +19,13 @@ export interface ExportRequest {
   outH: number;
   cropHost: CropState;
   cropConst: CropState;
+  mirrorHost: boolean;
+  mirrorConst: boolean;
+  noiseHost: number;
+  noiseConst: number;
   mainAudio: 'host' | 'constant';
+  /** Native-generated, denoised full-sample-rate WAV mixed into the export composition. */
+  cleanAudioUri?: string;
   normalize: boolean;
   /** Gain applied to the kept audio (volume x normalize), 1 = unchanged. */
   gain: number;
@@ -41,7 +47,7 @@ export interface PickedVideo {
   bitrate?: number;
 }
 
-export type NativeEvent = 'audioProgress' | 'exportProgress' | 'proxyProgress' | 'copyProgress' | 'thumb';
+export type NativeEvent = 'audioProgress' | 'denoiseProgress' | 'exportProgress' | 'proxyProgress' | 'copyProgress' | 'thumb';
 
 export interface EditorrNativePlugin {
   /**
@@ -52,6 +58,8 @@ export interface EditorrNativePlugin {
   pickVideos(opts: { multiple: boolean }): Promise<{ videos: PickedVideo[]; ignored: number }>;
   /** Decodes the audio track to mono 16 kHz PCM16 (little endian) in a cache file. */
   extractAudio(opts: { path: string }): Promise<{ pcmPath: string; samples: number }>;
+  /** Builds a denoised mono WAV at the source audio sample rate in app cache for export. */
+  prepareDenoiseAudio(opts: { path: string; strength: number }): Promise<{ audioUri: string }>;
   /** Runs Media3 Transformer composition. Emits 'exportProgress' events. */
   exportProject(req: ExportRequest): Promise<{ outputUri: string }>;
   /** Transcode to a small H.264 file so the WebView can preview formats/sizes it cannot play smoothly. Cached per source file. */
@@ -100,6 +108,8 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     height,
     outW: w, outH: h,
     cropHost: p.cropHost, cropConst: p.cropConst,
+    mirrorHost: p.mirrorHost, mirrorConst: p.mirrorConst,
+    noiseHost: p.noiseHost, noiseConst: p.noiseConst,
     mainAudio: p.mainAudio,
     normalize: p.normalize,
     gain: effectiveGain(p, p.mainAudio),

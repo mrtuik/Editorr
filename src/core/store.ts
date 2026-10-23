@@ -1,4 +1,4 @@
-import { NO_CROP, type Project, type Segment, type Settings } from './types';
+import { NO_CROP, type CropState, type Project, type Segment, type Settings } from './types';
 
 const OLD_PROJECTS_KEY = 'editorr.projects.v1';
 const OLD_SETTINGS_KEY = 'editorr.settings.v1';
@@ -101,7 +101,21 @@ export function saveSettings(s: Settings): Promise<void> {
 
 /** Projects saved by older versions miss the newer fields. */
 function withDefaults(p: Project): Project {
-  return { ...p, aspect: p.aspect ?? '16:9', cropHost: p.cropHost ?? { ...NO_CROP }, cropConst: p.cropConst ?? { ...NO_CROP }, volumeHost: p.volumeHost ?? 100, volumeConst: p.volumeConst ?? 100 };
+  const cropDefaults = (crop?: Partial<CropState>): CropState => ({
+    ...NO_CROP, ...(crop ?? {}), rotate: crop?.rotate ?? 0, ratio: crop?.ratio ?? 'custom',
+  });
+  return {
+    ...p,
+    aspect: p.aspect ?? '16:9',
+    cropHost: cropDefaults(p.cropHost),
+    cropConst: cropDefaults(p.cropConst),
+    mirrorHost: p.mirrorHost ?? false,
+    mirrorConst: p.mirrorConst ?? false,
+    noiseHost: p.noiseHost ?? 0,
+    noiseConst: p.noiseConst ?? 0,
+    volumeHost: p.volumeHost ?? 100,
+    volumeConst: p.volumeConst ?? 100,
+  };
 }
 
 export async function listProjects(strict = false): Promise<Project[]> {
@@ -186,11 +200,25 @@ export function newProject(): Project {
     aspect: '16:9',
     cropHost: { ...NO_CROP },
     cropConst: { ...NO_CROP },
+    mirrorHost: false,
+    mirrorConst: false,
+    noiseHost: 0,
+    noiseConst: 0,
   };
 }
 
-/** What undo/redo restores: the cut list and the sync offset (dragging the green clip is undoable too). */
-export interface Snapshot { segments: Segment[]; offsetMs: number; durationMs: number }
+/** What undo/redo restores: timeline edits, sync offset, both crop states, and mirroring. */
+export interface Snapshot {
+  segments: Segment[];
+  offsetMs: number;
+  durationMs: number;
+  cropHost: CropState;
+  cropConst: CropState;
+  mirrorHost: boolean;
+  mirrorConst: boolean;
+  noiseHost: number;
+  noiseConst: number;
+}
 
 /** Undo/redo (50 steps, spec asks >= 30). */
 export class History {
@@ -230,8 +258,14 @@ export interface Runtime {
   constPath?: string;
   hostPcm?: Float32Array;
   constPcm?: Float32Array;
+  hostDenoiseCache?: DenoiseCache;
+  constDenoiseCache?: DenoiseCache;
   /** lip/face movement per 100 ms timeline frame (not saved) */
   hostMotion?: Float32Array;
   constMotion?: Float32Array;
 }
+
+/** Small, runtime-only strength cache. Tied to the source PCM object to avoid cross-project reuse. */
+export interface DenoiseCache { source: Float32Array; values: Map<number, Float32Array> }
+
 export const runtime: Runtime = {};

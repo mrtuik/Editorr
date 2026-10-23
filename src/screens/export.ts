@@ -110,10 +110,12 @@ export function exportScreen() {
     status.className = 'xtitle'; status.textContent = 'Exporting...'; sub.style.display = '';
     try {
       const { mb } = await EditorrNative.freeSpaceMb();
-      const needMb = Math.round(sizeMb() * 1.15) + 50;
+      const noiseStrength = p.mainAudio === 'host' ? p.noiseHost : p.noiseConst;
+      const denoiseTempMb = noiseStrength > 0 ? Math.ceil(((p.mainAudio === 'host' ? p.host?.durationMs : p.constant?.durationMs) ?? p.durationMs) / 1000 * 0.30) : 0;
+      const needMb = Math.round(sizeMb() * 1.15) + denoiseTempMb + 50;
       if (mb < needMb) throw new Error(`Not enough storage. Free about ${needMb - mb} MB and try again.`);
       try { await LocalNotifications.requestPermissions(); } catch { /* optional */ }
-      const t0 = Date.now();
+      let t0 = Date.now();
       EditorrNative.addListener('exportProgress', (e: { path?: string; percent: number }) => {
         const n = Math.floor(e.percent * 10) / 10;
         if (n === lastPct) return; // no repaint when nothing changed (keeps the UI thread free for the encoder)
@@ -124,7 +126,27 @@ export function exportScreen() {
           eta.textContent = `About ${Math.max(1, Math.round(left / 60000))} min left`;
         }
       });
-      const out = await EditorrNative.exportProject(toExportRequest(p, hostUri, constUri, res, Math.min(fps, srcFps), mbps));
+      let cleanAudioUri: string | undefined;
+      if (noiseStrength > 0) {
+        status.textContent = 'Preparing noise-reduced audio...';
+        sub.textContent = 'Cleaning the selected mic track at its original sample rate.';
+        pct.textContent = '0%';
+        const listener = await EditorrNative.addListener('denoiseProgress', (e: { percent: number }) => {
+          pct.textContent = `${Math.floor(e.percent)}%`;
+        });
+        try {
+          const path = p.mainAudio === 'host' ? hostUri : constUri;
+          cleanAudioUri = (await EditorrNative.prepareDenoiseAudio({ path, strength: noiseStrength })).audioUri;
+        } finally { await listener.remove(); }
+      }
+      status.textContent = 'Exporting...';
+      sub.textContent = "Please don't close Editorr or lock your screen.";
+      pct.textContent = '0%';
+      lastPct = -1;
+      t0 = Date.now();
+      const request = toExportRequest(p, hostUri, constUri, res, Math.min(fps, srcFps), mbps);
+      request.cleanAudioUri = cleanAudioUri;
+      const out = await EditorrNative.exportProject(request);
       finish(out.outputUri);
     } catch (e) {
       running = false;

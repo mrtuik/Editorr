@@ -6,10 +6,11 @@ export type Sensitivity = 'low' | 'medium' | 'high';
 export type Confidence = 'High' | 'Medium' | 'Low';
 export type Aspect = '16:9' | '9:16' | '1:1' | '4:5' | '4:3';
 export type SilenceSens = 'low' | 'medium' | 'high';
+export type CropRatio = 'custom' | '9:16' | '16:9' | '1:1' | '4:3' | '2:3';
 
 /** Pan/zoom of one video inside its frame. zoom 1 = no crop. x,y in -1..1 move the picture. */
-export interface CropState { zoom: number; x: number; y: number; }
-export const NO_CROP: CropState = { zoom: 1, x: 0, y: 0 };
+export interface CropState { zoom: number; x: number; y: number; rotate: number; ratio?: CropRatio; frameRatio?: number; }
+export const NO_CROP: CropState = { zoom: 1, x: 0, y: 0, rotate: 0, ratio: 'custom' };
 
 export const ASPECTS: Record<Aspect, [number, number]> = {
   '16:9': [16, 9], '9:16': [9, 16], '1:1': [1, 1], '4:5': [4, 5], '4:3': [4, 3],
@@ -88,6 +89,11 @@ export interface Project {
   aspect: Aspect;
   cropHost: CropState;
   cropConst: CropState;
+  mirrorHost: boolean;
+  mirrorConst: boolean;
+  /** Noise reduction strength, 0 (off) to 100, per source video. */
+  noiseHost: number;
+  noiseConst: number;
   /** The preview of this video runs on a small H.264 copy (set once one was needed). */
   proxyHost?: boolean;
   proxyConst?: boolean;
