@@ -121,7 +121,16 @@ export function editorScreen() {
   const guideH = h('div', { class: 'guide h' });
   const pillsEl = h('div', { class: 'pills' });
   const dialogHost = h('div', { class: 'taskdialog-wrap' });
-  const preview = h('div', { class: 'preview' }, stage, guideV, guideH, pillsEl, dialogHost);
+  const hudTimeBadge = h('div', { class: 'hud-time-badge' }, `${fmtClock(playMs)} / ${fmtClock(p.durationMs)}`);
+  const playRipple = h('div', { class: 'preview-play-ripple' }, icon('play', 28));
+  const preview = h('div', { class: 'preview' }, stage, guideV, guideH, hudTimeBadge, playRipple, pillsEl, dialogHost);
+
+  function triggerPlayRipple(isPlaying: boolean) {
+    playRipple.replaceChildren(icon(isPlaying ? 'play' : 'pause', 28));
+    playRipple.classList.remove('animate');
+    void playRipple.offsetWidth;
+    playRipple.classList.add('animate');
+  }
 
   // Selected video frame on preview with Reset button
   const selFrame = h('div', { class: 'sel-frame' });
@@ -557,6 +566,7 @@ export function editorScreen() {
   document.addEventListener('visibilitychange', onVisible);
 
   // ---------- seeking (never queue seeks: only the latest one counts) ----------
+  // ---------- seeking (never queue seeks: only the latest one counts, fastSeek when available) ----------
   const pendingSeek = new Map<HTMLVideoElement, number>();
   function seekVideo(v: HTMLVideoElement, t: number) {
     if (!isFinite(t) || t < 0) return;
@@ -564,31 +574,108 @@ export function editorScreen() {
     t = Math.min(t, Math.max(0, dur - 0.05));
     if (v.readyState < 1) return; // metadata not there yet; loadedmetadata seeks again
     if (v.seeking) { pendingSeek.set(v, t); return; }
-    try { v.currentTime = t; } catch { /* ignore */ }
+    try {
+      if (typeof (v as any).fastSeek === 'function') {
+        (v as any).fastSeek(t);
+      } else {
+        v.currentTime = t;
+      }
+    } catch {
+      try { v.currentTime = t; } catch { /* ignore */ }
+    }
   }
   for (const v of [hostV, constV]) {
     v.addEventListener('seeked', () => {
       const t = pendingSeek.get(v);
       if (t === undefined) return;
       pendingSeek.delete(v);
-      try { v.currentTime = t; } catch { /* ignore */ }
+      try {
+        if (typeof (v as any).fastSeek === 'function') {
+          (v as any).fastSeek(t);
+        } else {
+          v.currentTime = t;
+        }
+      } catch {
+        try { v.currentTime = t; } catch { /* ignore */ }
+      }
     });
   }
 
+  // Smooth seek-lock / RAF debouncer during timeline scrubbing (CapCut 60fps responsiveness)
+  let scrubPendingMs: number | null = null;
+  let isScrubSeeking = false;
+  function executeScrub() {
+    if (scrubPendingMs === null) {
+      isScrubSeeking = false;
+      return;
+    }
+    isScrubSeeking = true;
+    const target = scrubPendingMs;
+    scrubPendingMs = null;
+    playMs = target;
+    syncHost(true);
+    syncConst(true);
+    requestAnimationFrame(() => {
+      if (scrubPendingMs !== null) executeScrub();
+      else isScrubSeeking = false;
+    });
+  }
+  function scheduleScrub(ms: number) {
+    playMs = Math.max(0, Math.min(p.durationMs, ms));
+    scrubPendingMs = playMs;
+    refresh();
+    if (!isScrubSeeking) executeScrub();
+  }
+
   let lastConstSeek = 0;
-  /** Keep the Constant video on its sync position. While playing, only correct real drift. */
+  /** Keep the Constant video on its sync position with Master-Slave Virtual Clock (playbackRate micro-adjustments). */
   function syncConst(force = false) {
     const ct = (playMs + p.offsetMs) / 1000;
     const inRange = ct >= 0 && ct < (isFinite(constV.duration) ? constV.duration : Infinity);
     constV.style.visibility = inRange ? '' : 'hidden';
-    if (!inRange) { if (!constV.paused) constV.pause(); return; }
-    const now = performance.now();
-    const drift = Math.abs(constV.currentTime - ct);
-    if (force || (drift > (playing ? 0.35 : 0.05) && now - lastConstSeek > 700)) { lastConstSeek = now; seekVideo(constV, ct); }
-    if (playing && constV.paused && ready.constant) constV.play().catch(() => {});
+    if (!inRange) {
+      if (!constV.paused) constV.pause();
+      constV.playbackRate = 1.0;
+      return;
+    }
+    const drift = constV.currentTime - ct; // positive = ahead, negative = behind
+    const absDrift = Math.abs(drift);
+
+    if (force || !playing) {
+      constV.playbackRate = 1.0;
+      if (force || absDrift > 0.05) {
+        seekVideo(constV, ct);
+      }
+    } else {
+      // While playing: Master-Slave virtual clock micro-adjustments without hard seeks
+      if (absDrift >= 1.2) {
+        // Severe drift (>1.2s): hard seek throttled to at most once per 1.2 seconds
+        const now = performance.now();
+        if (now - lastConstSeek > 1200) {
+          lastConstSeek = now;
+          seekVideo(constV, ct);
+        }
+      } else if (absDrift > 0.03) {
+        // Micro-adjust playback rate to gently resync within ±30ms
+        if (drift < -0.3) constV.playbackRate = 1.10;
+        else if (drift < -0.05) constV.playbackRate = 1.05;
+        else if (drift > 0.3) constV.playbackRate = 0.90;
+        else if (drift > 0.05) constV.playbackRate = 0.95;
+      } else {
+        if (constV.playbackRate !== 1.0) constV.playbackRate = 1.0;
+      }
+    }
+    if (playing && constV.paused && ready.constant && inRange) constV.play().catch(() => {});
   }
   function syncHost(force = false) {
     const t = playMs / 1000;
+    const inRange = t >= 0 && t < (isFinite(hostV.duration) ? hostV.duration : Infinity);
+    hostV.style.visibility = inRange ? '' : 'hidden';
+    if (!inRange) {
+      if (!hostV.paused) hostV.pause();
+      hostV.playbackRate = 1.0;
+      return;
+    }
     if (force || Math.abs(hostV.currentTime - t) > 0.05) seekVideo(hostV, t);
   }
 
@@ -606,8 +693,17 @@ export function editorScreen() {
   // ----- volume: Web Audio gain (HTML video.volume stops at 100 %) + soft limiter -----
   let actx: AudioContext | null = null;
   const gainNodes: Partial<Record<Role, GainNode>> = {};
+  const mediaSources = new WeakMap<HTMLVideoElement, MediaElementAudioSourceNode>();
   let cleanSource: AudioBufferSourceNode | null = null;
   const audioBuffers = new WeakMap<Float32Array, AudioBuffer>();
+
+  // Ensure AudioContext is resumed on the first user interaction
+  const unlockAudio = () => {
+    if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+  };
+  window.addEventListener('pointerdown', unlockAudio, { passive: true });
+  window.addEventListener('click', unlockAudio, { passive: true });
+
   function updateVideoAudioMute() {
     hostV.muted = p.mainAudio !== 'host' || (!!actx && p.noiseHost > 0);
     constV.muted = p.mainAudio !== 'constant' || (!!actx && p.noiseConst > 0);
@@ -618,11 +714,18 @@ export function editorScreen() {
       const AC = window.AudioContext || (window as any).webkitAudioContext;
       const ctx: AudioContext = new AC();
       const lim = ctx.createDynamicsCompressor();
-      lim.threshold.value = -6; lim.knee.value = 6; lim.ratio.value = 12; lim.attack.value = 0.003; lim.release.value = 0.15;
+      lim.threshold.value = -12; lim.knee.value = 6; lim.ratio.value = 4; lim.attack.value = 0.01; lim.release.value = 0.25;
       lim.connect(ctx.destination);
       (['host', 'constant'] as Role[]).forEach((r) => {
+        const v = vid(r);
         const g = ctx.createGain();
-        ctx.createMediaElementSource(vid(r)).connect(g); g.connect(lim);
+        let src = mediaSources.get(v);
+        if (!src) {
+          src = ctx.createMediaElementSource(v);
+          mediaSources.set(v, src);
+        }
+        try { src.connect(g); } catch { /* ignore if connected */ }
+        g.connect(lim);
         gainNodes[r] = g;
       });
       actx = ctx;
@@ -688,6 +791,7 @@ export function editorScreen() {
     if (on && actx && actx.state === 'suspended') actx.resume().catch(() => {});
     if (on && playReason()) { toast(playReason()!); on = false; }
     playing = on;
+    triggerPlayRipple(on);
     if (on) {
       if (playMs >= lastEnd() - 50) playMs = firstStart();
       if (!isKept(p.segments, playMs) && p.segments.length) { const nx = nextKeptStart(p.segments, playMs); if (nx !== null) playMs = nx; }
@@ -973,6 +1077,14 @@ export function editorScreen() {
         if (s.id === selectedId) {
           g.strokeStyle = '#FFFFFF'; g.lineWidth = 2;
           rrect(g, x1 + 1, LAY_Y + 1, x2 - x1 - 2, LAY - 2, 3); g.stroke();
+          // CapCut style active clip selection pill handles
+          const hw = Math.min(10, Math.max(6, (x2 - x1) / 4));
+          g.fillStyle = '#FFFFFF';
+          rrect(g, x1, LAY_Y + 1, hw, LAY - 2, 2); g.fill();
+          rrect(g, x2 - hw, LAY_Y + 1, hw, LAY - 2, 2); g.fill();
+          g.fillStyle = '#000000';
+          g.fillRect(x1 + hw / 2 - 0.75, LAY_Y + 6, 1.5, LAY - 14);
+          g.fillRect(x2 - hw / 2 - 0.75, LAY_Y + 6, 1.5, LAY - 14);
         }
         if (x2 - x1 > 24) drawGlyph(g, s, Math.max(x1, G) + 14, LAY_Y + LAY / 2);
       }
@@ -1021,8 +1133,27 @@ export function editorScreen() {
     g.fillStyle = '#fff'; g.fillText(cur, 6, RULER / 2);
     g.fillStyle = '#8a8a8a'; g.fillText(tot + note, 6 + wCur, RULER / 2);
 
-    // ---- playhead (fixed at the center)
-    g.fillStyle = '#FFFFFF'; g.fillRect(W / 2 - 1, 0, 2, H);
+    // ---- playhead needle (fixed at the center, CapCut style with top triangle and cyan snap glow)
+    const phX = Math.round(W / 2);
+    if (snapMs !== null) {
+      g.save();
+      g.shadowColor = CYAN;
+      g.shadowBlur = 8;
+      g.fillStyle = CYAN;
+      g.fillRect(phX - 1.5, 0, 3, H);
+      g.restore();
+    } else {
+      g.fillStyle = '#FFFFFF';
+      g.fillRect(phX - 1, 0, 2, H);
+    }
+    // CapCut playhead needle top triangle indicator
+    g.fillStyle = snapMs !== null ? CYAN : '#FFFFFF';
+    g.beginPath();
+    g.moveTo(phX - 6, 0);
+    g.lineTo(phX + 6, 0);
+    g.lineTo(phX, 10);
+    g.closePath();
+    g.fill();
   }
 
   // ======================================================================= Gestures
@@ -1096,9 +1227,8 @@ export function editorScreen() {
     }
     if (Math.abs(x - startX) > 8) { moved = true; clearTimeout(lpTimer); }
     if (mode === 'scrub') {
-      playMs = Math.max(0, Math.min(p.durationMs, playMs - ((x - prev.x) / pxPerSec) * 1000));
-      syncHost(true); syncConst(true);
-      refresh();
+      const targetMs = Math.max(0, Math.min(p.durationMs, playMs - ((x - prev.x) / pxPerSec) * 1000));
+      scheduleScrub(targetMs);
       if (tlWrap.scrollHeight > tlWrap.clientHeight) {
         tlWrap.scrollTop -= (e.clientY - lastClientY);
       }
@@ -1499,10 +1629,11 @@ export function editorScreen() {
     renderPanel(); renderBar(); draw();
   }
 
-  /** CapCut footer: thin divider, centered title, check on the right. */
+  /** CapCut footer: cancel on left, centered title, check on the right. */
   const pFoot = (title: string) => h('div', { class: 'pfoot' },
+    h('button', { class: 'pcancel', 'aria-label': 'Cancel', title: 'Cancel', onclick: closePanel }, icon('close', 20)),
     h('div', { class: 'ptitle' }, title),
-    h('button', { class: 'pcheck', 'aria-label': 'Done', title: 'Done', onclick: closePanel }, icon('check', 28)));
+    h('button', { class: 'pcheck', 'aria-label': 'Done', title: 'Done', onclick: closePanel }, icon('check', 24)));
   const setPanel = (title: string, ...body: Node[]) => panelEl.replaceChildren(h('div', { class: 'pbody' }, ...body), pFoot(title));
   /** CapCut tile: rounded square with an icon, label under it. Selected = white outline. */
   const ptile = (inner: Node, label: string, run: () => void, o: { sel?: boolean; disabled?: boolean } = {}) =>
@@ -1909,6 +2040,7 @@ export function editorScreen() {
   // ======================================================================= Main loop
   function refresh() {
     applyLayout(segmentAt(p.segments, playMs));
+    hudTimeBadge.textContent = `${fmtClock(playMs)} / ${fmtClock(p.durationMs)}`;
     draw();
   }
 
@@ -2020,9 +2152,14 @@ export function editorScreen() {
   function setResChip() { (resChip.firstElementChild as HTMLElement).textContent = resChipText(p); }
 
   const tlWrap = h('div', { class: 'tl-wrap' }, tl);
+  const titleEl = h('div', { class: 'edtop-title' },
+    h('span', { class: 'edtop-name' }, p.name),
+    h('span', { class: 'edtop-badge' }, 'Autosaved')
+  );
   const el = h('div', { class: 'screen editor' },
     h('div', { class: 'edtop' },
       iconButton('close', 'Close', async () => { setPlaying(false); await saveProject(p); app.go('home'); }, 'plain'),
+      titleEl,
       h('div', { class: 'grow' }),
       resChip,
       h('button', { class: 'exportbtn', 'aria-label': 'Export', onclick: goExport }, 'Export')),

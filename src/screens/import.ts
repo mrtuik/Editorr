@@ -47,8 +47,8 @@ export function importScreen() {
   }
 
   const slots = h('div', { class: 'slots' });
-  const warnings = h('div');
-  const cont = h('button', { class: 'btn primary', disabled: true, onclick: next }, 'Add to timeline');
+  const warnings = h('div', { class: 'import-warnings' });
+  const cont = h('button', { class: 'btn primary start-editing-btn', disabled: true, onclick: next }, icon('wand', 20), 'Start Editing');
   let alive = true;
 
   /** A picture of the first frame for each tile (made in the background). */
@@ -151,9 +151,13 @@ export function importScreen() {
     } else if (v) {
       tile.append(
         h('div', { class: 'tile-change' }, icon('swap', 16), 'Change'),
+        h('div', { class: 'tile-badges' },
+          h('span', { class: 'tag-duration' }, fmtClock(v.durationMs)),
+          h('span', { class: 'tag-res' }, `${v.width}x${v.height}`),
+          h('span', { class: 'tag-audio' }, icon('volume', 12), 'Audio')),
         h('div', { class: 'tile-meta' },
           h('div', { class: 'tile-name' }, v.name),
-          h('div', {}, `${fmtClock(v.durationMs)} - ${v.width}x${v.height}${v.fps ? ` - ${v.fps} fps` : ''}`)));
+          h('div', { class: 'tile-spec' }, `${v.fps ? `${v.fps} fps` : '30 fps'}${v.codec ? ` • ${v.codec}` : ''}`)));
     } else {
       tile.append(h('div', { class: 'tile-empty' }, h('div', { class: 'plusdot' }, icon('plus', 26)), h('div', { class: 'title' }, `Add ${label} video`), h('div', { class: 'cap' }, 'Tap to pick from gallery')));
     }
@@ -195,11 +199,11 @@ export function importScreen() {
   }
 
   render();
-  const el = h('div', { class: 'screen' },
-    h('div', { class: 'topbar' }, iconButton('back', 'Back', () => app.go('home')), h('h1', {}, 'Add videos')),
+  const el = h('div', { class: 'screen import-screen' },
+    h('div', { class: 'topbar' }, iconButton('back', 'Back', () => app.go('home')), h('h1', {}, 'Import Media')),
     h('div', { class: 'content' },
       slots, warnings,
-      h('div', { class: 'cap', style: 'margin-top:6px' }, 'Tip: you can select both videos at once in the gallery. Max 15 minutes each. Everything stays on your phone.')),
+      h('div', { class: 'cap', style: 'margin-top:10px;text-align:center' }, 'Tip: Pick two camera angles recorded simultaneously. Dual-cam syncing works best with continuous speech.')),
     h('div', { class: 'bottombar' }, cont));
   return { el, destroy: () => { alive = false; } };
 }
