@@ -1,5 +1,5 @@
 import { EditorrNative, fileSrc, isNative } from './native';
-import { runtime } from './store';
+import { loadMedia, runtime } from './store';
 import type { Project } from './types';
 
 const stripScheme = (u: string) => (u.startsWith('file://') ? u.slice(7) : u);
@@ -20,7 +20,20 @@ export function isLoaded(p: Project): boolean {
  * Returns false when a video is gone, so the caller can send the user to the Import screen.
  */
 export async function attachProjectMedia(p: Project): Promise<boolean> {
-  if (!isNative() || !p.host?.uri || !p.constant?.uri) return false;
+  if (!isNative()) {
+    // browser build: the video files are Blobs in IndexedDB
+    if (!p.host || !p.constant) return false;
+    const [a, b] = await Promise.all([loadMedia(p.id, 'host'), loadMedia(p.id, 'constant')]);
+    if (!a || !b) return false;
+    if (runtime.projectId !== p.id) { runtime.hostPcm = runtime.constPcm = undefined; runtime.hostMotion = runtime.constMotion = undefined; }
+    const hf = new File([a.blob], a.name), cf = new File([b.blob], b.name);
+    runtime.projectId = p.id;
+    runtime.hostPath = runtime.constPath = undefined;
+    runtime.hostFile = hf; runtime.constFile = cf;
+    runtime.hostUrl = URL.createObjectURL(hf); runtime.constUrl = URL.createObjectURL(cf);
+    return true;
+  }
+  if (!p.host?.uri || !p.constant?.uri) return false;
   const hostPath = stripScheme(p.host.uri), constPath = stripScheme(p.constant.uri);
   const [a, b] = await Promise.all([EditorrNative.fileExists({ path: hostPath }), EditorrNative.fileExists({ path: constPath })]);
   if (!a.exists || !b.exists) return false;

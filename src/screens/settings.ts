@@ -1,38 +1,50 @@
 import { app } from '../app';
-import { clearAllStorage, listProjects, runtime, saveSettings } from '../core/store';
+import { clearAllStorage, listProjects, mediaBytes, runtime, saveSettings } from '../core/store';
 import { EditorrNative, isNative } from '../core/native';
 import { fmtBytes } from '../core/media';
 import type { Sensitivity } from '../core/types';
-import { confirmDialog, h, iconButton, tabBar, toast } from '../ui';
+import { confirmDialog, h, icon, iconButton, tabBar, toast } from '../ui';
 
-function seg<T extends string | number>(opts: [T, string][], value: T, onPick: (v: T) => void) {
-  const wrap = h('div', { class: 'seg' });
+/** CapCut-style option row: label (+ hint) on top, tile-like options below. */
+function option<T extends string | number>(label: string, hint: string, opts: [T, string][], value: T, onPick: (v: T) => void) {
+  const chips = h('div', { class: 'schips' });
   const render = (cur: T) => {
-    wrap.replaceChildren(...opts.map(([v, l]) => h('button', { class: v === cur ? 'on' : '', onclick: () => { onPick(v); render(v); } }, l)));
+    chips.replaceChildren(...opts.map(([v, l]) => h('button', { class: 'chip' + (v === cur ? ' on' : ''), onclick: () => { onPick(v); render(v); } }, l)));
   };
   render(value);
-  return wrap;
+  return h('div', { class: 'srow' }, h('div', { class: 'slabel' }, label), hint ? h('div', { class: 'sdesc' }, hint) : null, chips);
 }
+
+const group = (title: string, ...rows: Node[]) => h('section', { class: 'sgroup' }, h('div', { class: 'sgtitle' }, title), h('div', { class: 'scard' }, ...rows));
 
 export function settingsScreen() {
   const s = app.settings;
   const save = () => saveSettings(s);
 
-  // ---- storage ----
-  const storageInfo = h('div', { class: 'card' }, h('div', { class: 'cap' }, 'Reading storage...'));
+  // ---- storage (projects live in IndexedDB; Android keeps the video files in the app's private folder) ----
+  const storageBody = h('div', { class: 'srow' }, h('div', { class: 'sdesc' }, 'Reading storage...'));
   async function refreshStorage() {
     try {
       const projects = await listProjects();
-      const rows: [string, string][] = [['Projects saved', String(projects.length)]];
+      let videos = 0, cache = 0, free = 0, db = 0;
       if (isNative()) {
         const i = await EditorrNative.storageInfo();
-        rows.push(['Saved videos', fmtBytes(i.videosBytes)], ['Cache (audio, previews)', fmtBytes(i.cacheBytes)], ['Free on phone', fmtBytes(i.freeMb * 1048576)]);
-      } else if (navigator.storage?.estimate) {
-        const e = await navigator.storage.estimate();
-        rows.push(['Browser storage used', fmtBytes(e.usage ?? 0)]);
+        videos = i.videosBytes; cache = i.cacheBytes; free = i.freeMb * 1048576;
+      } else {
+        videos = await mediaBytes();
       }
-      storageInfo.replaceChildren(...rows.map(([k, v]) => h('div', { class: 'row', style: 'justify-content:space-between;margin:4px 0' }, h('span', { class: 'sec' }, k), h('b', {}, v))));
-    } catch { storageInfo.replaceChildren(h('div', { class: 'cap' }, 'Could not read storage.')); }
+      if (navigator.storage?.estimate) { const e = await navigator.storage.estimate(); db = e.usage ?? 0; if (!isNative()) free = Math.max(0, (e.quota ?? 0) - db); }
+      const used = videos + cache;
+      const total = Math.max(1, used + free);
+      const pct = (n: number) => `${Math.min(100, (n / total) * 100).toFixed(2)}%`;
+      const legend = (color: string, name: string, val: string) => h('div', { class: 'legend' }, h('i', { style: `background:${color}` }), h('span', {}, name), h('b', {}, val));
+      storageBody.replaceChildren(
+        h('div', { class: 'sbar' }, h('i', { style: `width:${pct(videos)};background:#19e6c1` }), h('i', { style: `width:${pct(cache)};background:#8a8a8a` })),
+        legend('#19e6c1', 'Saved videos', fmtBytes(videos)),
+        ...(isNative() ? [legend('#8a8a8a', 'Cache (audio, previews)', fmtBytes(cache))] : []),
+        legend('#3a3a3c', 'Free', fmtBytes(free)),
+        h('div', { class: 'sdesc', style: 'margin-top:8px' }, `${projects.length} ${projects.length === 1 ? 'project' : 'projects'} saved in IndexedDB.`));
+    } catch { storageBody.replaceChildren(h('div', { class: 'sdesc' }, 'Could not read storage.')); }
   }
   refreshStorage();
 
@@ -54,24 +66,25 @@ export function settingsScreen() {
     toast('All projects deleted');
     refreshStorage();
   }
-  const el = h('div', { class: 'screen' },
+
+  const action = (ic: Parameters<typeof icon>[0], text: string, run: () => void, cls = '') =>
+    h('button', { class: 'saction ' + cls, onclick: run }, icon(ic, 22), h('span', {}, text), icon('chevR', 18));
+
+  const el = h('div', { class: 'screen settings' },
     h('div', { class: 'topbar' }, iconButton('back', 'Back', () => app.go('home')), h('h1', {}, 'Settings')),
     h('div', { class: 'content' },
-      h('div', { class: 'field' }, h('label', {}, 'Speaker detect sensitivity'),
-        seg<Sensitivity>([['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], s.sensitivity, (v) => { s.sensitivity = v; save(); })),
-      h('div', { class: 'field' }, h('label', {}, 'Minimum segment length'),
-        seg<number>([[1000, '1.0 s'], [1500, '1.5 s'], [2500, '2.5 s'], [4000, '4 s']], s.minSegmentMs, (v) => { s.minSegmentMs = v; save(); })),
-      h('div', { class: 'field' }, h('label', {}, 'When both people talk'),
-        seg<'hold' | 'side'>([['hold', 'Keep last speaker'], ['side', 'Side by side']], s.bothSpeaking, (v) => { s.bothSpeaking = v; save(); })),
-      h('div', { class: 'field' }, h('label', {}, 'Default export resolution'),
-        seg<number>([[720, '720p'], [1080, '1080p']], s.resolution, (v) => { s.resolution = v as 720 | 1080; save(); })),
-      h('div', { class: 'field' }, h('label', {}, 'Storage'),
-        storageInfo,
-        h('div', { class: 'row' },
-          h('button', { class: 'btn', style: 'flex:1', onclick: clearCache }, 'Clear cache'),
-          h('button', { class: 'btn danger', style: 'flex:1', onclick: clearProjects }, 'Delete all projects')),
-        h('div', { class: 'cap', style: 'margin-top:8px' }, 'Clear cache frees temporary files only. Your projects and saved videos stay.')),
-      h('div', { class: 'cap' }, 'Editorr by Tuik')),
+      group('Auto edit',
+        option<Sensitivity>('Speaker detect sensitivity', 'How easily the switch follows a new speaker.', [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], s.sensitivity, (v) => { s.sensitivity = v; save(); }),
+        option<number>('Minimum segment length', 'Shorter parts are merged into their neighbour.', [[1000, '1.0 s'], [1500, '1.5 s'], [2500, '2.5 s'], [4000, '4 s']], s.minSegmentMs, (v) => { s.minSegmentMs = v; save(); }),
+        option<'hold' | 'side'>('When both people talk', '', [['hold', 'Keep last speaker'], ['side', 'Side by side']], s.bothSpeaking, (v) => { s.bothSpeaking = v; save(); })),
+      group('Export',
+        option<number>('Default resolution', 'Used when you open the editor. You can change it there too.', [[720, '720p'], [1080, '1080p']], s.resolution, (v) => { s.resolution = v as 720 | 1080; save(); })),
+      group('Storage',
+        storageBody,
+        action('silence', 'Clear cache', clearCache),
+        action('trash', 'Delete all projects', clearProjects, 'danger')),
+      h('div', { class: 'sfoot' }, 'Clear cache frees temporary files only. Your projects and saved videos stay.'),
+      h('div', { class: 'sfoot' }, 'Editorr by Tuik')),
     tabBar('me', (tab) => { if (tab === 'me') return; app.homeTab = tab; app.go('home'); }));
   return { el };
 }

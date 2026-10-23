@@ -19,7 +19,7 @@ export const DEFAULT_SETTINGS: Settings = {
 // IndexedDB has no small size limit like localStorage (about 5 MB) and survives app restarts.
 
 const DB_NAME = 'editorr';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 function openDb(): Promise<IDBDatabase> {
@@ -31,6 +31,8 @@ function openDb(): Promise<IDBDatabase> {
         if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('thumbs')) db.createObjectStore('thumbs', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv', { keyPath: 'key' });
+        // video files picked in the browser build (the Android app keeps files on disk and only their path in 'projects')
+        if (!db.objectStoreNames.contains('media')) db.createObjectStore('media', { keyPath: 'key' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => { dbPromise = null; reject(req.error); };
@@ -100,7 +102,7 @@ function withDefaults(p: Project): Project {
   return { ...p, aspect: p.aspect ?? '16:9', cropHost: p.cropHost ?? { ...NO_CROP }, cropConst: p.cropConst ?? { ...NO_CROP } };
 }
 
-export async function listProjects(): Promise<Project[]> {
+export async function listProjects(strict = false): Promise<Project[]> {
   try {
     await writes;
     const db = await openDb();
@@ -113,7 +115,7 @@ export async function listProjects(): Promise<Project[]> {
     });
     const byId = new Map(thumbs.map((x) => [x.id, x.data]));
     return projects.map((p) => withDefaults({ ...p, thumb: byId.get(p.id) })).sort((a, b) => b.updatedAt - a.updatedAt);
-  } catch { return []; }
+  } catch (e) { if (strict) throw e; return []; }
 }
 
 export function saveProject(p: Project): Promise<void> {
@@ -129,14 +131,41 @@ export function saveProject(p: Project): Promise<void> {
 
 export function deleteProject(id: string): Promise<void> {
   return queueWrite(async () => {
-    await run(['projects', 'thumbs'], 'readwrite', (tx) => { tx.objectStore('projects').delete(id); tx.objectStore('thumbs').delete(id); });
+    await run(['projects', 'thumbs', 'media'], 'readwrite', (tx) => {
+      tx.objectStore('projects').delete(id); tx.objectStore('thumbs').delete(id);
+      tx.objectStore('media').delete(`${id}:host`); tx.objectStore('media').delete(`${id}:constant`);
+    });
   }).catch(() => {});
 }
 
 export function clearAllStorage(): Promise<void> {
   return queueWrite(async () => {
-    await run(['projects', 'thumbs'], 'readwrite', (tx) => { tx.objectStore('projects').clear(); tx.objectStore('thumbs').clear(); });
+    await run(['projects', 'thumbs', 'media'], 'readwrite', (tx) => { tx.objectStore('projects').clear(); tx.objectStore('thumbs').clear(); tx.objectStore('media').clear(); });
   }).catch(() => {});
+}
+
+// ---- video files (browser build): kept as Blobs in IndexedDB so they are still there after a reload ----
+export function saveMedia(projectId: string, role: 'host' | 'constant', file: Blob | undefined, name: string): Promise<void> {
+  return queueWrite(async () => {
+    await run('media', 'readwrite', (tx) => {
+      if (file) tx.objectStore('media').put({ key: `${projectId}:${role}`, blob: file, name });
+      else tx.objectStore('media').delete(`${projectId}:${role}`);
+    });
+  }).catch(() => {});
+}
+
+export async function loadMedia(projectId: string, role: 'host' | 'constant'): Promise<{ blob: Blob; name: string } | undefined> {
+  try {
+    await writes;
+    return await run<{ key: string; blob: Blob; name: string }>('media', 'readonly', (tx) => tx.objectStore('media').get(`${projectId}:${role}`));
+  } catch { return undefined; }
+}
+
+export async function mediaBytes(): Promise<number> {
+  try {
+    const rows = await run<{ blob: Blob }[]>('media', 'readonly', (tx) => tx.objectStore('media').getAll());
+    return (rows ?? []).reduce((a, r) => a + (r.blob?.size ?? 0), 0);
+  } catch { return 0; }
 }
 
 export function newProject(): Project {

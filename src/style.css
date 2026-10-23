@@ -249,3 +249,27 @@ input[type=file] { display: none; }
 .panel .pinfo { font-size: 13px; color: #a0a0a0; margin: 6px 0 8px; }
 .panel .pinfo b { color: #fff; font-weight: 500; }
 .panel .btn.primary { width: 100%; min-height: 44px; border-radius: 10px; }
+
+/* ---------- Settings (CapCut style) ---------- */
+.screen.settings { background: #000; }
+.sgroup { margin-top: 18px; }
+.sgtitle { font-size: 13px; color: #8a8a8a; margin: 0 4px 8px; font-weight: 500; }
+.scard { background: #1c1c1e; border-radius: 14px; overflow: hidden; }
+.srow { padding: 14px 14px 14px; border-bottom: 1px solid #2a2a2c; }
+.srow:last-child { border-bottom: 0; }
+.slabel { font-size: 15px; font-weight: 500; color: #fff; }
+.sdesc { font-size: 12.5px; color: #8a8a8a; margin-top: 3px; }
+.schips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.schips .chip { min-height: 38px; padding: 0 16px; }
+.sbar { display: flex; height: 8px; border-radius: 4px; background: #3a3a3c; overflow: hidden; margin-bottom: 12px; }
+.sbar i { display: block; height: 100%; min-width: 0; }
+.legend { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 6px 0; color: #d0d0d0; }
+.legend i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.legend span { flex: 1; }
+.legend b { font-weight: 500; color: #fff; }
+.saction { width: 100%; display: flex; align-items: center; gap: 12px; padding: 0 14px; min-height: 54px; border: 0; border-top: 1px solid #2a2a2c; background: transparent; color: #fff; font: inherit; font-size: 15px; text-align: left; }
+.saction span { flex: 1; }
+.saction svg:last-child { color: #6a6a6c; }
+.saction:active { background: #262628; }
+.saction.danger { color: #ff5a5f; }
+.sfoot { font-size: 12px; color: #6f6f72; text-align: center; margin: 14px 8px 0; }
