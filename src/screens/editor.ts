@@ -123,6 +123,113 @@ export function editorScreen() {
   const dialogHost = h('div', { class: 'taskdialog-wrap' });
   const preview = h('div', { class: 'preview' }, stage, guideV, guideH, pillsEl, dialogHost);
 
+  // Selected video frame on preview with Reset button
+  const selFrame = h('div', { class: 'sel-frame' });
+  const resetCropBtn = h('button', {
+    class: 'sel-reset-btn',
+    'aria-label': 'Reset video crop',
+    title: 'Reset crop',
+    onclick: (ev: MouseEvent) => {
+      ev.stopPropagation();
+      if (selClip) resetCrop(selClip);
+    },
+  }, icon('undo', 12), h('span', {}, 'Reset'));
+  selFrame.append(resetCropBtn);
+  stage.append(selFrame);
+
+  function resetCrop(role: Role) {
+    hist.push(snap()); updateBtns();
+    const c = role === 'host' ? p.cropHost : p.cropConst;
+    c.zoom = 1;
+    c.x = 0;
+    c.y = 0;
+    c.rotate = 0;
+    c.ratio = 'custom';
+    c.frameRatio = undefined;
+    applyCrop(role);
+    scheduleSave();
+    if (panel === 'crop') { positionCropFrame(); renderPanel(); }
+  }
+
+  function updateSelFrame() {
+    if (!selClip || panel === 'crop' || stage.classList.contains('full')) {
+      selFrame.classList.remove('on');
+      stage.style.touchAction = '';
+      return;
+    }
+    const cell = selClip === 'host' ? hostCell : constCell;
+    if (cell.style.display === 'none') {
+      selFrame.classList.remove('on');
+      stage.style.touchAction = '';
+      return;
+    }
+    selFrame.style.left = cell.style.left;
+    selFrame.style.top = cell.style.top;
+    selFrame.style.width = cell.style.width;
+    selFrame.style.height = cell.style.height;
+    selFrame.style.zIndex = cell.classList.contains('pop') ? '6' : '3';
+    selFrame.classList.add('on');
+    stage.style.touchAction = 'none';
+  }
+
+  // Resizable preview height (CapCut style) with persistence
+  const PREVIEW_RATIO_KEY = 'editorr_preview_ratio';
+  function loadPreviewRatio(): number {
+    try {
+      const v = localStorage.getItem(PREVIEW_RATIO_KEY);
+      if (v) {
+        const n = parseFloat(v);
+        if (!isNaN(n) && n >= 0.28 && n <= 0.62) return n;
+      }
+    } catch { /* ignore */ }
+    return 0.40;
+  }
+  function savePreviewRatio(ratio: number) {
+    try {
+      localStorage.setItem(PREVIEW_RATIO_KEY, ratio.toFixed(4));
+    } catch { /* ignore */ }
+  }
+
+  let previewRatio = loadPreviewRatio();
+  function applyPreviewHeight() {
+    const screenH = window.innerHeight || 800;
+    const minH = Math.round(screenH * 0.28);
+    const maxH = Math.round(screenH * 0.62);
+    const hPx = Math.max(minH, Math.min(maxH, Math.round(screenH * previewRatio)));
+    preview.style.height = `${hPx}px`;
+    preview.style.flex = 'none';
+  }
+  applyPreviewHeight();
+
+  const handleBar = h('i', { class: 'handle-bar' });
+  const previewHandle = h('div', { class: 'preview-handle', 'aria-label': 'Resize preview' }, handleBar);
+  let handleStartY = 0, handleStartH = 0;
+  previewHandle.addEventListener('pointerdown', (e: PointerEvent) => {
+    previewHandle.setPointerCapture(e.pointerId);
+    handleStartY = e.clientY;
+    handleStartH = preview.clientHeight;
+  });
+  previewHandle.addEventListener('pointermove', (e: PointerEvent) => {
+    if (!previewHandle.hasPointerCapture(e.pointerId)) return;
+    const dy = e.clientY - handleStartY;
+    const screenH = window.innerHeight || 800;
+    const minH = Math.round(screenH * 0.28);
+    const maxH = Math.round(screenH * 0.62);
+    const newH = Math.max(minH, Math.min(maxH, handleStartH + dy));
+    previewRatio = newH / screenH;
+    preview.style.height = `${newH}px`;
+    preview.style.flex = 'none';
+    fitStage();
+    draw();
+  });
+  const onHandleEnd = (e: PointerEvent) => {
+    if (!previewHandle.hasPointerCapture(e.pointerId)) return;
+    previewHandle.releasePointerCapture(e.pointerId);
+    savePreviewRatio(previewRatio);
+  };
+  previewHandle.addEventListener('pointerup', onHandleEnd);
+  previewHandle.addEventListener('pointercancel', onHandleEnd);
+
   /** Fit the stage (project aspect ratio) inside the preview area, like a real editor. */
   function fitStage() {
     const full = stage.classList.contains('full');
@@ -133,6 +240,7 @@ export function editorScreen() {
     const w = Math.min(cw, ch * ar);
     stage.style.width = `${Math.floor(w)}px`;
     stage.style.height = `${Math.floor(w / ar)}px`;
+    updateSelFrame();
   }
   const ro = new ResizeObserver(() => { fitStage(); layoutCrop(); });
   ro.observe(preview);
@@ -185,7 +293,166 @@ export function editorScreen() {
       place(other, x, y, w, heightPct, true);
     }
     applyCrop('host'); applyCrop('constant');
+    updateSelFrame();
   }
+
+  // ======================================================================= Preview gestures (move/zoom video inside frame)
+  function hitRoleAt(x: number, y: number): Role | null {
+    const seg = segmentAt(p.segments, playMs);
+    const mainRole = seg?.main ?? 'host';
+    const otherRole = mainRole === 'host' ? 'constant' : 'host';
+    const mainCell = mainRole === 'host' ? hostCell : constCell;
+    const otherCell = otherRole === 'host' ? hostCell : constCell;
+
+    // Check popup cell first because it sits on top
+    if (seg?.style === 'popup' && otherCell.style.display !== 'none') {
+      const r = otherCell.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return otherRole;
+      const mr = mainCell.getBoundingClientRect();
+      if (x >= mr.left && x <= mr.right && y >= mr.top && y <= mr.bottom) return mainRole;
+      return null;
+    }
+    if (seg?.style === 'side' || seg?.style === 'updown') {
+      const hr = hostCell.getBoundingClientRect();
+      if (x >= hr.left && x <= hr.right && y >= hr.top && y <= hr.bottom) return 'host';
+      const cr = constCell.getBoundingClientRect();
+      if (x >= cr.left && x <= cr.right && y >= cr.top && y <= cr.bottom) return 'constant';
+      return null;
+    }
+    // single view ('one' or default)
+    if (mainCell.style.display !== 'none') {
+      const r = mainCell.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return mainRole;
+    }
+    return null;
+  }
+
+  const previewPtrs = new Map<number, { x: number; y: number }>();
+  let previewDownX = 0, previewDownY = 0, previewDownT = 0;
+  let previewMoved = false;
+  let previewGesturePushed = false;
+  let pinchStartDist = 0, pinchStartAngle = 0;
+  let pinchStartZoom = 1, pinchStartRotate = 0;
+  let startCropX = 0, startCropY = 0;
+  let lastTapTime = 0, lastTapX = 0, lastTapY = 0;
+
+  preview.addEventListener('pointerdown', (e: PointerEvent) => {
+    if (panel === 'crop' || stage.classList.contains('full')) return;
+    if ((e.target as HTMLElement)?.closest('.pill') || (e.target as HTMLElement)?.closest('.taskdialog') || (e.target as HTMLElement)?.closest('.sel-reset-btn')) return;
+
+    preview.setPointerCapture(e.pointerId);
+    previewPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    previewDownX = e.clientX;
+    previewDownY = e.clientY;
+    previewDownT = Date.now();
+    previewMoved = false;
+    previewGesturePushed = false;
+
+    if (previewPtrs.size === 1) {
+      const hitRole = hitRoleAt(e.clientX, e.clientY);
+      if (hitRole) {
+        if (selClip !== hitRole) {
+          selClip = hitRole;
+          selectedId = null;
+          renderBar();
+          draw();
+          updateSelFrame();
+        }
+        const c = hitRole === 'host' ? p.cropHost : p.cropConst;
+        startCropX = c.x;
+        startCropY = c.y;
+      }
+    } else if (previewPtrs.size === 2 && selClip) {
+      const [p1, p2] = [...previewPtrs.values()];
+      pinchStartDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+      pinchStartAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * (180 / Math.PI);
+      const c = selClip === 'host' ? p.cropHost : p.cropConst;
+      pinchStartZoom = Math.max(1, c.zoom || 1);
+      pinchStartRotate = c.rotate ?? 0;
+    }
+  });
+
+  preview.addEventListener('pointermove', (e: PointerEvent) => {
+    if (!previewPtrs.has(e.pointerId) || panel === 'crop' || stage.classList.contains('full')) return;
+    previewPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const dist = Math.hypot(e.clientX - previewDownX, e.clientY - previewDownY);
+    if (dist > 6) previewMoved = true;
+    if (!selClip) return;
+
+    const cell = selClip === 'host' ? hostCell : constCell;
+    const c = selClip === 'host' ? p.cropHost : p.cropConst;
+    const aspect = cell.clientWidth > 0 && cell.clientHeight > 0 ? cell.clientWidth / cell.clientHeight : aspectValue(p.aspect);
+    const ratio = c.ratio === 'custom' || !c.ratio ? (c.frameRatio ?? aspect) : cropRatioValue(c.ratio, aspect);
+
+    if (previewPtrs.size === 1 && previewMoved) {
+      if (!previewGesturePushed) {
+        hist.push(snap());
+        updateBtns();
+        previewGesturePushed = true;
+      }
+      const zoomX = Math.max(1, c.zoom || 1, aspect / ratio);
+      const zoomY = Math.max(1, zoomX * ratio / aspect);
+      const maxShiftX = (zoomX - 1) * cell.clientWidth / 2;
+      const maxShiftY = (zoomY - 1) * cell.clientHeight / 2;
+      const dx = e.clientX - previewDownX;
+      const dy = e.clientY - previewDownY;
+      if (maxShiftX > 0.5) {
+        c.x = Math.max(-1, Math.min(1, startCropX + dx / maxShiftX));
+      }
+      if (maxShiftY > 0.5) {
+        c.y = Math.max(-1, Math.min(1, startCropY + dy / maxShiftY));
+      }
+      applyCrop(selClip);
+      scheduleSave();
+    } else if (previewPtrs.size === 2) {
+      if (!previewGesturePushed) {
+        hist.push(snap());
+        updateBtns();
+        previewGesturePushed = true;
+      }
+      const [p1, p2] = [...previewPtrs.values()];
+      const currentDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+      const currentAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * (180 / Math.PI);
+      const factor = currentDist / (pinchStartDist || 1);
+      c.zoom = Math.max(1, Math.min(8, pinchStartZoom * factor));
+      let dAngle = currentAngle - pinchStartAngle;
+      while (dAngle > 180) dAngle -= 360;
+      while (dAngle < -180) dAngle += 360;
+      c.rotate = Math.max(-45, Math.min(45, Math.round(pinchStartRotate + dAngle)));
+      applyCrop(selClip);
+      scheduleSave();
+    }
+  });
+
+  const onPreviewEnd = (e: PointerEvent) => {
+    if (!previewPtrs.has(e.pointerId)) return;
+    previewPtrs.delete(e.pointerId);
+    if (preview.hasPointerCapture(e.pointerId)) preview.releasePointerCapture(e.pointerId);
+
+    if (!previewMoved && Date.now() - previewDownT < 350 && previewPtrs.size === 0) {
+      const hitRole = hitRoleAt(previewDownX, previewDownY);
+      if (!hitRole) {
+        selClip = null;
+        selectedId = null;
+        renderBar();
+        draw();
+        updateSelFrame();
+      } else {
+        const now = Date.now();
+        if (now - lastTapTime < 300 && Math.hypot(previewDownX - lastTapX, previewDownY - lastTapY) < 25) {
+          resetCrop(hitRole);
+          lastTapTime = 0;
+        } else {
+          lastTapTime = now;
+          lastTapX = previewDownX;
+          lastTapY = previewDownY;
+        }
+      }
+    }
+    previewGesturePushed = false;
+  };
+  preview.addEventListener('pointerup', onPreviewEnd);
+  preview.addEventListener('pointercancel', onPreviewEnd);
 
   // ---------- video sources: original, or a small preview copy when the phone's format is heavy ----------
   const ready: Record<Role, boolean> = { host: false, constant: false };
@@ -485,7 +752,7 @@ export function editorScreen() {
     const bw = bx2 - bx1;
 
     g.save();
-    rrect(g, bx1, y, bw, LANE, 6);
+    rrect(g, bx1, y, bw, LANE, 3);
     g.clip();
 
     // Plain dark strip background (shows through where there is no video content)
@@ -541,12 +808,12 @@ export function editorScreen() {
     if (selClip === role) {
       g.strokeStyle = '#ffffff';
       g.lineWidth = 2;
-      rrect(g, bx1 + 1, y + 1, bw - 2, LANE - 2, 6);
+      rrect(g, bx1 + 1, y + 1, bw - 2, LANE - 2, 3);
       g.stroke();
     } else {
       g.strokeStyle = role === 'host' ? 'rgba(255,255,255,0.16)' : 'rgba(74,222,128,0.32)';
       g.lineWidth = 1;
-      rrect(g, bx1 + 0.5, y + 0.5, bw - 1, LANE - 1, 6);
+      rrect(g, bx1 + 0.5, y + 0.5, bw - 1, LANE - 1, 3);
       g.stroke();
     }
   }
@@ -558,7 +825,7 @@ export function editorScreen() {
     const bw = bx2 - bx1;
 
     g.save();
-    rrect(g, bx1, AUD_Y, bw, AUD, 6);
+    rrect(g, bx1, AUD_Y, bw, AUD, 3);
     g.clip();
 
     g.fillStyle = '#141414';
@@ -593,7 +860,7 @@ export function editorScreen() {
 
     g.strokeStyle = p.mainAudio === 'constant' ? 'rgba(74,222,128,0.25)' : 'rgba(255,255,255,0.16)';
     g.lineWidth = 1;
-    rrect(g, bx1 + 0.5, AUD_Y + 0.5, bw - 1, AUD - 1, 6);
+    rrect(g, bx1 + 0.5, AUD_Y + 0.5, bw - 1, AUD - 1, 3);
     g.stroke();
   }
 
@@ -679,7 +946,7 @@ export function editorScreen() {
     const lbw = lbx2 - lbx1;
     if (lbx2 >= G && lbx1 <= W) {
       g.save();
-      rrect(g, lbx1, LAY_Y, lbw, LAY, 6);
+      rrect(g, lbx1, LAY_Y, lbw, LAY, 3);
       g.clip();
       g.fillStyle = '#0d0d0d';
       g.fillRect(lbx1, LAY_Y, lbw, LAY);
@@ -702,17 +969,17 @@ export function editorScreen() {
         const x1 = xOf(s.startMs), x2 = xOf(s.endMs);
         if (x2 < G || x1 > W) continue;
         g.fillStyle = segmentColor(s);
-        rrect(g, x1 + 0.5, LAY_Y + 1, x2 - x1 - 1, LAY - 2, 6); g.fill();
+        rrect(g, x1 + 0.5, LAY_Y + 1, x2 - x1 - 1, LAY - 2, 3); g.fill();
         if (s.id === selectedId) {
           g.strokeStyle = '#FFFFFF'; g.lineWidth = 2;
-          rrect(g, x1 + 1, LAY_Y + 1, x2 - x1 - 2, LAY - 2, 6); g.stroke();
+          rrect(g, x1 + 1, LAY_Y + 1, x2 - x1 - 2, LAY - 2, 3); g.stroke();
         }
         if (x2 - x1 > 24) drawGlyph(g, s, Math.max(x1, G) + 14, LAY_Y + LAY / 2);
       }
       g.restore();
       g.strokeStyle = 'rgba(255,255,255,.16)';
       g.lineWidth = 1;
-      rrect(g, lbx1 + 0.5, LAY_Y + 0.5, lbw - 1, LAY - 1, 6);
+      rrect(g, lbx1 + 0.5, LAY_Y + 0.5, lbw - 1, LAY - 1, 3);
       g.stroke();
     }
 
@@ -765,8 +1032,9 @@ export function editorScreen() {
   let startX = 0, startY = 0, startT = 0, moved = false, boundaryIdx = -1, pinchDist = 0, pinchZoom = 0, lpTimer = 0;
   let clipStartMs0 = 0, clipPushed = false, clipBefore: Snapshot | null = null;
 
-  const localX = (e: PointerEvent) => e.clientX - tl.getBoundingClientRect().left;
-  const localY = (e: PointerEvent) => e.clientY - tl.getBoundingClientRect().top;
+  let lastClientY = 0;
+  const localX = (e: PointerEvent) => e.clientX - canvas.getBoundingClientRect().left;
+  const localY = (e: PointerEvent) => e.clientY - canvas.getBoundingClientRect().top;
   type Lane = 'ruler' | 'host' | 'const' | 'audio' | 'lay' | 'none';
   function laneAt(y: number): Lane {
     if (y < RULER) return 'ruler';
@@ -798,7 +1066,7 @@ export function editorScreen() {
       clearTimeout(lpTimer); return;
     }
     if (playing) setPlaying(false);
-    startX = localX(e); startY = localY(e); startT = Date.now(); moved = false;
+    startX = localX(e); startY = localY(e); startT = Date.now(); moved = false; lastClientY = e.clientY;
     const lane = laneAt(startY);
     const bi = startX >= G ? hitBoundary(startX, startY) : -1;
     if (bi >= 0) { mode = 'boundary'; boundaryIdx = bi; hist.push(snap()); }
@@ -831,6 +1099,10 @@ export function editorScreen() {
       playMs = Math.max(0, Math.min(p.durationMs, playMs - ((x - prev.x) / pxPerSec) * 1000));
       syncHost(true); syncConst(true);
       refresh();
+      if (tlWrap.scrollHeight > tlWrap.clientHeight) {
+        tlWrap.scrollTop -= (e.clientY - lastClientY);
+      }
+      lastClientY = e.clientY;
     } else if (mode === 'boundary') {
       p.segments = moveBoundary(p.segments, boundaryIdx, msOf(x));
       applyLayout(segmentAt(p.segments, playMs));
@@ -884,7 +1156,7 @@ export function editorScreen() {
     if (lane === 'lay' || lane === 'ruler' || lane === 'audio' || lane === 'none') {
       const s = lane === 'lay' ? hitSegment(x) : undefined;
       if (s) { if (panel !== 'none') closePanel(); selectSeg(s.id); tick(); }
-      else if (lane !== 'ruler') { selClip = null; selectedId = null; renderBar(); draw(); }
+      else if (lane !== 'ruler') { selClip = null; selectedId = null; renderBar(); draw(); updateSelFrame(); }
       return;
     }
     // a video clip: tap selects it and switches sound; tapping the green clip opens Sync
@@ -896,6 +1168,7 @@ export function editorScreen() {
         setAudio('constant');
         tick();
         openPanel('sync');
+        updateSelFrame();
         return;
       }
       if (lane === 'host') {
@@ -906,10 +1179,11 @@ export function editorScreen() {
         renderBar();
         draw();
         tick();
+        updateSelFrame();
         return;
       }
     }
-    selClip = null; renderBar(); draw();
+    selClip = null; renderBar(); draw(); updateSelFrame();
   }
 
   // ======================================================================= Controls (CapCut layout)
@@ -1000,12 +1274,12 @@ export function editorScreen() {
     return b;
   }
   const sepEl = () => h('div', { class: 'sep' });
-  const backTool = () => h('button', { class: 'tool back', 'aria-label': 'Back', onclick: () => { selectedId = null; selClip = null; renderBar(); draw(); tick(); } }, icon('back', 20));
+  const backTool = () => h('button', { class: 'tool back', 'aria-label': 'Back', onclick: () => { selectedId = null; selClip = null; renderBar(); draw(); updateSelFrame(); tick(); } }, icon('back', 20));
   /** The segment the layout tools act on: the selected one, else the one under the playhead. */
   const target = (): Segment | undefined => selected() ?? segmentAt(p.segments, playMs);
 
   function selected(): Segment | undefined { return p.segments.find((s) => s.id === selectedId); }
-  function selectSeg(id: string) { selectedId = id; selClip = null; renderBar(); draw(); }
+  function selectSeg(id: string) { selectedId = id; selClip = null; renderBar(); draw(); updateSelFrame(); }
 
   function setStyle(st: LayoutStyle) {
     const s = target();
@@ -1156,11 +1430,12 @@ export function editorScreen() {
 
   function renderBar() {
     const rows: Node[] = [];
-    const hasSel = !!selected() || selClip === 'host';
-    if (!hasSel) {
+    const hasClipSel = !!selClip;
+    const hasSegSel = !!selected();
+    if (!hasClipSel && !hasSegSel) {
       // nothing selected: the main tools, like CapCut's first row
       rows.push(
-        tool('sync', 'Sync', () => { selClip = 'constant'; selectedId = null; openPanel('sync'); }),
+        tool('sync', 'Sync', () => { selClip = 'constant'; selectedId = null; openPanel('sync'); updateSelFrame(); }),
         tool('wand', 'Auto switch', () => doAutoSwitch(false)),
         tool('lips', 'Lips scan', doSmartSwitch),
         tool('silence', 'Silence', () => openPanel('silence')),
@@ -1173,8 +1448,16 @@ export function editorScreen() {
         tool('zoomOut', 'Zoom out', () => { pxPerSec = Math.max(minPx(), pxPerSec / 1.5); draw(); }),
         tool('zoomIn', 'Zoom in', () => { pxPerSec = Math.min(300, pxPerSec * 1.5); draw(); }),
       );
+    } else if (hasClipSel) {
+      // a video clip is selected: clip tools with back chevron and reset crop
+      rows.push(backTool(),
+        tool('undo', 'Reset crop', () => { if (selClip) resetCrop(selClip); }),
+        tool('crop', 'Crop', () => { cropRole = selClip!; openPanel('crop'); }),
+        tool('mirror', 'Mirror', () => { if (selClip) toggleMirror(selClip); }),
+        tool('volume', 'Audio', () => openPanel('audio')));
+      if (selClip === 'constant') rows.push(tool('sync', 'Sync', () => openPanel('sync')));
     } else {
-      // a clip is selected: the bar swaps to clip tools with a back chevron (CapCut)
+      // a segment is selected: the bar swaps to segment tools with a back chevron (CapCut)
       rows.push(backTool(),
         tool('scissors', 'Split', doSplit),
         tool('layout', 'Layout', () => openPanel('layout')),
@@ -1204,6 +1487,7 @@ export function editorScreen() {
     if (n === 'crop') cropRole = segmentAt(p.segments, playMs)?.main ?? 'host';
     if (n === 'silence') { if (!needAudio()) { panel = 'none'; return; } runDetect(); }
     cropView.classList.toggle('on', n === 'crop');
+    updateSelFrame();
     renderPanel(); draw(); tick();
     if (n === 'crop') requestAnimationFrame(layoutCrop);
   }
@@ -1211,6 +1495,7 @@ export function editorScreen() {
     panel = 'none'; pendingCuts = []; snapMs = null;
     if (selClip === 'constant') selClip = null;
     cropView.classList.remove('on'); guideV.classList.remove('on'); guideH.classList.remove('on');
+    updateSelFrame();
     renderPanel(); renderBar(); draw();
   }
 
@@ -1734,45 +2019,82 @@ export function editorScreen() {
   } }, h('span', {}, resChipText(p)), icon('chevD', 14));
   function setResChip() { (resChip.firstElementChild as HTMLElement).textContent = resChipText(p); }
 
+  const tlWrap = h('div', { class: 'tl-wrap' }, tl);
   const el = h('div', { class: 'screen editor' },
     h('div', { class: 'edtop' },
       iconButton('close', 'Close', async () => { setPlaying(false); await saveProject(p); app.go('home'); }, 'plain'),
       h('div', { class: 'grow' }),
       resChip,
       h('button', { class: 'exportbtn', 'aria-label': 'Export', onclick: goExport }, 'Export')),
-    preview, controls, tl, toolbar, panelEl);
+    preview, previewHandle, controls, tlWrap, toolbar, panelEl);
 
   app.onBack = () => {
+    if (taskSheetEl) { closeListSheet(); return true; }
     if (minimizeAllDialogs()) return true;
     if (stage.classList.contains('full')) { exitFull(); return true; }
     if (panel !== 'none') { closePanel(); return true; }
-    if (selectedId || selClip) { selectedId = null; selClip = null; renderBar(); draw(); return true; }
+    if (selectedId || selClip) { selectedId = null; selClip = null; renderBar(); draw(); updateSelFrame(); return true; }
     return false;
   };
 
   // ----- CapCut style: dialog with % + Minimize -> small "Applying N features" pill -> tap = bottom sheet -----
-  let listSheet: HTMLElement | null = null;
+  let taskSheetEl: HTMLElement | null = null;
   let lastTasks: Task[] = [];
   const dialogEl = dialogHost;
-  function closeListSheet() { listSheet?.remove(); listSheet = null; }
+  function closeListSheet() {
+    if (taskSheetEl) {
+      taskSheetEl.remove();
+      taskSheetEl = null;
+    }
+  }
   function renderListSheet() {
-    if (!listSheet) return;
-    const rows = lastTasks.filter((t) => t.modal);
-    if (!rows.length) { closeListSheet(); return; }
-    const body = listSheet.querySelector('.sheet') as HTMLElement;
+    if (!taskSheetEl) return;
+    if (!lastTasks.length) { closeListSheet(); return; }
+    const body = taskSheetEl.querySelector('.task-sheet-body') as HTMLElement;
+    if (!body) return;
     body.replaceChildren(
-      h('div', { class: 'tl-title' }, 'In progress'),
-      ...rows.map((t) => h('div', { class: 'tl-row' },
+      ...lastTasks.map((t) => h('div', { class: 'tl-row' },
         spinner(18),
-        h('div', { class: 'tl-main' }, h('div', {}, t.label), h('div', { class: 'tl-pct' }, t.pct ? `${t.pct}%` : 'Working...')),
-        t.cancel ? iconButton('close', 'Cancel', () => t.cancel!(), 'plain') : null,
-        h('button', { class: 'chip', onclick: () => { closeListSheet(); minimizeTask(t.id, false); } }, 'Show'))),
-      h('button', { class: 'btn', onclick: closeListSheet }, 'Close'));
+        h('div', { class: 'tl-main' },
+          h('div', { class: 'tl-title' }, t.label),
+          h('div', { class: 'tl-pct' }, t.pct !== undefined && t.pct > 0 ? `${t.pct}%` : 'Working...')),
+        t.cancel ? iconButton('close', 'Cancel', () => t.cancel!(), 'plain') : null))
+    );
   }
   function openListSheet() {
-    closeListSheet();
-    listSheet = h('div', { class: 'menu', onclick: (ev: Event) => { if (ev.target === listSheet) closeListSheet(); } }, h('div', { class: 'sheet' }));
-    document.body.append(listSheet);
+    if (taskSheetEl) { closeListSheet(); return; }
+    if (!lastTasks.length) return;
+    const dragBar = h('div', { class: 'sheet-handle' }, h('i', { class: 'handle-bar' }));
+    const head = h('div', { class: 'task-sheet-head' },
+      h('div', { class: 'task-sheet-title' }, 'In progress'),
+      iconButton('close', 'Close', closeListSheet, 'plain'));
+    const body = h('div', { class: 'task-sheet-body' });
+    taskSheetEl = h('div', { class: 'task-sheet' }, dragBar, head, body);
+
+    let swipeY = 0;
+    dragBar.addEventListener('pointerdown', (e: PointerEvent) => {
+      dragBar.setPointerCapture(e.pointerId);
+      swipeY = e.clientY;
+    });
+    dragBar.addEventListener('pointermove', (e: PointerEvent) => {
+      if (!dragBar.hasPointerCapture(e.pointerId)) return;
+      const dy = Math.max(0, e.clientY - swipeY);
+      taskSheetEl!.style.transform = `translateY(${dy}px)`;
+    });
+    const onSwipeEnd = (e: PointerEvent) => {
+      if (!dragBar.hasPointerCapture(e.pointerId)) return;
+      dragBar.releasePointerCapture(e.pointerId);
+      const dy = e.clientY - swipeY;
+      if (dy > 40) {
+        closeListSheet();
+      } else if (taskSheetEl) {
+        taskSheetEl.style.transform = '';
+      }
+    };
+    dragBar.addEventListener('pointerup', onSwipeEnd);
+    dragBar.addEventListener('pointercancel', onSwipeEnd);
+
+    el.append(taskSheetEl);
     renderListSheet();
   }
 
@@ -1789,24 +2111,41 @@ export function editorScreen() {
         h('div', { class: 'td-bar' }, h('i', { style: pct > 0 ? `width:${pct}%` : '', class: pct > 0 ? '' : 'indet' })),
         h('button', { class: 'td-min', onclick: () => minimizeTask(dlg.id) }, 'Minimize')));
     } else dialogEl.replaceChildren();
-    // 2) pills: normal tasks keep their label; minimized dialogs fold into one tappable pill
-    const minimized = list.filter((t) => t.modal && t.minimized);
-    const pills: Node[] = list.filter((t) => !t.modal).map((t) => h('div', { class: 'pill', role: 'status' }, spinner(16), h('span', {}, t.label + (t.pct !== undefined && t.pct > 0 ? ` ${t.pct}%` : ''))));
-    if (minimized.length) pills.push(h('button', { class: 'pill tap', onclick: openListSheet }, spinner(16), h('span', {}, `Applying ${minimized.length} feature${minimized.length === 1 ? '' : 's'}`)));
-    pillsEl.replaceChildren(...pills);
+
+    // 2) ONE small dark pill at bottom-left inside preview for all tasks without open modal dialog
+    const activeTasks = list.filter((t) => !t.modal || t.minimized);
+    if (!activeTasks.length) {
+      pillsEl.replaceChildren();
+      closeListSheet();
+    } else {
+      const label = activeTasks.length === 1
+        ? activeTasks[0].label + (activeTasks[0].pct !== undefined && activeTasks[0].pct > 0 ? ` ${activeTasks[0].pct}%` : '')
+        : `Applying ${activeTasks.length} features`;
+      const pillBtn = h('button', {
+        class: 'pill tap',
+        'aria-label': label,
+        onclick: (ev: MouseEvent) => {
+          ev.stopPropagation();
+          if (taskSheetEl) closeListSheet();
+          else openListSheet();
+        },
+      }, spinner(16), h('span', {}, label));
+      pillsEl.replaceChildren(pillBtn);
+    }
     renderListSheet();
     if (!destroyed) updatePlayState();
   });
 
   requestAnimationFrame(() => {
     selectedId = null;
+    applyPreviewHeight();
     fitStage();
     renderBar(); updateBtns(); updatePlayState();
     refresh();
     loop();
     bootstrap();
   });
-  const onResize = () => { fitStage(); draw(); };
+  const onResize = () => { applyPreviewHeight(); fitStage(); draw(); };
   window.addEventListener('resize', onResize);
 
   return {

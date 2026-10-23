@@ -70,7 +70,7 @@ canvas { display: block; width: 100%; }
 .stage { position: relative; background: #050505; overflow: hidden; flex: none; }
 .cell { position: absolute; overflow: hidden; background: #000; }
 .cell video { display: block; width: 100%; height: 100%; object-fit: cover; transform-origin: center; }
-.cell.pop { border-radius: 10px; border: 2px solid var(--border); }
+.cell.pop { border-radius: 4px; border: 2px solid var(--border); }
 .stage.full { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 50; box-shadow: 0 0 0 100vmax #000; }
 .controls { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 4px; border-bottom: 1px solid var(--border); flex: none; }
 .timeText { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--text2); min-width: 92px; text-align: center; }
@@ -143,8 +143,8 @@ input[type=file] { display: none; }
 /* ---------- spinner + pills ---------- */
 .spin { animation: spin .8s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.pills { position: absolute; left: 10px; bottom: 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; z-index: 6; pointer-events: none; }
-.pill { display: inline-flex; align-items: center; gap: 8px; background: rgba(30,30,30,.92); border: 1px solid #333; border-radius: 16px; padding: 7px 12px; font-size: 13px; color: #fff; }
+.pills { position: absolute; left: 10px; bottom: 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; z-index: 6; pointer-events: auto; }
+.pill { display: inline-flex; align-items: center; gap: 8px; background: rgba(30,30,30,.92); border: 1px solid #333; border-radius: 10px; padding: 7px 12px; font-size: 13px; color: #fff; pointer-events: auto; cursor: pointer; }
 
 /* ---------- editor (CapCut layout) ---------- */
 .screen.editor { background: #000; }
@@ -246,12 +246,12 @@ input[type=file] { display: none; }
 .tool.back:active { background: #3a3a3c; }
 
 /* ---------- CapCut bottom sheet (ratio / layout / audio / sync / crop / silence) ---------- */
-.panel { flex: none; background: #1c1c1e; display: flex; flex-direction: column; border-top: 1px solid #2a2a2c; }
+.panel { flex: none; background: #1c1c1e; display: flex; flex-direction: column; border-top: 1px solid #2a2a2c; border-radius: 10px 10px 0 0; }
 .panel .pbody { padding: 14px 14px 6px; max-height: 42vh; overflow-y: auto; }
 .pstrip { display: flex; gap: 12px; overflow-x: auto; scrollbar-width: none; align-items: flex-start; padding: 6px 2px 2px; }
 .pstrip::-webkit-scrollbar { display: none; }
 .ptile { flex: none; border: 0; background: transparent; color: #fff; display: flex; flex-direction: column; align-items: center; gap: 8px; font: inherit; padding: 0; min-width: 64px; }
-.ptile .pbox { width: 56px; height: 56px; border-radius: 12px; background: #2d2d2f; display: flex; align-items: center; justify-content: center; border: 2px solid transparent; transition: transform .12s; }
+.ptile .pbox { width: 56px; height: 56px; border-radius: 8px; background: #2d2d2f; display: flex; align-items: center; justify-content: center; border: 2px solid transparent; transition: transform .12s; }
 .ptile .plab { font-size: 12px; color: #d0d0d0; white-space: nowrap; }
 .ptile .rbox { display: block; border: 2px solid #e8e8e8; border-radius: 3px; }
 .ptile.sel .pbox { border-color: #fff; background: #3a3a3c; transform: scale(1.08); }
@@ -269,12 +269,45 @@ input[type=file] { display: none; }
 .panel .pval { width: 44px; text-align: right; font-size: 12px; color: #a0a0a0; font-variant-numeric: tabular-nums; }
 .panel .pinfo { font-size: 13px; color: #a0a0a0; margin: 6px 0 8px; }
 .panel .pinfo b { color: #fff; font-weight: 500; }
-.panel .btn.primary { width: 100%; min-height: 44px; border-radius: 10px; }
+.panel .btn.primary { width: 100%; min-height: 44px; border-radius: 8px; }
 .panel .noise-control { margin: 10px 0; }
 .panel .noise-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #f0f0f0; font-size: 13px; }
 .panel .noise-value { color: #a0a0a0; font-variant-numeric: tabular-nums; }
 .panel .noise-control input[type=range] { display: block; width: 100%; height: 44px; margin: 0; accent-color: #fff; }
 .panel .noise-control input[type=range]:disabled { opacity: .4; }
+
+/* Editor scoped compact rounding */
+.editor .chip { border-radius: 8px; }
+.editor .reschip { border-radius: 8px; }
+.editor .exportbtn { border-radius: 8px; }
+.editor .sheet { border-radius: 10px 10px 0 0; }
+
+/* Preview resize handle */
+.preview-handle { flex: none; height: 28px; display: flex; align-items: center; justify-content: center; touch-action: none; cursor: row-resize; z-index: 5; background: transparent; user-select: none; -webkit-user-select: none; margin: -6px 0; }
+.preview-handle .handle-bar { display: block; width: 36px; height: 4px; border-radius: 2px; background: #3e3e42; transition: background .12s; }
+.preview-handle:active .handle-bar { background: #888; }
+
+/* Timeline scrollable wrapper */
+.tl-wrap { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative; background: #000; -webkit-overflow-scrolling: touch; }
+
+/* Selected video frame on preview */
+.sel-frame { position: absolute; pointer-events: none; border: 1.5px solid #ffffff; border-radius: 3px; box-sizing: border-box; z-index: 5; display: none; }
+.sel-frame.on { display: block; }
+.sel-reset-btn { position: absolute; right: 6px; bottom: 6px; pointer-events: auto; background: rgba(20, 20, 22, 0.85); border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 6px; color: #fff; font: inherit; font-size: 11px; font-weight: 500; padding: 3px 8px; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; z-index: 6; backdrop-filter: blur(4px); }
+.sel-reset-btn:active { background: #333; }
+
+/* CapCut bottom task sheet */
+.task-sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 10; background: #1c1c1e; border-top: 1px solid #2a2a2c; border-radius: 10px 10px 0 0; padding: 8px 14px calc(10px + var(--safe-bottom)); max-height: 40%; display: flex; flex-direction: column; box-shadow: 0 -8px 24px rgba(0,0,0,.5); animation: taskslideup .18s ease-out; touch-action: pan-y; }
+@keyframes taskslideup { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.task-sheet .sheet-handle { height: 18px; display: flex; align-items: center; justify-content: center; cursor: grab; touch-action: none; flex: none; }
+.task-sheet .sheet-handle .handle-bar { display: block; width: 36px; height: 4px; border-radius: 2px; background: #444; }
+.task-sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 0 8px; border-bottom: 1px solid #28282a; flex: none; }
+.task-sheet-title { font-size: 15px; font-weight: 600; color: #fff; }
+.task-sheet-body { overflow-y: auto; flex: 1; min-height: 0; }
+.task-sheet-body .tl-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #28282a; }
+.task-sheet-body .tl-main { flex: 1; min-width: 0; }
+.task-sheet-body .tl-title { font-weight: 500; font-size: 14px; color: #fff; margin-bottom: 2px; }
+.task-sheet-body .tl-pct { font-size: 12px; color: var(--text2); }
 
 /* ---------- Settings (CapCut style) ---------- */
 .screen.settings { background: #000; }
@@ -301,10 +334,10 @@ input[type=file] { display: none; }
 .sfoot { font-size: 12px; color: #6f6f72; text-align: center; margin: 14px 8px 0; }
 
 /* ---------- CapCut style task dialog + list ---------- */
-.pill.tap { pointer-events: auto; font: inherit; font-size: 13px; cursor: pointer; }
-.pills { pointer-events: none; }
+.pill.tap { pointer-events: auto; font: inherit; font-size: 13px; cursor: pointer; border-radius: 10px; }
+.pills { pointer-events: auto; }
 .taskdialog-wrap { position: absolute; inset: 0; z-index: 8; display: flex; align-items: center; justify-content: center; pointer-events: none; }
-.taskdialog { pointer-events: auto; position: relative; width: min(78%, 280px); background: rgba(38,38,40,.97); border: 1px solid #333; border-radius: 16px; padding: 22px 18px 16px; display: flex; flex-direction: column; align-items: center; gap: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.6); }
+.taskdialog { pointer-events: auto; position: relative; width: min(78%, 280px); background: rgba(38,38,40,.97); border: 1px solid #333; border-radius: 10px; padding: 22px 18px 16px; display: flex; flex-direction: column; align-items: center; gap: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.6); }
 .taskdialog > .iconbtn { position: absolute; top: 4px; right: 4px; width: 36px; height: 36px; min-height: 36px; opacity: .7; }
 .td-ring { color: #19e6c1; }
 .td-label { font-size: 14px; color: #fff; text-align: center; }
