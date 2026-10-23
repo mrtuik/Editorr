@@ -1,7 +1,7 @@
 import type { Project, Settings } from './core/types';
 import { DEFAULT_SETTINGS, newProject } from './core/store';
 
-export type Intent = 'silence' | 'crop' | 'ratio';
+export type Intent = 'silence' | 'crop' | 'ratio' | 'sync';
 export type HomeTab = 'edit' | 'projects';
 export type ScreenName = 'home' | 'import' | 'editor' | 'export' | 'settings';
 
