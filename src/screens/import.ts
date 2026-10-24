@@ -15,7 +15,7 @@ export function importScreen() {
   const p = app.project;
   const info: Partial<Record<Role, VideoRef>> = {};
   const pics: Partial<Record<Role, string>> = {};
-  /** slots that are being copied right now, with percent (-1 = waiting for the first number) */
+  /** slots that are being copied right now: 0-100 = percent, -1 = starting, -2 = queued (waits for the other video to finish copying) */
   const busy: Partial<Record<Role, number>> = {};
   if (p.host && runtime.hostUrl) info.host = { ...p.host, url: runtime.hostUrl };
   if (p.constant && runtime.constUrl) info.constant = { ...p.constant, url: runtime.constUrl };
@@ -83,10 +83,10 @@ export function importScreen() {
     const sub = await EditorrNative.addListener('copyProgress', (e: { index: number; count: number; percent: number }) => {
       if (!targets.length) {
         targets = e.count >= 2 ? [role, other(role)] : [role];
-        targets.forEach((t) => { busy[t] = 0; });
+        targets.forEach((t) => { busy[t] = -2; });
       }
-      const t = targets[e.index];
-      if (t) busy[t] = e.percent;
+      // only the video that is really being copied shows a percent; a finished one stays at 100, a waiting one says so
+      targets.forEach((t, i) => { if (i < e.index) busy[t] = 100; else if (i === e.index) busy[t] = e.percent; });
       render();
     });
     try {
@@ -115,12 +115,13 @@ export function importScreen() {
       const files = Array.from(input.files ?? []).slice(0, 2);
       if (!files.length) return;
       const want: Role[] = files.length >= 2 ? [role, other(role)] : [role];
-      want.forEach((t) => { busy[t] = -1; });
+      want.forEach((t, i) => { busy[t] = i === 0 ? -1 : -2; });
       render();
       try {
         for (let i = 0; i < files.length; i++) {
           const f = files[i];
           const url = URL.createObjectURL(f);
+          busy[want[i]] = -1; render();
           const meta = await probeVideo(url);
           assign(want[i], { name: f.name, url, durationMs: meta.durationMs, width: meta.width, height: meta.height, fps: 30 }, undefined, f);
         }
@@ -154,7 +155,8 @@ export function importScreen() {
     if (v && pics[role]) tile.style.backgroundImage = `url("${pics[role]}")`;
     tile.append(h('div', { class: 'chip-label' }, label));
     if (loading) {
-      tile.append(h('div', { class: 'tile-busy' }, spinner(26), h('div', {}, pct > 0 ? `Adding video... ${pct}%` : 'Adding video...')));
+      const text = pct === -2 ? 'Waiting...' : pct >= 100 ? 'Reading video info...' : pct > 0 ? `Adding ${label} video... ${pct}%` : `Adding ${label} video...`;
+      tile.append(h('div', { class: 'tile-busy' }, spinner(26), h('div', {}, text)));
     } else if (v) {
       tile.append(
         h('div', { class: 'tile-change' }, icon('swap', 16), 'Change'),

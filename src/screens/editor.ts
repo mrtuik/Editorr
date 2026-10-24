@@ -2393,10 +2393,11 @@ export function editorScreen() {
     if (!taskSheetEl) return;
     if (!lastTasks.length) { closeListSheet(); return; }
     const body = taskSheetEl.querySelector('.task-sheet-body') as HTMLElement;
+    const cnt = taskSheetEl.querySelector('.task-sheet-count') as HTMLElement;
     if (!body) return;
+    if (cnt) cnt.textContent = String(lastTasks.length);
     body.replaceChildren(
       ...lastTasks.map((t) => h('div', { class: 'tl-row' },
-        spinner(18),
         h('div', { class: 'tl-main' },
           h('div', { class: 'tl-title' }, t.label),
           h('div', { class: 'tl-pct' }, t.pct !== undefined && t.pct > 0 ? `${t.pct}%` : 'Working...')),
@@ -2408,7 +2409,7 @@ export function editorScreen() {
     if (!lastTasks.length) return;
     const dragBar = h('div', { class: 'sheet-handle' }, h('i', { class: 'handle-bar' }));
     const head = h('div', { class: 'task-sheet-head' },
-      h('div', { class: 'task-sheet-title' }, 'In progress'),
+      h('div', { class: 'task-sheet-title' }, 'In progress', h('span', { class: 'task-sheet-count' }, String(lastTasks.length))),
       iconButton('close', 'Close', closeListSheet, 'plain'));
     const body = h('div', { class: 'task-sheet-body' });
     taskSheetEl = h('div', { class: 'task-sheet' }, dragBar, head, body);
@@ -2460,9 +2461,10 @@ export function editorScreen() {
       pillsEl.replaceChildren();
       closeListSheet();
     } else {
-      const label = activeTasks.length === 1
-        ? activeTasks[0].label + (activeTasks[0].pct !== undefined && activeTasks[0].pct > 0 ? ` ${activeTasks[0].pct}%` : '')
-        : `Applying ${activeTasks.length} features`;
+      const one = activeTasks.length === 1 ? activeTasks[0] : null;
+      const label = one
+        ? one.label + (one.pct !== undefined && one.pct > 0 ? ` ${one.pct}%` : '')
+        : `${activeTasks.length} tasks running`;
       const pillBtn = h('button', {
         class: 'pill tap',
         'aria-label': label,
@@ -2471,7 +2473,7 @@ export function editorScreen() {
           if (taskSheetEl) closeListSheet();
           else openListSheet();
         },
-      }, h('div', { class: 'td-ring' }, spinner(20)), h('span', {}, label));
+      }, h('span', { class: 'pill-count' }, String(activeTasks.length)), h('div', { class: 'td-ring' }, spinner(22)), h('span', { class: 'pill-text' }, label));
       pillsEl.replaceChildren(pillBtn);
     }
     renderListSheet();

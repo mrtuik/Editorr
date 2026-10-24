@@ -938,8 +938,11 @@ input.xs-range::-webkit-slider-runnable-track { background: linear-gradient(90de
 .toast { top: auto; bottom: 30%; left: 50%; right: auto; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 32px); text-align: center; pointer-events: none; }
 
 /* Home like CapCut: no separate card or outline around each item */
-.home .bigcard, .home .toolcell, .home .rthumb, .home .rthumb.more { background: transparent; border: 0; box-shadow: none; }
-.home .bigcard:active, .home .toolcell:active { background: rgba(255,255,255,.06); }
+.home .toolcell, .home .rthumb, .home .rthumb.more { background: transparent; border: 0; box-shadow: none; }
+.home .toolcell:active { background: rgba(255,255,255,.06); }
+/* New project and Continue keep their card */
+.home .bigcard { border: 1px solid #262632; box-shadow: none; background: #121217; border-radius: 18px; }
+.home .bigcard:active { background: #1a1a22; }
 .home .rthumb { background-color: transparent; }
 @keyframes toastin { from { opacity: 0; } to { opacity: 1; } }
 .toast { animation: toastin .2s ease; }
@@ -967,3 +970,32 @@ input.xs-range::-webkit-slider-runnable-track { background: linear-gradient(90de
 .at-scale { display: flex; justify-content: space-between; font-size: 12px; color: #6a6a6c; }
 .at-foot { padding: 12px 16px 16px; flex: none; }
 .at-go { width: 100%; min-height: 52px; border-radius: 16px; font-size: 16px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+
+/* ---------- CapCut task card + sheet (final, minimal; corners ~2/3 of before) ---------- */
+.pills { left: 12px; bottom: 12px; right: auto; max-width: calc(100% - 24px); }
+.pills .pill.tap {
+  position: relative; display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; width: max-content; min-width: 150px; max-width: 100%; box-sizing: border-box;
+  padding: 18px 26px 16px; background: #2a2a2c; border: 0; border-radius: 10px; box-shadow: none;
+  -webkit-backdrop-filter: none; backdrop-filter: none; color: #fff; font-size: 14px; font-weight: 500;
+}
+.pills .pill.tap .pill-text { white-space: nowrap; display: block; line-height: 1.25; }
+.pills .pill.tap .pill-count {
+  position: absolute; top: 6px; right: 6px; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box;
+  border-radius: 9px; background: var(--accent); color: #111; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+}
+.task-sheet {
+  background: #1c1c1e; -webkit-backdrop-filter: none; backdrop-filter: none; border-top: 0; box-shadow: none;
+  border-radius: 14px 14px 0 0; padding: 8px 16px calc(12px + var(--safe-bottom)); max-height: 40vh;
+}
+.task-sheet .sheet-handle { height: 12px; }
+.task-sheet .sheet-handle .handle-bar { width: 36px; height: 4px; background: #48484a; }
+.task-sheet-head { border-bottom: 0; padding: 6px 0 4px; }
+.task-sheet-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.task-sheet-count { min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 9px; background: #2c2c2e; color: var(--accent); font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.task-sheet-head .iconbtn { width: 38px; height: 38px; min-height: 38px; border-radius: 10px; background: #2c2c2e; color: #fff; }
+.task-sheet-body .tl-row { border-bottom: 0; padding: 10px 12px; margin-top: 8px; background: #26262a; border-radius: 10px; }
+.task-sheet-body .tl-row .iconbtn { width: 32px; height: 32px; min-height: 32px; }
+.task-sheet-body .tl-title { font-size: 14px; font-weight: 500; margin-bottom: 2px; }
+.taskdialog { border-radius: 12px; }
+.tile-busy .tb-sub { font-size: 12px; color: #bbb; }
