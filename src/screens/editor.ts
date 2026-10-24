@@ -1,10 +1,11 @@
 import { app, type Intent } from '../app';
 import { peaks, PEAKS_PER_SEC, SAMPLE_RATE } from '../core/audio';
 import { startDenoise } from '../core/denoise';
-import { detectSpeakers, lastMethod, lastSeparationDb, lastUsedLips, lastVoiceQuality } from '../core/speaker';
+import { detectSpeakers, lastMethod, lastSeparationDb, lastUsedLips, lastVoiceQuality, uid, detectByFaces, polishCuts } from '../core/speaker';
 import { motionToActivity } from '../core/motion';
-import { cropForFace, FACE_SAMPLE_MS, faceBetween, lastReport, motionFromScan, pickTrack, scanFaces, type FaceReport, type FaceScan } from '../core/faces';
+import { cropForFace, FACE_SAMPLE_MS, faceBetween, lastReport, motionFromScan, pickTrack, scanFaces, speakerRuns, type FaceReport, type FaceScan } from '../core/faces';
 import { pickFace } from './facePick';
+import { askFaceOptions } from './faceOptions';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
 import { detectSilence } from '../core/silence';
 import { EditorrNative, fileSrc, isNative, tick } from '../core/native';
@@ -1762,7 +1763,7 @@ export function editorScreen() {
     return true;
   }
 
-  /** "Faces" tool: scan, then let the user tap the person to follow in each video. */
+  /** "Faces" tool: scan, ask how the frame should follow people, then frame the current cuts. */
   async function doFaces() {
     if (scanning) return;
     const fr = await ensureFaces();
@@ -1771,53 +1772,135 @@ export function editorScreen() {
     if (fr === 'fail') { toast('Face scan failed. Check the internet once (first run), or update the app.'); return; }
     const tracks = (runtime.hostFaces?.tracks.length ?? 0) + (runtime.constFaces?.tracks.length ?? 0);
     if (!tracks) { toast(noFaceMessage(), 12000); return; }
-    if (!(runtime.hostFaces!.tracks.length > 1 || runtime.constFaces!.tracks.length > 1)) { toast('Only one person in each video. Nothing to pick.'); return; }
-    if (!(await choosePeople(true))) return;
-    setMotionFromFaces(); draw();
-    toast('Saved. Autoframe will follow the picked people.');
+    const r = await askFaceOptions(p.aspect);
+    if (!r) return;
+    if (r.aspect !== p.aspect) { p.aspect = r.aspect; fitStage(); applyLayout(segmentAt(p.segments, playMs)); }
+    const multi = (runtime.hostFaces?.tracks.length ?? 0) > 1 || (runtime.constFaces?.tracks.length ?? 0) > 1;
+    if (multi && app.settings.faceFollow === 'picked' && !(await choosePeople(true))) return;
+    setMotionFromFaces();
+    edit(frameSegments(p.segments)); afterEdit(); draw(); scheduleSave();
+    toast(app.settings.faceFollow === 'picked' ? 'Framed the picked people. Undo to go back.' : 'Frame now follows whoever talks. Undo to go back.');
   }
 
-  /** Crop of every clip so the followed person is centred with some headroom for the chosen ratio. */
-  function frameSegments(segs: Segment[]): Segment[] {
+  /**
+   * Crop of every clip so the followed person is centred with headroom for the chosen ratio.
+   * With "Active speaker" a camera that shows several people is split where the talker changes, and the crop either
+   * jumps (cut) or glides in small steps (smooth). Steps are tiny clips with slightly different crops, so preview and
+   * export look the same.
+   */
+  function frameSegments(input: Segment[]): Segment[] {
+    const st = app.settings;
+    const mode = st.faceMode ?? 'smooth';
+    const speedMs = Math.max(100, st.faceSpeedMs ?? 600);
+    const frac = st.faceTight === 'wide' ? 0.32 : st.faceTight === 'close' ? 0.6 : 0.45;
     const a0 = aspectValue(p.aspect);
-    return segs.map((sg) => {
-      const out: Segment = { ...sg };
+    // earlier face splits are rebuilt from scratch: join neighbours that only differ by crop
+    const segs: Segment[] = [];
+    for (const sg of input) {
+      const last = segs[segs.length - 1];
+      if (last && last.style === sg.style && last.main === sg.main && last.corner === sg.corner && last.size === sg.size && Math.abs(last.endMs - sg.startMs) < 2) {
+        last.endMs = sg.endMs;
+        if (last.cropHost || last.cropConst) { delete last.cropHost; delete last.cropConst; }
+      } else segs.push({ ...sg });
+    }
+    const out: Segment[] = [];
+    type Key = { t: number; crop: CropState };
+    for (const sg of segs) {
+      const visible: Role[] = sg.style === 'one' ? [sg.main] : ['host', 'constant'];
+      const slot = sg.style === 'side' ? a0 / 2 : sg.style === 'updown' ? a0 * 2 : a0;
+      const keys: Record<Role, Key[]> = { host: [], constant: [] };
       for (const role of ['host', 'constant'] as Role[]) {
         const scan = faceScanOf(role);
         if (!scan) continue;
-        const track = pickTrack(scan, role === 'host' ? p.faceHost : p.faceConst);
-        const face = faceBetween(track, scan.sampleMs, sg.startMs, sg.endMs);
-        if (!face) continue;
-        const slot = sg.style === 'side' ? a0 / 2 : sg.style === 'updown' ? a0 * 2 : a0;
         const k = CK(role);
-        const crop = cropForFace(face, scan.aspect, slot, role === 'host' ? p.mirrorHost : p.mirrorConst, sg[k] ?? p[k]);
-        crop.ratio = 'custom'; delete crop.frameRatio;
-        out[k] = crop;
+        const mirrored = role === 'host' ? p.mirrorHost : p.mirrorConst;
+        const base = sg[k] ?? p[k];
+        const make = (track: ReturnType<typeof pickTrack>, from: number, to: number): CropState | null => {
+          const face = faceBetween(track, scan.sampleMs, from, to);
+          if (!face) return null;
+          const c = cropForFace(face, scan.aspect, slot, mirrored, base, frac);
+          c.ratio = 'custom'; delete c.frameRatio;
+          return c;
+        };
+        const picked = pickTrack(scan, role === 'host' ? p.faceHost : p.faceConst);
+        if (visible.includes(role) && st.faceFollow !== 'picked' && scan.tracks.length >= 2) {
+          for (const run of speakerRuns(scan, sg.startMs, sg.endMs, 1200)) {
+            const c = make(run.track, run.startMs, run.endMs);
+            if (c) keys[role].push({ t: run.startMs, crop: c });
+          }
+        } else {
+          const c = make(picked, sg.startMs, sg.endMs);
+          if (c) keys[role].push({ t: sg.startMs, crop: c });
+        }
       }
-      return out;
-    });
+      // cut points: segment edges, every talker change, and (glide) a few steps after each change
+      const steps = Math.max(2, Math.min(8, Math.round(speedMs / 100)));
+      const cuts = new Set<number>([sg.startMs, sg.endMs]);
+      for (const role of ['host', 'constant'] as Role[]) {
+        keys[role].forEach((kk, i) => {
+          if (i === 0) return;
+          cuts.add(Math.round(kk.t));
+          if (mode === 'smooth') for (let j = 1; j < steps; j++) { const t = Math.round(kk.t + (speedMs * j) / steps); if (t < sg.endMs) cuts.add(t); }
+        });
+      }
+      const times = [...cuts].filter((t) => t >= sg.startMs && t <= sg.endMs).sort((x, y) => x - y);
+      const ease = (u: number) => u * u * (3 - 2 * u);
+      const cropAt = (role: Role, t: number): CropState | undefined => {
+        const ks = keys[role];
+        if (!ks.length) return undefined;
+        let i = 0;
+        while (i + 1 < ks.length && ks[i + 1].t <= t) i++;
+        const cur = ks[i];
+        if (mode !== 'smooth' || i === 0) return cur.crop;
+        const u = Math.min(1, (t - cur.t) / speedMs);
+        if (u >= 1) return cur.crop;
+        const pv = ks[i - 1].crop, e = ease(Math.max(0, u));
+        return { ...cur.crop, zoom: pv.zoom + (cur.crop.zoom - pv.zoom) * e, x: pv.x + (cur.crop.x - pv.x) * e, y: pv.y + (cur.crop.y - pv.y) * e };
+      };
+      for (let i = 0; i + 1 < times.length; i++) {
+        const a = times[i], b = times[i + 1];
+        if (b - a < 30 && out.length) { out[out.length - 1].endMs = b; continue; }
+        const piece: Segment = { ...sg, id: i === 0 ? sg.id : uid(), startMs: a, endMs: b };
+        const mid = (a + b) / 2;
+        for (const role of ['host', 'constant'] as Role[]) { const c = cropAt(role, mid); if (c) piece[CK(role)] = c; }
+        out.push(piece);
+      }
+      if (times.length < 2) out.push({ ...sg });
+    }
+    return out;
   }
 
-  /** One tap: find the faces, cut to whoever speaks (voice + lips), and frame that person in every clip. */
+  /** One tap: find the faces, cut to whoever speaks like Auto switch does, and frame that person in every clip. */
   async function doAutoframe() {
     if (scanning || !needAudio()) return;
     const fr = await ensureFaces();
     if (fr === 'busy') return;
     if (fr === 'cancel') { toast('Scan cancelled'); return; }
     if (fr === 'fail') { toast('Face scan failed. Check the internet once (first run), or update the app. Use Auto switch for now.'); return; }
-    if (!(await choosePeople(false))) return;
+    if (app.settings.faceFollow === 'picked' && !(await choosePeople(false))) return;
     setMotionFromFaces();
     const keep = coverage(p.segments); // parts removed by silence cut stay removed
-    let segs = detectSpeakers(runtime.hostPcm!, runtime.constPcm!, p.offsetMs, p.durationMs, app.settings, p.mainAudio,
-      { host: runtime.hostMotion!, constant: runtime.constMotion! });
+    // Host / Constant: lips + audio together (default), lips only, or audio only (like Auto switch).
+    const by = app.settings.autoframeBy ?? 'both';
+    let how = by === 'both' ? 'lips + audio' : by === 'lips' ? 'lips' : 'audio';
+    let segs = (by !== 'audio' && runtime.hostMotion && runtime.constMotion)
+      ? detectByFaces(runtime.hostPcm!, runtime.constPcm!, p.offsetMs, p.durationMs, app.settings,
+        { host: runtime.hostMotion, constant: runtime.constMotion }, by === 'both' ? 0.9 : 0.2)
+      : null;
+    if (!segs) {
+      segs = detectSpeakers(runtime.hostPcm!, runtime.constPcm!, p.offsetMs, p.durationMs, app.settings, p.mainAudio);
+      how = (by === 'audio' ? '' : 'no lips found, ') + (lastMethod === 'voice' ? 'voice' : `mic loudness ${lastSeparationDb.toFixed(1)} dB`);
+    }
+    segs = polishCuts(segs, app.settings.ignoreShortMs ?? 1500, app.settings.leadInMs ?? 300);
     const clipped = keep.length ? intersectRanges(segs, keep) : segs;
     if (clipped.length) segs = clipped;
+    const cameraSegs = segs.length;
     const found = (runtime.hostFaces?.tracks.length ?? 0) + (runtime.constFaces?.tracks.length ?? 0);
     segs = frameSegments(segs);
     edit(segs); selectedId = segs[0]?.id ?? null; afterEdit(); draw();
     if (!found) toast(noFaceMessage(), 12000);
-    else if (segs.length <= 1) toast('Framed the face. Could not tell the two people apart for cutting.');
-    else toast(`Autoframe: ${segs.length} segments, faces centred. Undo to go back.`);
+    else if (cameraSegs <= 1) toast('Framed the face. Could not tell the two people apart for cutting.');
+    else toast(`Autoframe (${how}): ${cameraSegs} camera cuts, ${segs.length} parts with faces centred. Undo to go back.`, 6000);
   }
 
   function doSwap() { edit(p.segments.map((s) => ({ ...s, main: (s.main === 'host' ? 'constant' : 'host') as Role }))); }

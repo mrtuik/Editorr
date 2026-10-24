@@ -16,6 +16,13 @@ export const DEFAULT_SETTINGS: Settings = {
   silencePadMs: 150,
   silenceSens: 'medium',
   preferredAudio: 'auto',
+  faceFollow: 'speaker',
+  faceMode: 'smooth',
+  faceSpeedMs: 600,
+  faceTight: 'medium',
+  autoframeBy: 'both',
+  leadInMs: 300,
+  ignoreShortMs: 1500,
 };
 
 // ---------------------------------------------------------------- IndexedDB

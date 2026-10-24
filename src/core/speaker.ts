@@ -199,3 +199,103 @@ export function mergeShort(segs: Segment[], minMs: number, durationMs: number): 
   out[out.length - 1].endMs = durationMs;
   return out;
 }
+
+
+/**
+ * Autoframe cut: who talks is decided by the FACES (lip movement of each camera), like CapCut's active speaker.
+ * Mic loudness is only a weak tie-breaker, and silent parts keep the last camera.
+ * Returns null when the face scan gave no usable lip signal (no faces / flat), so the caller can fall back to audio.
+ */
+export function detectByFaces(
+  hostPcm: Float32Array,
+  constPcm: Float32Array,
+  offsetMs: number,
+  durationMs: number,
+  settings: Settings,
+  motion: { host: Float32Array; constant: Float32Array },
+  audioWeight = 0.35,
+): Segment[] | null {
+  const frames = Math.ceil(durationMs / HOP_MS);
+  const ah = motionToActivity(motion.host), ac = motionToActivity(motion.constant);
+  const range = (a: Float32Array) => { let lo = Infinity, hi = -Infinity; for (const v of a) { if (v < lo) lo = v; if (v > hi) hi = v; } return hi - lo; };
+  if (range(ah) < 0.3 && range(ac) < 0.3) return null;
+
+  const hostDb = toDb(rmsEnvelope(hostPcm, HOP_MS));
+  const constDb = toDb(rmsEnvelope(constPcm, HOP_MS));
+  const shift = Math.round(offsetMs / HOP_MS);
+  const hostFloor = percentile(hostDb, 0.1), constFloor = percentile(constDb, 0.1);
+  const voiced: boolean[] = [];
+  const dAct: number[] = [];
+  const d = new Float32Array(frames);
+  for (let f = 0; f < frames; f++) {
+    const h = hostDb[f] ?? -90, c = constDb[f + shift] ?? -90;
+    d[f] = h - c;
+    const v = h > hostFloor + 4 || c > constFloor + 4;
+    voiced.push(v);
+    if (v) dAct.push(d[f]);
+  }
+  const dm = median5(d);
+  const d0 = dAct.length ? Float32Array.from(dAct).sort()[Math.floor(dAct.length / 2)] : 0;
+  const dead = { low: 0.35, medium: 0.2, high: 0.1 }[settings.sensitivity];
+  // how well the two mics tell the people apart: if both hear the same, the audio evidence counts less
+  let aw = audioWeight;
+  if (dAct.length > 20) {
+    const ds = Float32Array.from(dAct).sort();
+    const spread = ds[Math.floor(0.85 * ds.length)] - ds[Math.floor(0.15 * ds.length)];
+    aw *= Math.max(0.15, Math.min(1, spread / 12));
+  }
+
+  let cur: Role = 'host';
+  for (let f = 0; f < frames; f++) {
+    if (voiced[f]) { cur = (ah[f] ?? 0) - (ac[f] ?? 0) >= 0 ? 'host' : 'constant'; break; }
+  }
+  const raw: Segment[] = [];
+  let start = 0, role: Role = cur;
+  for (let f = 0; f < frames; f++) {
+    if (voiced[f]) {
+      const tie = Math.max(-1, Math.min(1, (dm[f] - d0) / 10));
+      const score = (ah[f] ?? 0) - (ac[f] ?? 0) + aw * tie;
+      if (score > dead) cur = 'host'; else if (score < -dead) cur = 'constant';
+    }
+    if (cur !== role) {
+      raw.push({ id: uid(), startMs: start * HOP_MS, endMs: Math.min(durationMs, f * HOP_MS), style: 'one', main: role, corner: 'br', size: 'M' });
+      start = f; role = cur;
+    }
+  }
+  raw.push({ id: uid(), startMs: start * HOP_MS, endMs: durationMs, style: 'one', main: role, corner: 'br', size: 'M' });
+  return mergeShort(raw, settings.minSegmentMs, durationMs);
+}
+
+
+/**
+ * Makes cuts feel natural:
+ * - a short interruption (A, short B, A) shorter than `ignoreShortMs` is swallowed, so "hmm" or a laugh does not switch the camera;
+ * - every remaining cut moves `leadInMs` earlier, so the new speaker is on screen just before the first word
+ *   (never more than half of the previous part).
+ */
+export function polishCuts(input: Segment[], ignoreShortMs: number, leadInMs: number): Segment[] {
+  let segs = input.map((s) => ({ ...s }));
+  if (ignoreShortMs > 0) {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let i = 1; i + 1 < segs.length; i++) {
+        const a = segs[i - 1], b = segs[i], c = segs[i + 1];
+        if (b.endMs - b.startMs < ignoreShortMs && a.style === 'one' && b.style === 'one' && c.style === 'one' && a.main === c.main && b.main !== a.main) {
+          a.endMs = c.endMs;
+          segs.splice(i, 2);
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  if (leadInMs > 0) {
+    for (let i = 1; i < segs.length; i++) {
+      const prev = segs[i - 1];
+      const shift = Math.min(leadInMs, Math.floor((prev.endMs - prev.startMs) / 2));
+      if (shift > 0) { prev.endMs -= shift; segs[i].startMs = prev.endMs; }
+    }
+  }
+  return segs;
+}

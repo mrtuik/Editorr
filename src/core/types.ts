@@ -4,7 +4,7 @@ export type Corner = 'tl' | 'tr' | 'bl' | 'br';
 export type PopupSize = 'S' | 'M' | 'L';
 export type Sensitivity = 'low' | 'medium' | 'high';
 export type Confidence = 'High' | 'Medium' | 'Low';
-export type Aspect = '16:9' | '9:16' | '1:1' | '4:5' | '4:3';
+export type Aspect = '16:9' | '9:16' | '1:1' | '4:5' | '3:4' | '4:3';
 export type SilenceSens = 'low' | 'medium' | 'high';
 export type CropRatio = 'custom' | '9:16' | '16:9' | '1:1' | '4:3' | '2:3';
 
@@ -27,7 +27,7 @@ export interface CropState {
 export const NO_CROP: CropState = { zoom: 1, x: 0, y: 0, rotate: 0, ratio: 'custom', radius: 0, strokeWidth: 0, strokeColor: '#ffffff' };
 
 export const ASPECTS: Record<Aspect, [number, number]> = {
-  '16:9': [16, 9], '9:16': [9, 16], '1:1': [1, 1], '4:5': [4, 5], '4:3': [4, 3],
+  '16:9': [16, 9], '9:16': [9, 16], '1:1': [1, 1], '4:5': [4, 5], '3:4': [3, 4], '4:3': [4, 3],
 };
 export const aspectValue = (a: Aspect) => ASPECTS[a][0] / ASPECTS[a][1];
 
@@ -85,6 +85,20 @@ export interface Settings {
   silencePadMs: number;
   silenceSens: SilenceSens;
   preferredAudio?: 'auto' | 'host' | 'constant';
+  /** Faces / Autoframe: follow whoever talks in a camera ('speaker') or only the person picked ('picked'). */
+  faceFollow?: 'speaker' | 'picked';
+  /** How the frame moves from one person to the other: glide or instant cut. */
+  faceMode?: 'smooth' | 'cut';
+  /** Glide time in ms when faceMode is 'smooth'. */
+  faceSpeedMs?: number;
+  /** How close the face is framed. */
+  faceTight?: 'wide' | 'medium' | 'close';
+  /** What Autoframe uses to cut between Host and Constant. */
+  autoframeBy?: 'lips' | 'both' | 'audio';
+  /** Autoframe: the camera switches this long BEFORE the new speaker starts (ms). 0 = off. */
+  leadInMs?: number;
+  /** Autoframe: a short answer ("hmm", a laugh) shorter than this does not switch the camera (ms). 0 = off. */
+  ignoreShortMs?: number;
 }
 
 export interface Project {

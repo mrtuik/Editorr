@@ -412,6 +412,7 @@ export function cropForFace(
   slotAspect: number,
   mirrored: boolean,
   base: CropState,
+  faceFrac = 0.45,
 ): CropState {
   const wide = videoAspect > slotAspect;
   const kx = wide ? videoAspect / slotAspect : 1;   // how much wider than the slot the picture is
@@ -420,8 +421,8 @@ export function cropForFace(
   const u = 0.5 + (fx - 0.5) * kx;
   const v = 0.5 + (face.cy - 0.5) * ky;
 
-  const zx = 0.45 / Math.max(0.01, face.w * kx);
-  const zy = 0.30 / Math.max(0.01, face.h * ky);
+  const zx = faceFrac / Math.max(0.01, face.w * kx);
+  const zy = (faceFrac * 0.67) / Math.max(0.01, face.h * ky);
   const zoom = Math.max(1, Math.min(3, Math.min(zx, zy)));
   const next: CropState = { ...base, rotate: 0 };
   if (zoom < 1.03) { next.zoom = 1; next.x = 0; next.y = 0; return next; }
@@ -432,4 +433,35 @@ export function cropForFace(
   next.x = clamp((-2 * zoom * (u - 0.5)) / (zoom - 1));
   next.y = clamp((2 * (targetV - 0.5 - (v - 0.5) * zoom)) / (zoom - 1));
   return next;
+}
+
+
+/**
+ * Who talks inside ONE camera that shows several people: runs of time, each with the person whose lips move most.
+ * A person is only replaced after `minHoldMs`, and only when the newcomer clearly moves more (no ping-pong).
+ */
+export function speakerRuns(scan: FaceScan, startMs: number, endMs: number, minHoldMs: number): { startMs: number; endMs: number; track: FaceTrack }[] {
+  const tr = scan.tracks;
+  if (!tr.length) return [];
+  const mv = tr.map(lipMovement);
+  const score = (k: number, i: number) => {
+    let s = 0, c = 0;
+    for (let j = -2; j <= 2; j++) { const q = i + j; if (q >= 0 && q < scan.n && !Number.isNaN(tr[k].cx[q])) { s += mv[k][q]; c++; } }
+    return c ? s / c : 0;
+  };
+  const a = Math.max(0, Math.floor(startMs / scan.sampleMs)), b = Math.min(scan.n, Math.ceil(endMs / scan.sampleMs));
+  let cur = 0, lastSwitch = startMs;
+  const runs: { startMs: number; endMs: number; track: FaceTrack }[] = [];
+  let runStart = startMs;
+  for (let i = a; i < b; i++) {
+    const t = i * scan.sampleMs;
+    let best = cur, bs = score(cur, i);
+    for (let k = 0; k < tr.length; k++) { const s = score(k, i); if (s > bs * 1.35 + 1e-4) { best = k; bs = s; } }
+    if (best !== cur && t - lastSwitch >= minHoldMs && t > startMs) {
+      runs.push({ startMs: runStart, endMs: t, track: tr[cur] });
+      cur = best; runStart = t; lastSwitch = t;
+    }
+  }
+  runs.push({ startMs: runStart, endMs, track: tr[cur] });
+  return runs;
 }
