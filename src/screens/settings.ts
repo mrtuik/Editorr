@@ -39,8 +39,8 @@ export function settingsScreen() {
       const pct = (n: number) => `${Math.min(100, (n / total) * 100).toFixed(2)}%`;
       const legend = (color: string, name: string, val: string) => h('div', { class: 'legend' }, h('i', { style: `background:${color}` }), h('span', {}, name), h('b', {}, val));
       storageBody.replaceChildren(
-        h('div', { class: 'sbar' }, h('i', { style: `width:${pct(videos)};background:#19e6c1` }), h('i', { style: `width:${pct(cache)};background:#8a8a8a` })),
-        legend('#19e6c1', 'Saved videos', fmtBytes(videos)),
+        h('div', { class: 'sbar' }, h('i', { style: `width:${pct(videos)};background:#C6F277` }), h('i', { style: `width:${pct(cache)};background:#8a8a8a` })),
+        legend('#C6F277', 'Saved videos', fmtBytes(videos)),
         ...(isNative() ? [legend('#8a8a8a', 'Cache (audio, previews)', fmtBytes(cache))] : []),
         legend('#3a3a3c', 'Free', fmtBytes(free)),
         h('div', { class: 'sdesc', style: 'margin-top:8px' }, `${projects.length} ${projects.length === 1 ? 'project' : 'projects'} saved in IndexedDB.`));

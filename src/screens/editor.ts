@@ -29,8 +29,10 @@ const AUD = 32;          // audio waveform track height
 const GAP = 4;
 const MAIN_Y = RULER + GAP;
 const AUD_Y = MAIN_Y + LANE + GAP;
+// "voice-scan" icon (14x14 viewBox) for the Host / Constant audio-source button
+const VOICE_ICON = new Path2D('M2 1.625A.375.375 0 0 0 1.625 2v2a.625.625 0 1 1-1.25 0V2A1.625 1.625 0 0 1 2 .375h2a.625.625 0 1 1 0 1.25zm8-1.25a.625.625 0 1 0 0 1.25h2a.375.375 0 0 1 .375.375v2a.625.625 0 1 0 1.25 0V2A1.625 1.625 0 0 0 12 .375zM7 3.5a.75.75 0 0 1 .75.75v5.5a.75.75 0 0 1-1.5 0v-5.5A.75.75 0 0 1 7 3.5m-2.75 1a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5a.75.75 0 0 1 .75-.75m6.25.75a.75.75 0 0 0-1.5 0v3.5a.75.75 0 0 0 1.5 0zM13 9.375c.345 0 .625.28.625.625v2A1.625 1.625 0 0 1 12 13.625h-2a.625.625 0 1 1 0-1.25h2a.375.375 0 0 0 .375-.375v-2c0-.345.28-.625.625-.625M1.625 10a.625.625 0 1 0-1.25 0v2A1.625 1.625 0 0 0 2 13.625h2a.625.625 0 1 0 0-1.25H2A.375.375 0 0 1 1.625 12z');
 const TL_H = AUD_Y + AUD + 10;
-const CYAN = '#19e6c1';
+const CYAN = '#C6F277';
 const CROP_RATIOS: [CropRatio, string][] = [
   ['custom', 'Custom'], ['9:16', '9:16'], ['16:9', '16:9'], ['1:1', '1:1'], ['4:3', '4:3'], ['2:3', '2:3'],
 ];
@@ -972,7 +974,7 @@ export function editorScreen() {
     const arr = isHost ? hostPeaks : constPeaks;
     const offset = isHost ? 0 : p.offsetMs;
     const durMs = isHost ? hostDur : constDur;
-    const color = isHost ? '#ffffff' : '#4ade80';
+    const color = isHost ? '#ffffff' : '#64d2ff';
 
     if (arr) {
       g.fillStyle = color;
@@ -995,7 +997,7 @@ export function editorScreen() {
 
     g.restore();
 
-    g.strokeStyle = p.mainAudio === 'constant' ? 'rgba(74,222,128,0.25)' : 'rgba(255,255,255,0.16)';
+    g.strokeStyle = p.mainAudio === 'constant' ? 'rgba(100,210,255,0.25)' : 'rgba(255,255,255,0.16)';
     g.lineWidth = 1;
     rrect(g, bx1 + 0.5, AUD_Y + 0.5, bw - 1, AUD - 1, 3);
     g.stroke();
@@ -1128,24 +1130,34 @@ export function editorScreen() {
     g.fillStyle = '#000'; g.fillRect(0, RULER, G, H - RULER);
     // audio-source button (where CapCut has "Mute clip"): shows which mic is used; tap to switch Host / Constant
     {
-      const col = p.mainAudio === 'host' ? '#ffffff' : '#4ade80';
+      const col = p.mainAudio === 'host' ? '#ffffff' : '#64d2ff';
       g.save();
-      speakerGlyph(g, G / 2 - 1, MAIN_Y + 16, col);
+      g.save();
+      const isz = 20;
+      g.translate(G / 2 - 1 - isz / 2, MAIN_Y + 15 - isz / 2);
+      g.scale(isz / 14, isz / 14);
+      g.fillStyle = col;
+      g.fill(VOICE_ICON, 'evenodd');
+      g.restore();
       g.font = '600 9px Roboto, sans-serif';
       g.textAlign = 'center'; g.textBaseline = 'middle';
       g.fillStyle = col;
       g.fillText(p.mainAudio === 'host' ? 'Host' : 'Constant', G / 2 - 1, MAIN_Y + LANE - 12);
       g.restore();
     }
+    // music-note badge: sticks to the start of the audio clip, so it scrolls with the timeline (hidden under the left column)
     {
-      const tx = Math.round(W / 2) - 51, ty = AUD_Y + (AUD - 26) / 2, cx = tx + 13, cy = ty + 13;
-      g.save();
-      g.fillStyle = '#262626';
-      g.beginPath(); g.roundRect(tx, ty, 26, 26, 6); g.fill();
-      g.strokeStyle = '#8a8a8a'; g.fillStyle = '#8a8a8a'; g.lineWidth = 1.5; g.lineCap = 'round'; g.lineJoin = 'round';
-      g.beginPath(); g.arc(cx - 2.5, cy + 5, 3, 0, Math.PI * 2); g.stroke();
-      g.beginPath(); g.moveTo(cx + 0.5, cy + 5); g.lineTo(cx + 0.5, cy - 6); g.lineTo(cx + 5, cy - 3.5); g.stroke();
-      g.restore();
+      const tx = xOf(0) + 8, ty = AUD_Y + (AUD - 26) / 2, cx = tx + 13, cy = ty + 13;
+      if (tx + 26 > G && tx < W && tx + 26 < xOf(p.durationMs)) {
+        g.save();
+        g.beginPath(); g.rect(G, 0, W - G, H); g.clip();
+        g.fillStyle = '#262626';
+        g.beginPath(); g.roundRect(tx, ty, 26, 26, 6); g.fill();
+        g.strokeStyle = '#8a8a8a'; g.lineWidth = 1.5; g.lineCap = 'round'; g.lineJoin = 'round';
+        g.beginPath(); g.arc(cx - 2.5, cy + 5, 3, 0, Math.PI * 2); g.stroke();
+        g.beginPath(); g.moveTo(cx + 0.5, cy + 5); g.lineTo(cx + 0.5, cy - 6); g.lineTo(cx + 5, cy - 3.5); g.stroke();
+        g.restore();
+      }
     }
 
     // ---- playhead needle (fixed at the center, CapCut style with top triangle and cyan snap glow)
@@ -1689,7 +1701,9 @@ export function editorScreen() {
   function slider(lbl: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, on: (v: number) => void, disabled = false) {
     const val = h('div', { class: 'pval' }, fmt(value));
     const input = h('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(value), disabled, 'aria-label': lbl }) as HTMLInputElement;
-    input.addEventListener('input', () => { const v = parseFloat(input.value); val.textContent = fmt(v); on(v); });
+    const paintFill = () => { const span = max - min || 1; input.style.setProperty('--fill', `${((parseFloat(input.value) - min) / span) * 100}%`); };
+    paintFill();
+    input.addEventListener('input', () => { const v = parseFloat(input.value); val.textContent = fmt(v); paintFill(); on(v); });
     return { row: h('div', { class: 'prow' }, h('div', { class: 'plabel' }, lbl), input, val), input };
   }
 
@@ -1858,7 +1872,7 @@ export function editorScreen() {
       const refresh = () => { applyCrop(cropRole); scheduleSave(); };
       const radiusSlider = slider('Corner radius', 0, 48, 1, c.radius ?? 0, (v) => `${v}px`, (v) => { c.radius = v; refresh(); });
       const strokeSlider = slider('Border width', 0, 12, 1, c.strokeWidth ?? 0, (v) => `${v}px`, (v) => { c.strokeWidth = v; refresh(); });
-      const colors = ['#ffffff', '#19e6c1', '#facc15', '#4ade80', '#f43f5e', '#60a5fa', '#a855f7'];
+      const colors = ['#ffffff', '#C6F277', '#facc15', '#4ade80', '#f43f5e', '#60a5fa', '#a855f7'];
       const curColor = c.strokeColor || '#ffffff';
       const colorRow = h('div', { class: 'prow' },
         h('div', { class: 'plabel' }, 'Border color'),
@@ -1897,15 +1911,15 @@ export function editorScreen() {
     } else {
       const total = pendingCuts.reduce((a, r) => a + (r.endMs - r.startMs), 0);
       const info = pendingCuts.length
-        ? h('div', { class: 'pinfo', style: 'background:rgba(25,230,193,0.08);border:1px solid rgba(25,230,193,0.2);border-radius:10px;padding:10px 12px;margin:8px 0 14px;color:#e0e0e0' },
-            'Found ', h('b', { style: 'color:#19e6c1' }, `${pendingCuts.length} silent ${pendingCuts.length === 1 ? 'part' : 'parts'}`),
+        ? h('div', { class: 'pinfo', style: 'background:rgba(198,242,119,0.08);border:1px solid rgba(198,242,119,0.2);border-radius:10px;padding:10px 12px;margin:8px 0 14px;color:#e0e0e0' },
+            'Found ', h('b', { style: 'color:#C6F277' }, `${pendingCuts.length} silent ${pendingCuts.length === 1 ? 'part' : 'parts'}`),
             ' (', h('b', { style: 'color:#fff' }, secText(total)), ') to remove. Marked red on the timeline.')
         : h('div', { class: 'pinfo', style: 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 12px;margin:8px 0 14px;color:#8a8a8a' },
             'No silence found matching current settings. Try shorter duration or higher sensitivity.');
       const go = (pt: Partial<typeof s>) => { Object.assign(s, pt); saveSettings(s); runDetect(); renderPanel(); draw(); };
       const applyBtn = h('button', {
         class: 'btn primary',
-        style: 'width:100%;min-height:48px;margin-top:16px;border-radius:12px;border:0;background:linear-gradient(135deg,#00f2fe,#19e6c1);color:#000;font-size:15px;font-weight:700;letter-spacing:0.3px;box-shadow:0 4px 16px rgba(0,242,254,0.25);cursor:pointer',
+        style: 'width:100%;min-height:48px;margin-top:16px;border-radius:12px;border:0;background:#C6F277;color:#10140a;font-size:15px;font-weight:600;cursor:pointer',
         disabled: !pendingCuts.length,
         onclick: applySilence
       }, pendingCuts.length ? `Apply Silence Cut (${pendingCuts.length} ${pendingCuts.length === 1 ? 'cut' : 'cuts'})` : 'No Silence to Cut');
