@@ -419,7 +419,7 @@ input[type=range]::-moz-range-thumb {
 .editor .sheet { border-radius: 10px 10px 0 0; }
 
 /* Timeline scrollable wrapper */
-.tl-wrap { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative; background: #000; -webkit-overflow-scrolling: touch; }
+.tl-wrap { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative; background: #000; -webkit-overflow-scrolling: touch; }
 
 /* Selected video frame on preview */
 .sel-frame { position: absolute; pointer-events: none; border: 1.5px solid #ffffff; border-radius: 3px; box-sizing: border-box; z-index: 5; display: none; }

@@ -1131,10 +1131,6 @@ export function editorScreen() {
     {
       const col = p.mainAudio === 'host' ? '#ffffff' : '#4ade80';
       g.save();
-      g.fillStyle = '#1c1c1c';
-      g.beginPath(); g.roundRect(5, MAIN_Y + 1, G - 11, LANE - 2, 8); g.fill();
-      g.strokeStyle = p.mainAudio === 'host' ? 'rgba(255,255,255,0.18)' : 'rgba(74,222,128,0.4)';
-      g.lineWidth = 1; g.stroke();
       speakerGlyph(g, G / 2 - 1, MAIN_Y + 16, col);
       g.font = '600 9px Roboto, sans-serif';
       g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -1142,7 +1138,16 @@ export function editorScreen() {
       g.fillText(p.mainAudio === 'host' ? 'Host' : 'Constant', G / 2 - 1, MAIN_Y + LANE - 12);
       g.restore();
     }
-    speakerGlyph(g, G / 2, AUD_Y + AUD / 2, p.mainAudio === 'host' ? '#ffffff' : '#4ade80');
+    {
+      const tx = G - 31, ty = AUD_Y + (AUD - 26) / 2, cx = tx + 13, cy = ty + 13;
+      g.save();
+      g.fillStyle = '#262626';
+      g.beginPath(); g.roundRect(tx, ty, 26, 26, 6); g.fill();
+      g.strokeStyle = '#8a8a8a'; g.fillStyle = '#8a8a8a'; g.lineWidth = 1.5; g.lineCap = 'round'; g.lineJoin = 'round';
+      g.beginPath(); g.arc(cx - 2.5, cy + 5, 3, 0, Math.PI * 2); g.stroke();
+      g.beginPath(); g.moveTo(cx + 0.5, cy + 5); g.lineTo(cx + 0.5, cy - 6); g.lineTo(cx + 5, cy - 3.5); g.stroke();
+      g.restore();
+    }
 
     // ---- playhead needle (fixed at the center, CapCut style with top triangle and cyan snap glow)
     const phX = Math.round(W / 2);
@@ -1282,8 +1287,7 @@ export function editorScreen() {
     const lane = laneAt(y);
     if (x < G) {
       if (lane === 'audio') {
-        setAudio(p.mainAudio === 'host' ? 'constant' : 'host');
-        if (panel === 'audio') renderPanel();
+        openPanel('audio');
       } else if (lane === 'main') {
         setAudio(p.mainAudio === 'host' ? 'constant' : 'host');
         if (panel === 'audio') renderPanel();
@@ -1307,7 +1311,6 @@ export function editorScreen() {
       return;
     }
     if (lane === 'audio') {
-      setAudio(p.mainAudio === 'host' ? 'constant' : 'host');
       openPanel('audio');
       return;
     }
@@ -1789,11 +1792,7 @@ export function editorScreen() {
       const setVol = (v: number) => { p[vkey] = v; applyVolume(); scheduleSave(); };
       const vs = slider('Master volume', 0, 1000, 5, vol, (v) => `${Math.round(v)}%`, setVol);
       setPanel('Audio Settings',
-        h('div', { style: 'font-size:12px;color:#8a8a8a;margin-bottom:6px;font-weight:500;text-transform:uppercase;letter-spacing:0.5px' }, 'Audio Source'),
-        pstrip(
-          ptile(icon('volume', 26), 'Host mic', () => { setAudio('host'); renderPanel(); }, { sel: p.mainAudio === 'host' }),
-          ptile(icon('volume', 26), 'Constant mic', () => { setAudio('constant'); renderPanel(); }, { sel: p.mainAudio === 'constant' })),
-        h('div', { style: 'margin:12px 0 6px;font-size:12px;color:#8a8a8a;font-weight:500;text-transform:uppercase;letter-spacing:0.5px' }, 'Volume & Gain'),
+        h('div', { style: 'margin:0 0 6px;font-size:12px;color:#8a8a8a;font-weight:500;text-transform:uppercase;letter-spacing:0.5px' }, 'Volume & Gain'),
         vs.row,
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Quick boost'),
           chipRow<number>([[100, '100%'], [200, '200%'], [400, '400%'], [700, '700%'], [1000, '1000%']], vol, (v) => { setVol(v); renderPanel(); })),
@@ -2228,6 +2227,10 @@ export function editorScreen() {
   function setResChip() { (resChip.firstElementChild as HTMLElement).textContent = resChipText(p); }
 
   const tlWrap = h('div', { class: 'tl-wrap' }, tl);
+  // The timeline fills all the free space under the preview: the playhead runs the full height and a swipe anywhere there scrubs the video.
+  const fitTimeline = () => { tl.style.height = `${Math.max(TL_H, tlWrap.clientHeight)}px`; draw(); };
+  const tlRo = new ResizeObserver(fitTimeline);
+  tlRo.observe(tlWrap);
   const titleEl = h('div', { class: 'edtop-title' },
     h('span', { class: 'edtop-name' }, p.name),
     h('span', { class: 'edtop-badge' }, 'Autosaved')
@@ -2384,7 +2387,7 @@ export function editorScreen() {
       try { actx?.close(); } catch { /* ignore */ }
       window.removeEventListener('resize', onResize);
       document.removeEventListener('visibilitychange', onVisible);
-      ro.disconnect();
+      ro.disconnect(); tlRo.disconnect();
       (screen.orientation as any)?.unlock?.();
     },
   };
