@@ -2,18 +2,8 @@ import { app } from '../app';
 import { clearAllStorage, listProjects, mediaBytes, runtime, saveSettings } from '../core/store';
 import { EditorrNative, isNative } from '../core/native';
 import { fmtBytes } from '../core/media';
-import type { Sensitivity } from '../core/types';
 import { confirmDialog, h, icon, iconButton, tabBar, toast } from '../ui';
-
-/** CapCut-style option row: label (+ hint) on top, tile-like options below. */
-function option<T extends string | number>(label: string, hint: string, opts: [T, string][], value: T, onPick: (v: T) => void) {
-  const chips = h('div', { class: 'schips' });
-  const render = (cur: T) => {
-    chips.replaceChildren(...opts.map(([v, l]) => h('button', { class: 'chip' + (v === cur ? ' on' : ''), onclick: () => { onPick(v); render(v); } }, l)));
-  };
-  render(value);
-  return h('div', { class: 'srow' }, h('div', { class: 'slabel' }, label), hint ? h('div', { class: 'sdesc' }, hint) : null, chips);
-}
+import { option } from './autoOptions';
 
 const group = (title: string, ...rows: Node[]) => h('section', { class: 'sgroup' }, h('div', { class: 'sgtitle' }, title), h('div', { class: 'scard' }, ...rows));
 
@@ -71,12 +61,8 @@ export function settingsScreen() {
     h('button', { class: 'saction ' + cls, onclick: run }, icon(ic, 22), h('span', {}, text), icon('chevR', 18));
 
   const el = h('div', { class: 'screen settings' },
-    h('div', { class: 'topbar' }, iconButton('back', 'Back', () => app.go('home')), h('h1', {}, 'Settings')),
+    h('div', { class: 'topbar' }, iconButton('back', 'Back', () => app.go('profile')), h('h1', {}, 'Settings')),
     h('div', { class: 'content' },
-      group('Auto edit configuration',
-        option<Sensitivity>('Speaker switch sensitivity', 'How easily the switch follows a new speaker.', [['low', 'Low'], ['medium', 'Medium (Default)'], ['high', 'High']], s.sensitivity, (v) => { s.sensitivity = v; save(); }),
-        option<number>('Minimum segment length', 'Shorter parts are merged into their neighbour.', [[500, '0.5 s'], [1000, '1.0 s'], [1500, '1.5 s'], [2000, '2.0 s'], [3000, '3.0 s']], s.minSegmentMs, (v) => { s.minSegmentMs = v; save(); }),
-        option<'hold' | 'side' | 'updown' | 'popup'>('When both speakers talk', 'Layout style when both voices are active.', [['hold', 'Keep last speaker'], ['side', 'Side by side'], ['updown', 'Top / Bottom'], ['popup', 'Picture-in-picture']], s.bothSpeaking, (v) => { s.bothSpeaking = v; save(); })),
       group('Project & export defaults',
         option<number>('Default export resolution', 'Target resolution for new exports.', [[720, '720p'], [1080, '1080p'], [2160, '4K']], s.resolution, (v) => { s.resolution = v; save(); }),
         option<number>('Frame rate', 'Default export frame rate.', [[30, '30 FPS'], [60, '60 FPS']], s.fps, (v) => { s.fps = v; save(); })),
@@ -86,6 +72,6 @@ export function settingsScreen() {
         action('trash', 'Delete all projects', clearProjects, 'danger')),
       h('div', { class: 'sfoot' }, 'Clear cache frees temporary files only. Your projects and saved videos stay.'),
       h('div', { class: 'sfoot' }, 'Editorr by Tuik')),
-    tabBar('me', (tab) => { if (tab === 'me') return; app.homeTab = tab; app.go('home'); }));
+    tabBar('me', (tab) => { if (tab === 'me') { app.go('profile'); return; } app.homeTab = tab; app.go('home'); }));
   return { el };
 }

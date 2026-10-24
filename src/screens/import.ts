@@ -4,6 +4,7 @@ import { runtime, saveMedia, saveProject } from '../core/store';
 import type { Role, VideoRef } from '../core/types';
 import { EditorrNative, fileSrc, isNative, type PickedVideo } from '../core/native';
 import { projectVideoPaths } from '../core/media';
+import { askAutoEdit } from './autoOptions';
 import { firstFrame } from '../core/thumbs';
 import { fmtClock, h, icon, iconButton, spinner, toast } from '../ui';
 
@@ -195,6 +196,8 @@ export function importScreen() {
     if (!info.host || !info.constant) return;
     cont.disabled = true;
     await commit();
+    // new videos get synced and auto edited next: ask for the auto edit options first
+    if (p.segments.length === 0 && !(await askAutoEdit())) { cont.disabled = false; return; }
     // a video that was replaced is no longer used: free its space
     if (isNative()) {
       const now = projectVideoPaths(p);

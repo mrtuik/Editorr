@@ -913,3 +913,23 @@ input.xs-range::-webkit-slider-runnable-track { background: linear-gradient(90de
 .crop-all.on .tickbox { background: var(--accent, #C6F277); border-color: var(--accent, #C6F277); color: #10140a; }
 .crop-actions { flex-wrap: wrap; }
 .panel .pinfo.crop-for { margin: 0 0 8px; }
+
+/* profile card (Home dropdown + Me page) */
+.home .htop .avatarbtn { margin-right: auto; border: 0; background: transparent; padding: 0; border-radius: 50%; cursor: pointer; flex: none; line-height: 0; }
+.pm-avatar { display: inline-flex; border-radius: 50%; padding: 2px; box-sizing: border-box; background: conic-gradient(from 200deg, #C6F277, #f6d365, #fda085, #C6F277); flex: none; }
+.pm-avatar img { width: 100%; height: 100%; border-radius: 50%; display: block; border: 2px solid #000; box-sizing: border-box; object-fit: cover; }
+.pm-card { background: #141416; border: 1px solid #2a2a2c; border-radius: 26px; padding: 10px; box-shadow: 0 18px 40px rgba(0,0,0,.55); }
+.pm-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 14px; border: 1px solid #2a2a2c; border-radius: 18px; margin-bottom: 8px; background: #1a1a1c; }
+.pm-name { font-size: 18px; font-weight: 700; color: #fff; }
+.pm-sub { font-size: 14px; color: #8a8a8c; margin-top: 2px; }
+.pm-row { width: 100%; display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 0 14px; border: 0; background: transparent; color: #f0f0f0; font: inherit; font-size: 16px; border-radius: 16px; text-align: left; cursor: pointer; }
+.pm-row .pm-label { flex: 1; }
+.pm-row.on, .pm-row:active { background: rgba(255,255,255,.08); }
+.pm-sep { height: 1px; background: #2a2a2c; margin: 8px 6px; }
+.pm-plus { width: 28px; height: 28px; border-radius: 50%; border: 1px solid #3a3a3c; background: #232325; display: inline-flex; align-items: center; justify-content: center; }
+.pm-pro { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 10px; background: rgba(198,242,119,.2); border: 1px solid rgba(198,242,119,.45); color: #C6F277; font-size: 14px; font-weight: 700; }
+.pm-pop { position: fixed; inset: 0; z-index: 120; background: rgba(0,0,0,.35); }
+.pm-drop { position: absolute; left: 12px; top: calc(12px + var(--safe-top, 0px)); width: min(340px, calc(100vw - 24px)); }
+.pm-page { padding-top: calc(24px + var(--safe-top, 0px)); }
+.autobox { max-width: 420px; max-height: 86vh; overflow-y: auto; }
+.autobox .title { font-size: 17px; font-weight: 600; }

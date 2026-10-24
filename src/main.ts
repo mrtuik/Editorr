@@ -5,6 +5,7 @@ import { importScreen } from './screens/import';
 import { editorScreen } from './screens/editor';
 import { exportScreen } from './screens/export';
 import { settingsScreen } from './screens/settings';
+import { profileScreen } from './screens/profile';
 import { initStorage, listProjects, loadSettings } from './core/store';
 import { pruneUnusedVideos } from './core/media';
 
@@ -17,6 +18,7 @@ const screens: Record<ScreenName, () => { el: HTMLElement; destroy?: () => void 
   editor: editorScreen,
   export: exportScreen,
   settings: settingsScreen,
+  profile: profileScreen,
 };
 
 function go(name: ScreenName): void {
@@ -31,7 +33,7 @@ app.go = go;
 
 // Android back button: step back through the flow.
 const backMap: Partial<Record<ScreenName, ScreenName>> = {
-  import: 'home', editor: 'home', export: 'editor', settings: 'home',
+  import: 'home', editor: 'home', export: 'editor', settings: 'profile', profile: 'home',
 };
 let current: ScreenName = 'home';
 const origGo = go;

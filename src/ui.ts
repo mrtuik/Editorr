@@ -196,6 +196,13 @@ export const ICON = {
   speed: '<path d="M12 14l4-4M3.34 19a10 10 0 1 1 17.32 0" />',
   prompter: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 8h8M8 12h8M8 16h5" />',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />',
+  badgeCheck: '<path d="M12 2.5l2.4 1.7 2.9-.2 1 2.7 2.4 1.7-.7 2.8.7 2.8-2.4 1.7-1 2.7-2.9-.2L12 21.5l-2.4-1.7-2.9.2-1-2.7-2.4-1.7.7-2.8-.7-2.8 2.4-1.7 1-2.7 2.9.2z" fill="currentColor"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8" stroke="#fff"/>',
+  community: '<path d="M4 11a7 7 0 0 1 12.6-4.2A7 7 0 0 1 12 18H8l-4 3z"/><circle cx="17" cy="17" r="3"/><path d="M19.2 19.2L21.5 21.5"/>',
+  card: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 10h18M7 15h4" />',
+  toggle: '<rect x="3" y="7" width="18" height="10" rx="5"/><circle cx="8" cy="12" r="2.5" fill="currentColor"/>',
+  helpInfo: '<circle cx="12" cy="12" r="9" fill="currentColor" fill-opacity=".18"/><path d="M12 11v5M12 8h.01" />',
+  signOut: '<path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M14 8l4 4-4 4M18 12H9" />',
+  bolt: '<path d="M13 3L5 13h6l-1 8 8-10h-6z" fill="currentColor" stroke="none"/>',
   editPencil: '<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />',
 };
 

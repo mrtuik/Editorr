@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS, newProject } from './core/store';
 
 export type Intent = 'silence' | 'crop' | 'ratio' | 'sync';
 export type HomeTab = 'edit' | 'projects';
-export type ScreenName = 'home' | 'import' | 'editor' | 'export' | 'settings';
+export type ScreenName = 'home' | 'import' | 'editor' | 'export' | 'settings' | 'profile';
 
 export const app = {
   project: newProject() as Project,

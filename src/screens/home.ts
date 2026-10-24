@@ -2,6 +2,7 @@ import { app, startNewProject, type Intent } from '../app';
 import { deleteProject, listProjects, runtime, saveProject } from '../core/store';
 import type { Project } from '../core/types';
 import { attachProjectMedia, isLoaded, removeProjectMedia } from '../core/media';
+import { profileMenu, avatar } from '../profileMenu';
 import { actionSheet, confirmDialog, fmtTime, h, ICON, icon, projectActionSheet, promptDialog, spinner, tabBar, TabName, toast } from '../ui';
 
 /**
@@ -80,7 +81,15 @@ export function homeScreen() {
       class: 'circbtn', 'aria-label': searching ? 'Close search' : 'Search',
       onclick: () => { searching = !searching; if (!searching) query = ''; if (searching) app.homeTab = 'projects'; render(); if (searching) (body.querySelector('input') as HTMLInputElement | null)?.focus(); },
     }, icon(searching ? 'close' : 'search', 22));
-    return h('div', { class: 'htop' }, searching ? input : null, btn);
+    const av = h('button', { class: 'avatarbtn', 'aria-label': 'Profile menu', 'aria-haspopup': 'menu', onclick: openMenu }, avatar(40));
+    return h('div', { class: 'htop' }, av, searching ? input : null, btn);
+  }
+
+  /** Dropdown under the avatar (top left), with the same card as the Me page. */
+  function openMenu() {
+    const shut = () => pop.remove();
+    const pop = h('div', { class: 'pm-pop', onclick: (e: Event) => { if (e.target === pop) shut(); } }, h('div', { class: 'pm-drop' }, profileMenu('none', shut)));
+    document.body.append(pop);
   }
 
   const content = h('div', { class: 'scroll' });
@@ -138,7 +147,7 @@ export function homeScreen() {
   function render() {
     renderContent();
     const tab = (t: TabName) => {
-      if (t === 'me') { app.go('settings'); return; }
+      if (t === 'me') { app.go('profile'); return; }
       app.homeTab = t; searching = false; query = ''; render();
     };
     body.replaceChildren(topBar(), content, tabBar(app.homeTab, tab));
