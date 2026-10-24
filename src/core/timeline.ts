@@ -3,6 +3,14 @@ import { uid } from './speaker';
 
 export const MIN_SEG_MS = 300;
 
+/** Copy of a segment that does not share its crop objects with the original. */
+function dup(s: Segment, patch: Partial<Segment> = {}): Segment {
+  const n: Segment = { ...s, ...patch };
+  if (s.cropHost) n.cropHost = { ...s.cropHost };
+  if (s.cropConst) n.cropConst = { ...s.cropConst };
+  return n;
+}
+
 export function segmentAt(segs: Segment[], ms: number): Segment | undefined {
   const hit = segs.find((s) => ms >= s.startMs && ms < s.endMs);
   if (hit) return hit;
@@ -16,8 +24,8 @@ export function splitAt(segs: Segment[], ms: number): Segment[] {
   const out: Segment[] = [];
   for (const s of segs) {
     if (ms > s.startMs + MIN_SEG_MS && ms < s.endMs - MIN_SEG_MS) {
-      out.push({ ...s, endMs: ms });
-      out.push({ ...s, id: uid(), startMs: ms });
+      out.push(dup(s, { endMs: ms }));
+      out.push(dup(s, { id: uid(), startMs: ms }));
     } else out.push(s);
   }
   return out;
@@ -84,13 +92,13 @@ export function keptMs(segs: Segment[]): number {
 
 /** Cut ranges out of the segments (segments are split where a cut lands inside). */
 export function subtractRanges(segs: Segment[], cuts: Range[]): Segment[] {
-  let out = segs.map((s) => ({ ...s }));
+  let out = segs.map((s) => dup(s));
   for (const c of cuts) {
     const next: Segment[] = [];
     for (const s of out) {
       if (c.endMs <= s.startMs || c.startMs >= s.endMs) { next.push(s); continue; }
-      if (c.startMs - s.startMs >= 1) next.push({ ...s, endMs: c.startMs });
-      if (s.endMs - c.endMs >= 1) next.push({ ...s, id: uid(), startMs: c.endMs });
+      if (c.startMs - s.startMs >= 1) next.push(dup(s, { endMs: c.startMs }));
+      if (s.endMs - c.endMs >= 1) next.push(dup(s, { id: uid(), startMs: c.endMs }));
     }
     out = next;
   }
@@ -103,7 +111,7 @@ export function intersectRanges(segs: Segment[], ranges: Range[]): Segment[] {
   for (const s of segs) {
     for (const r of ranges) {
       const a = Math.max(s.startMs, r.startMs), b = Math.min(s.endMs, r.endMs);
-      if (b - a >= 1) out.push({ ...s, id: out.some((o) => o.id === s.id) ? uid() : s.id, startMs: a, endMs: b });
+      if (b - a >= 1) out.push(dup(s, { id: out.some((o) => o.id === s.id) ? uid() : s.id, startMs: a, endMs: b }));
     }
   }
   return out;

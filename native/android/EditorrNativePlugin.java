@@ -1094,6 +1094,8 @@ public class EditorrNativePlugin extends Plugin {
     private static class Seg {
         long start, end;
         String style, main, corner, size;
+        /** Own crop of this clip; null = use the project crop. */
+        CropSpec cropHost, cropConst;
     }
 
     /** Pan/zoom of one video inside its frame. zoom 1 = no crop. x,y in -1..1 move the picture. */
@@ -1101,7 +1103,7 @@ public class EditorrNativePlugin extends Plugin {
         float zoom = 1f, x = 0f, y = 0f, rotate = 0f, ratio = 0f, frameRatio = 0f;
     }
 
-    private static CropSpec readCrop(JSObject o) {
+    private static CropSpec readCrop(JSONObject o) {
         CropSpec c = new CropSpec();
         if (o == null) return c;
         c.zoom = (float) o.optDouble("zoom", 1.0);
@@ -1125,6 +1127,14 @@ public class EditorrNativePlugin extends Plugin {
     /** A kept part of the timeline, in Host time. Parts removed by silence cut are not in the list. */
     private static class Range {
         long a, b;
+        CropSpec cropHost, cropConst;
+    }
+
+    private static boolean sameCrop(CropSpec p, CropSpec q) {
+        if (p == q) return true;
+        if (p == null || q == null) return false;
+        return Math.abs(p.zoom - q.zoom) < 0.0005f && Math.abs(p.x - q.x) < 0.0005f && Math.abs(p.y - q.y) < 0.0005f
+                && Math.abs(p.rotate - q.rotate) < 0.0005f && Math.abs(p.ratio - q.ratio) < 0.0005f && Math.abs(p.frameRatio - q.frameRatio) < 0.0005f;
     }
 
     @PluginMethod
@@ -1157,6 +1167,9 @@ public class EditorrNativePlugin extends Plugin {
                 s.start = Math.round(o.getDouble("startMs")); s.end = Math.round(o.getDouble("endMs"));
                 s.style = o.optString("style", "one"); s.main = o.optString("main", "host");
                 s.corner = o.optString("corner", "br"); s.size = o.optString("size", "M");
+                JSONObject ch = o.optJSONObject("cropHost"), cc = o.optJSONObject("cropConst");
+                s.cropHost = ch == null ? null : readCrop(ch);
+                s.cropConst = cc == null ? null : readCrop(cc);
                 segs.add(s);
             }
             // A missing/zero duration must never cut everything: fall back to the end of the last segment.
@@ -1184,13 +1197,16 @@ public class EditorrNativePlugin extends Plugin {
                 long a = Math.max(s.start, hostStart);
                 long b = Math.min(s.end, durationMs);
                 if (b - a < 100) continue;
+                // a clip with its own crop keeps its own part, so every clip is cropped like in the preview
+                CropSpec segHost = s.cropHost != null ? s.cropHost : cropHost;
+                CropSpec segConst = s.cropConst != null ? s.cropConst : cropConst;
                 Range last = ranges.isEmpty() ? null : ranges.get(ranges.size() - 1);
-                if (last != null && a - last.b <= 1) last.b = Math.max(last.b, b);
-                else { Range r = new Range(); r.a = a; r.b = b; ranges.add(r); }
+                if (last != null && a - last.b <= 1 && sameCrop(last.cropHost, segHost) && sameCrop(last.cropConst, segConst)) last.b = Math.max(last.b, b);
+                else { Range r = new Range(); r.a = a; r.b = b; r.cropHost = segHost; r.cropConst = segConst; ranges.add(r); }
             }
             if (ranges.isEmpty() && segs.isEmpty() && durationMs - hostStart >= 100) {
                 // no layout segments arrived: export the whole overlap as one part
-                Range r = new Range(); r.a = hostStart; r.b = durationMs; ranges.add(r);
+                Range r = new Range(); r.a = hostStart; r.b = durationMs; r.cropHost = cropHost; r.cropConst = cropConst; ranges.add(r);
                 Seg whole = new Seg(); whole.start = hostStart; whole.end = durationMs;
                 whole.style = "one"; whole.main = hostAudio ? "host" : "constant"; whole.corner = "br"; whole.size = "M";
                 segs.add(whole);
@@ -1210,8 +1226,8 @@ public class EditorrNativePlugin extends Plugin {
             List<EditedMediaItem> cleanAudioItems = new ArrayList<>();
             for (Range r : ranges) {
                 boolean useCleanTrack = cleanAudioUri != null && !cleanAudioUri.isEmpty();
-                hostItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, useCleanTrack || !hostAudio, mirrorHost, cropHost, hostAudio ? gain : 1f));
-                constItems.add(item(constUri, r.a + offsetMs, r.b - r.a, outW, outH, useCleanTrack || hostAudio, mirrorConst, cropConst, hostAudio ? 1f : gain));
+                hostItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, useCleanTrack || !hostAudio, mirrorHost, r.cropHost, hostAudio ? gain : 1f));
+                constItems.add(item(constUri, r.a + offsetMs, r.b - r.a, outW, outH, useCleanTrack || hostAudio, mirrorConst, r.cropConst, hostAudio ? 1f : gain));
                 if (useCleanTrack) {
                     long audioStart = hostAudio ? r.a : r.a + offsetMs;
                     cleanAudioItems.add(audioItem(cleanAudioUri, audioStart, r.b - r.a, gain));

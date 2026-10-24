@@ -905,3 +905,11 @@ input.xs-range::-webkit-slider-runnable-track { background: linear-gradient(90de
 .project-sheet-drag-handle { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.2); margin: 0 auto 14px; }
 .project-sheet-cancel-item { background: rgba(255,255,255,0.06); border-radius: 12px; }
 .project-sheet-item.danger, .project-sheet-item.danger svg { color: #ff4d4f; }
+
+/* crop: border ring for a frame that is not the shape of its slot, and the "Apply to all clips" tick */
+.crop-ring { position: absolute; display: none; box-sizing: border-box; pointer-events: none; z-index: 3; }
+.crop-all { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; }
+.crop-all .tickbox { width: 18px; height: 18px; border: 1.5px solid currentColor; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+.crop-all.on .tickbox { background: var(--accent, #C6F277); border-color: var(--accent, #C6F277); color: #10140a; }
+.crop-actions { flex-wrap: wrap; }
+.panel .pinfo.crop-for { margin: 0 0 8px; }

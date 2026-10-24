@@ -116,6 +116,11 @@ function withDefaults(p: Project): Project {
     aspect: p.aspect ?? '16:9',
     cropHost: cropDefaults(p.cropHost),
     cropConst: cropDefaults(p.cropConst),
+    segments: (p.segments ?? []).map((s) => ({
+      ...s,
+      ...(s.cropHost ? { cropHost: cropDefaults(s.cropHost) } : {}),
+      ...(s.cropConst ? { cropConst: cropDefaults(s.cropConst) } : {}),
+    })),
     mirrorHost: p.mirrorHost ?? false,
     mirrorConst: p.mirrorConst ?? false,
     noiseHost: p.noiseHost ?? 0,

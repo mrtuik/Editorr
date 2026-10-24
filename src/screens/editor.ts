@@ -54,6 +54,9 @@ export function editorScreen() {
   let playing = false;
   let selectedId: string | null = null;
   let selClip: Role | null = null;
+  /** Crop panel tick: off = only the clip under the playhead changes, on = every clip changes. */
+  let applyAllCrop = false;
+  let lastCropKey = '';
   let pxPerSec = 30;
   let raf = 0;
   let saveTimer = 0;
@@ -151,14 +154,14 @@ export function editorScreen() {
 
   function resetCrop(role: Role) {
     hist.push(snap()); updateBtns();
-    const c = role === 'host' ? p.cropHost : p.cropConst;
+    const c = cropForEdit(role);
     c.zoom = 1;
     c.x = 0;
     c.y = 0;
     c.rotate = 0;
     c.ratio = 'custom';
     c.frameRatio = undefined;
-    applyCrop(role);
+    cropEdited(role);
     scheduleSave();
     if (panel === 'crop') { positionCropFrame(); renderPanel(); }
   }
@@ -175,12 +178,13 @@ export function editorScreen() {
       stage.style.touchAction = '';
       return;
     }
-    const clipRect = (selClip === 'host' ? hostClip : constClip).getBoundingClientRect();
+    const sr = shapedRect[selClip];
+    const clipRect = sr ? cell.getBoundingClientRect() : (selClip === 'host' ? hostClip : constClip).getBoundingClientRect();
     const stageRect = stage.getBoundingClientRect();
-    selFrame.style.left = `${clipRect.left - stageRect.left}px`;
-    selFrame.style.top = `${clipRect.top - stageRect.top}px`;
-    selFrame.style.width = `${clipRect.width}px`;
-    selFrame.style.height = `${clipRect.height}px`;
+    selFrame.style.left = `${clipRect.left - stageRect.left + (sr ? sr.l : 0)}px`;
+    selFrame.style.top = `${clipRect.top - stageRect.top + (sr ? sr.t : 0)}px`;
+    selFrame.style.width = `${sr ? sr.w : clipRect.width}px`;
+    selFrame.style.height = `${sr ? sr.h : clipRect.height}px`;
     selFrame.style.zIndex = cell.classList.contains('pop') ? '6' : '3';
     selFrame.classList.add('on');
     stage.style.touchAction = 'none';
@@ -210,25 +214,87 @@ export function editorScreen() {
   const ro = new ResizeObserver(() => { applyPreviewHeight(); fitStage(); layoutCrop(); });
   ro.observe(preview);
 
+  // ---- crop of each clip ----
+  // Every clip (segment) can keep its own crop. A clip without one uses the project crop.
+  const CK = (role: Role) => (role === 'host' ? 'cropHost' : 'cropConst') as 'cropHost' | 'cropConst';
+  /** The crop that is showing now: the clip under the playhead, else the project crop. */
+  function cropOf(role: Role): CropState { return segmentAt(p.segments, playMs)?.[CK(role)] ?? p[CK(role)]; }
+  /** Same crop, ready to edit: the clip under the playhead gets its own copy first, so other clips stay as they are. */
+  function cropForEdit(role: Role): CropState {
+    const seg = segmentAt(p.segments, playMs);
+    const k = CK(role);
+    if (!seg) return p[k];
+    if (!seg[k]) seg[k] = { ...p[k] };
+    return seg[k]!;
+  }
+  function copyCrop(dst: CropState, src: CropState) {
+    if (dst === src) return;
+    for (const key of Object.keys(dst)) delete (dst as unknown as Record<string, unknown>)[key];
+    Object.assign(dst, src);
+  }
+  /** Give this crop to every clip and to the project default. */
+  function spreadCrop(role: Role) {
+    const k = CK(role);
+    const src = cropForEdit(role);
+    copyCrop(p[k], src);
+    for (const sg of p.segments) { if (!sg[k]) sg[k] = { ...src }; else copyCrop(sg[k]!, src); }
+  }
+  /** Call after a crop value changed: spreads it when "Apply to all clips" is ticked, then redraws. */
+  function cropEdited(role: Role) {
+    if (applyAllCrop) spreadCrop(role);
+    applyCrop(role);
+  }
+
+  // When the picked frame shape differs from the slot shape (1:1 in a half-screen slot, say), the kept part is shown whole and
+  // centred in the slot. The cell is clipped to that part and a ring draws the border, so border and corners hug the picture.
+  const hostRing = h('div', { class: 'crop-ring' });
+  const constRing = h('div', { class: 'crop-ring' });
+  hostCell.append(hostRing); constCell.append(constRing);
+  const shapedRect: Record<Role, { l: number; t: number; w: number; h: number } | null> = { host: null, constant: null };
+
   /** Crop = zoom + move inside the frame. Uniform scale, zero distortion. */
   function applyCrop(role: Role) {
-    const c = role === 'host' ? p.cropHost : p.cropConst;
+    const c = cropOf(role);
     const v = role === 'host' ? hostV : constV;
     const clip = role === 'host' ? hostClip : constClip;
-    const cell = clip.parentElement;
-    const aspect = cell && cell.clientWidth > 0 && cell.clientHeight > 0 ? cell.clientWidth / cell.clientHeight : aspectValue(p.aspect);
+    const ring = role === 'host' ? hostRing : constRing;
+    const cell = clip.parentElement as HTMLElement | null;
+    const cw = cell?.clientWidth ?? 0, chh = cell?.clientHeight ?? 0;
+    const aspect = cw > 0 && chh > 0 ? cw / chh : aspectValue(p.aspect);
     const zoom = Math.max(0.2, Math.min(6.0, c.zoom || 1));
     const rotate = c.rotate ?? 0;
     const cover = rotationCoverZoom(rotate, aspect);
     const mirrored = role === 'host' ? p.mirrorHost : p.mirrorConst;
-    const tx = zoom > 1 ? c.x * (zoom - 1) * 50 : c.x * 50;
-    const ty = zoom > 1 ? c.y * (zoom - 1) * 50 : c.y * 50;
-    const identity = Math.abs(zoom - 1) < 0.001 && Math.abs(c.x) < 0.001 && Math.abs(c.y) < 0.001 && Math.abs(rotate) < 0.001;
+    const radius = c.radius ? c.radius : 0;
+    const stroke = c.strokeWidth ? `${c.strokeWidth}px solid ${c.strokeColor || '#ffffff'}` : 'none';
+    const ratio = (c.ratio ?? 'custom') === 'custom' ? (c.frameRatio ?? aspect) : cropRatioValue(c.ratio, aspect);
+    const shaped = cw > 0 && chh > 0 && zoom >= 1 && Math.abs(ratio / aspect - 1) > 0.01;
+    shapedRect[role] = null;
 
-    // Pan, zoom and rotate move the whole clip box, so the border and rounded corners travel with the video.
-    clip.style.transform = identity ? '' : `translate(${tx}%, ${ty}%) scale(${zoom}, ${zoom}) rotate(${rotate}deg) scale(${cover})`;
-    clip.style.borderRadius = c.radius ? `${c.radius}px` : '0px';
-    clip.style.border = c.strokeWidth ? `${c.strokeWidth}px solid ${c.strokeColor || '#ffffff'}` : 'none';
+    if (shaped) {
+      // frame (in slot pixels) the user picked, then scaled so the whole frame fits the slot and sits in its centre
+      const maxW = Math.min(cw, chh * ratio);
+      const fw = Math.min(cw, maxW / zoom), fh = fw / ratio;
+      const sc = Math.min(cw / fw, chh / fh);
+      const tx = sc * c.x * (cw - fw) / 2, ty = sc * c.y * (chh - fh) / 2;
+      clip.style.transform = `translate(${tx}px, ${ty}px) scale(${sc}, ${sc}) rotate(${rotate}deg) scale(${cover})`;
+      clip.style.borderRadius = '0px';
+      clip.style.border = 'none';
+      const rect = { l: (cw - sc * fw) / 2, t: (chh - sc * fh) / 2, w: sc * fw, h: sc * fh };
+      shapedRect[role] = rect;
+      cell!.style.clipPath = `inset(${rect.t}px ${rect.l}px ${rect.t}px ${rect.l}px round ${radius}px)`;
+      ring.style.cssText = `display:block;left:${rect.l}px;top:${rect.t}px;width:${rect.w}px;height:${rect.h}px;border:${stroke};border-radius:${radius}px`;
+    } else {
+      const tx = zoom > 1 ? c.x * (zoom - 1) * 50 : c.x * 50;
+      const ty = zoom > 1 ? c.y * (zoom - 1) * 50 : c.y * 50;
+      const identity = Math.abs(zoom - 1) < 0.001 && Math.abs(c.x) < 0.001 && Math.abs(c.y) < 0.001 && Math.abs(rotate) < 0.001;
+      // Pan, zoom and rotate move the whole clip box, so the border and rounded corners travel with the video.
+      clip.style.transform = identity ? '' : `translate(${tx}%, ${ty}%) scale(${zoom}, ${zoom}) rotate(${rotate}deg) scale(${cover})`;
+      clip.style.borderRadius = radius ? `${radius}px` : '0px';
+      clip.style.border = stroke;
+      if (cell) cell.style.clipPath = '';
+      ring.style.display = 'none';
+    }
     clip.style.overflow = 'hidden';
     clip.style.boxSizing = 'border-box';
     // Mirroring only flips the picture, never the border.
@@ -337,7 +403,7 @@ export function editorScreen() {
           draw();
           updateSelFrame();
         }
-        const c = hitRole === 'host' ? p.cropHost : p.cropConst;
+        const c = cropOf(hitRole);
         startCropX = c.x;
         startCropY = c.y;
       }
@@ -345,7 +411,7 @@ export function editorScreen() {
       if (!gestureSnapshot) gestureSnapshot = snap();
       const [p1, p2] = [...previewPtrs.values()];
       pinchStartDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
-      const c = selClip === 'host' ? p.cropHost : p.cropConst;
+      const c = cropOf(selClip);
       pinchStartZoom = Math.max(0.2, c.zoom || 1);
     }
   });
@@ -358,7 +424,7 @@ export function editorScreen() {
     if (!selClip) return;
 
     const cell = selClip === 'host' ? hostCell : constCell;
-    const c = selClip === 'host' ? p.cropHost : p.cropConst;
+    const c = cropForEdit(selClip);
 
     if (previewPtrs.size === 1 && previewMoved) {
       gestureChanged = true;
@@ -377,7 +443,7 @@ export function editorScreen() {
         const roleToUpdate = selClip;
         previewGestureRaf = requestAnimationFrame(() => {
           previewGestureRaf = 0;
-          applyCrop(roleToUpdate);
+          cropEdited(roleToUpdate);
         });
       }
     } else if (previewPtrs.size === 2) {
@@ -390,7 +456,7 @@ export function editorScreen() {
         const roleToUpdate = selClip;
         previewGestureRaf = requestAnimationFrame(() => {
           previewGestureRaf = 0;
-          applyCrop(roleToUpdate);
+          cropEdited(roleToUpdate);
         });
       }
     }
@@ -406,7 +472,7 @@ export function editorScreen() {
         cancelAnimationFrame(previewGestureRaf);
         previewGestureRaf = 0;
       }
-      if (selClip) applyCrop(selClip);
+      if (selClip) { if (gestureChanged) cropEdited(selClip); else applyCrop(selClip); }
 
       if (gestureChanged && gestureSnapshot) {
         hist.push(gestureSnapshot);
@@ -1638,7 +1704,11 @@ export function editorScreen() {
     panel = n;
     pendingCuts = [];
     if (n !== 'sync') selClip = null;
-    if (n === 'crop' || n === 'mask') cropRole = segmentAt(p.segments, playMs)?.main ?? 'host';
+    if (n === 'crop' || n === 'mask') {
+      const sg = segmentAt(p.segments, playMs);
+      cropRole = sg?.main ?? 'host';
+      lastCropKey = sg ? `${sg.id}|${sg.style}|${sg.main}` : '';
+    }
     if (n === 'silence') { if (!needAudio()) { panel = 'none'; return; } runDetect(); }
     cropView.classList.toggle('on', n === 'crop');
     updateSelFrame();
@@ -1815,13 +1885,13 @@ export function editorScreen() {
         noiseControl('host'),
         noiseControl('constant'));
     } else if (panel === 'crop') {
-      const c: CropState = cropRole === 'host' ? p.cropHost : p.cropConst;
+      const c: CropState = cropForEdit(cropRole);
       const reset = h('button', { class: 'chip crop-reset', onclick: () => {
         if (c.zoom === 1 && c.x === 0 && c.y === 0 && (c.rotate ?? 0) === 0
           && (c.ratio ?? 'custom') === 'custom' && (!c.frameRatio || Math.abs(c.frameRatio - cropViewAspect()) < 0.001)) return;
         hist.push(snap()); updateBtns();
         Object.assign(c, NO_CROP); delete c.frameRatio;
-        applyCrop(cropRole); drawCropCanvas(); positionCropFrame(); scheduleSave(); renderPanel();
+        cropEdited(cropRole); drawCropCanvas(); positionCropFrame(); scheduleSave(); renderPanel();
       } }, icon('trash', 16), 'Reset');
       const mirrorEnabled = cropRole === 'host' ? p.mirrorHost : p.mirrorConst;
       const mirrorChip = h('button', {
@@ -1837,7 +1907,7 @@ export function editorScreen() {
       rotateInput.addEventListener('input', () => {
         c.rotate = Number(rotateInput.value);
         rotateValue.textContent = `${Math.round(c.rotate)}°`;
-        applyCrop(cropRole); drawCropCanvas(); scheduleSave();
+        cropEdited(cropRole); drawCropCanvas(); scheduleSave();
       });
       const rulerTicks = Array.from({ length: 19 }, (_, i) =>
         h('i', { class: `crop-tick${i % 3 === 0 ? ' major' : ''}${i === 9 ? ' center' : ''}`, style: `left:${(i / 18) * 100}%` }));
@@ -1854,10 +1924,22 @@ export function editorScreen() {
             else c.frameRatio = undefined;
             c.zoom = Math.max(0.2, c.zoom || 1);
             c.x = 0; c.y = 0;
-            applyCrop(cropRole); positionCropFrame(); scheduleSave(); renderPanel();
+            cropEdited(cropRole); positionCropFrame(); scheduleSave(); renderPanel();
           },
         }, label)));
+      const cropSeg = segmentAt(p.segments, playMs);
+      const allTick = h('button', {
+        class: 'chip crop-all' + (applyAllCrop ? ' on' : ''),
+        role: 'checkbox', 'aria-checked': String(applyAllCrop),
+        'aria-label': 'Apply this crop to all clips',
+        onclick: () => {
+          applyAllCrop = !applyAllCrop;
+          if (applyAllCrop) { hist.push(snap()); updateBtns(); spreadCrop(cropRole); applyCrop('host'); applyCrop('constant'); scheduleSave(); toast('This crop now applies to all clips.'); }
+          renderPanel();
+        },
+      }, h('span', { class: 'tickbox' }, applyAllCrop ? icon('check', 14) : ''), 'Apply to all clips');
       setPanel('Crop',
+        h('div', { class: 'pinfo crop-for' }, applyAllCrop ? 'Changes go to all clips.' : `Changes go to this clip only${cropSeg ? ` (${STYLE_LABEL[cropSeg.style]})` : ''}.`),
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Video'),
           chipRow<Role>([['host', 'Host'], ['constant', 'Constant']], cropRole, (v) => { cropRole = v; renderPanel(); layoutCrop(); })),
         h('div', { class: 'crop-rotate' },
@@ -1865,11 +1947,11 @@ export function editorScreen() {
           h('div', { class: 'crop-ruler' }, ...rulerTicks, rotateInput),
           h('div', { class: 'crop-ruler-labels' }, h('span', {}, '−45°'), h('span', {}, '0°'), h('span', {}, '+45°'))),
         h('div', { class: 'prow crop-ratio-row' }, h('div', { class: 'plabel' }, 'Aspect ratio'), ratios),
-        h('div', { class: 'crop-actions' }, mirrorChip, reset),
+        h('div', { class: 'crop-actions' }, allTick, mirrorChip, reset),
         h('div', { class: 'pinfo' }, 'Drag the corners or pinch to crop. Drag inside the frame to move it.'));
     } else if (panel === 'mask') {
-      const c: CropState = cropRole === 'host' ? p.cropHost : p.cropConst;
-      const refresh = () => { applyCrop(cropRole); scheduleSave(); };
+      const c: CropState = cropForEdit(cropRole);
+      const refresh = () => { cropEdited(cropRole); scheduleSave(); };
       const radiusSlider = slider('Corner radius', 0, 48, 1, c.radius ?? 0, (v) => `${v}px`, (v) => { c.radius = v; refresh(); });
       const strokeSlider = slider('Border width', 0, 12, 1, c.strokeWidth ?? 0, (v) => `${v}px`, (v) => { c.strokeWidth = v; refresh(); });
       const colors = ['#ffffff', '#C6F277', '#facc15', '#4ade80', '#f43f5e', '#60a5fa', '#a855f7'];
@@ -1894,8 +1976,10 @@ export function editorScreen() {
         style: 'min-height:36px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);color:#fff',
         onclick: () => {
           hist.push(snap()); updateBtns();
-          const src = cropRole === 'host' ? p.cropHost : p.cropConst;
-          for (const t of [p.cropHost, p.cropConst]) { t.radius = src.radius; t.strokeWidth = src.strokeWidth; t.strokeColor = src.strokeColor; }
+          const src = cropForEdit(cropRole);
+          const targets: CropState[] = [p.cropHost, p.cropConst];
+          for (const sg of p.segments) { sg.cropHost = sg.cropHost ?? { ...p.cropHost }; sg.cropConst = sg.cropConst ?? { ...p.cropConst }; targets.push(sg.cropHost, sg.cropConst); }
+          for (const t of targets) { t.radius = src.radius; t.strokeWidth = src.strokeWidth; t.strokeColor = src.strokeColor; }
           applyCrop('host'); applyCrop('constant'); scheduleSave();
           toast('Applied mask to all clips.');
         },
@@ -1990,7 +2074,7 @@ export function editorScreen() {
       ctx.restore();
     } catch { ctx.restore(); /* frame not decoded yet */ }
   }
-  const cropState = () => (cropRole === 'host' ? p.cropHost : p.cropConst);
+  const cropState = () => cropOf(cropRole);
   const currentCropRatio = () => {
     const c = cropState();
     return c.ratio === 'custom' || !c.ratio ? (c.frameRatio ?? cropAr) : cropRatioValue(c.ratio, cropAr);
@@ -1999,7 +2083,7 @@ export function editorScreen() {
     const c = cropState(); const ratio = currentCropRatio();
     const z = Math.max(0.2, c.zoom || 1);
     const maxW = Math.min(cm.w, cm.h * ratio);
-    const w = Math.min(cm.w, maxW / z);
+    const w = Math.min(maxW, maxW / z);
     const hh = w / ratio;
     const cx = cm.x + cm.w / 2 - c.x * (cm.w - w) / 2, cy = cm.y + cm.h / 2 - c.y * (cm.h - hh) / 2;
     return { l: cx - w / 2, t: cy - hh / 2, w, h: hh };
@@ -2010,7 +2094,7 @@ export function editorScreen() {
   }
   /** Store a frame (left, top, width, height) as CropState, with limits and snapping to the center. */
   function setFrame(l: number, t: number, w: number, h0?: number, snap = true) {
-    const c = cropState();
+    const c = cropForEdit(cropRole);
     const isCustom = (c.ratio ?? 'custom') === 'custom';
     const ratio = currentCropRatio();
     let hh: number;
@@ -2027,9 +2111,10 @@ export function editorScreen() {
     t = Math.max(cm.y, Math.min(cm.y + cm.h - hh, t));
     const ux = l + w / 2 - (cm.x + cm.w / 2), uy = t + hh / 2 - (cm.y + cm.h / 2);
     const rx = (cm.w - w) / 2, ry = (cm.h - hh) / 2;
-    c.zoom = cm.w / w;
+    // zoom is measured against the biggest frame of this shape that fits the picture, so the frame and the slot always agree
+    c.zoom = Math.min(cm.w, cm.h * frameRatio) / w;
     if (isCustom) c.frameRatio = frameRatio;
-    if (c.zoom < 1.002 && Math.abs(hh - cm.h) < 1 && isCustom) { c.zoom = 1; c.x = 0; c.y = 0; c.frameRatio = cropAr; }
+    if (isCustom && Math.abs(w - cm.w) < 1 && Math.abs(hh - cm.h) < 1) { c.zoom = 1; c.x = 0; c.y = 0; c.frameRatio = cropAr; }
     else {
       c.x = rx > 0.5 ? Math.max(-1, Math.min(1, -ux / rx)) : 0;
       c.y = ry > 0.5 ? Math.max(-1, Math.min(1, -uy / ry)) : 0;
@@ -2038,7 +2123,7 @@ export function editorScreen() {
     }
     guideV.classList.toggle('on', c.zoom > 1 && c.x === 0);
     guideH.classList.toggle('on', (cm.h / hh > 1.001) && c.y === 0);
-    applyCrop(cropRole); positionCropFrame(); scheduleSave();
+    cropEdited(cropRole); positionCropFrame(); scheduleSave();
   }
 
   type CropDrag = { mode: 'move' | 'resize'; corner?: string; ax?: number; ay?: number; dx?: number; dy?: number };
@@ -2127,7 +2212,13 @@ export function editorScreen() {
 
   // ======================================================================= Main loop
   function refresh() {
-    applyLayout(segmentAt(p.segments, playMs));
+    const seg = segmentAt(p.segments, playMs);
+    applyLayout(seg);
+    if (panel === 'crop' || panel === 'mask') {
+      // the playhead moved to another clip or layout: it has its own crop and slot shape
+      const key = seg ? `${seg.id}|${seg.style}|${seg.main}` : '';
+      if (key !== lastCropKey) { lastCropKey = key; layoutCrop(); renderPanel(); }
+    }
     hudTimeBadge.textContent = `${fmtClock(playMs)} / ${fmtClock(p.durationMs)}`;
     draw();
   }

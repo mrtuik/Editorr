@@ -31,6 +31,8 @@ export interface ExportRequest {
   gain: number;
   segments: {
     startMs: number; endMs: number; style: string; main: string; corner: string; size: string;
+    /** Own crop of this clip (missing = use cropHost / cropConst above). */
+    cropHost?: CropState; cropConst?: CropState;
   }[];
 }
 
@@ -121,6 +123,7 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     // sorted; parts removed by silence cut are simply not in this list
     segments: [...p.segments].sort((a, b) => a.startMs - b.startMs).map((s) => ({
       startMs: Math.round(s.startMs), endMs: Math.round(s.endMs), style: s.style, main: s.main, corner: s.corner, size: s.size,
+      ...(s.cropHost ? { cropHost: s.cropHost } : {}), ...(s.cropConst ? { cropConst: s.cropConst } : {}),
     })),
   };
 }

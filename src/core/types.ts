@@ -60,6 +60,9 @@ export interface Segment {
   main: Role;
   corner: Corner;
   size: PopupSize;
+  /** Own crop of this clip. Missing = use the project crop. */
+  cropHost?: CropState;
+  cropConst?: CropState;
 }
 
 export interface Settings {
