@@ -999,3 +999,21 @@ input.xs-range::-webkit-slider-runnable-track { background: linear-gradient(90de
 .task-sheet-body .tl-title { font-size: 14px; font-weight: 500; margin-bottom: 2px; }
 .taskdialog { border-radius: 12px; }
 .tile-busy .tb-sub { font-size: 12px; color: #bbb; }
+
+/* ---------- v2: row pill, dialog, plain sheet rows, tool actions ---------- */
+.pills .pill.tap { flex-direction: row; gap: 10px; min-width: 0; padding: 8px 16px 8px 8px; border-radius: 10px; font-size: 14px; }
+.pills .pill.tap .pill-count { position: static; width: 28px; height: 28px; min-width: 28px; padding: 0; border-radius: 8px; font-size: 14px; line-height: 28px; }
+.taskdialog { align-items: stretch; width: min(78%, 290px); gap: 14px; padding: 18px 18px 16px; background: #232326; -webkit-backdrop-filter: none; backdrop-filter: none; border-radius: 12px; }
+.td-title { font-size: 15px; font-weight: 600; text-align: center; color: #fff; }
+.td-box { align-self: center; width: 128px; height: 112px; border-radius: 12px; background: #151517; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+.td-pct { font-size: 14px; font-weight: 600; color: #fff; min-height: 18px; }
+.td-min { align-self: flex-end; border: 0; background: var(--accent); color: #10140a; border-radius: 8px; padding: 8px 18px; font-size: 13px; font-weight: 600; }
+.task-sheet-body .tl-row { background: transparent; border-radius: 0; margin-top: 0; padding: 12px 2px; }
+.tl-stop { flex: none; width: 30px; height: 30px; border-radius: 50%; border: 0; background: #2c2c2e; color: #fff; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.tl-stop:active { background: #3a3a3c; }
+.tool-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap; gap: 8px; }
+.tool-all { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; padding: 0; background: transparent; border: 0; color: var(--text); font: inherit; font-size: 14px; }
+.tool-all .tickbox { width: 22px; height: 22px; border: 1.5px solid #8e8e93; border-radius: 50%; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; }
+.tool-all.on .tickbox { background: var(--accent); border-color: var(--accent); color: #10140a; }
+.tool-reset { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; min-width: 0; padding: 0 2px; background: transparent; border: 0; color: var(--text2); font: inherit; font-size: 13px; }
+.tool-reset svg { width: 14px; height: 14px; }

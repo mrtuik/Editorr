@@ -7,7 +7,7 @@ import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Sn
 import { detectSilence } from '../core/silence';
 import { EditorrNative, fileSrc, isNative, tick } from '../core/native';
 import { ensureAudio, nextPaint, runAutoSwitch, runSync } from '../core/pipeline';
-import { ensureProxy, needsProxy } from '../core/proxy';
+import { cancelProxy, ensureProxy, needsProxy } from '../core/proxy';
 import { makeStrip, type Strip } from '../core/thumbs';
 import { effectiveGain } from '../core/gain';
 import { openExportSheet, resChipText } from './exportSheet';
@@ -56,6 +56,7 @@ export function editorScreen() {
   let selClip: Role | null = null;
   /** Crop panel tick: off = only the clip under the playhead changes, on = every clip changes. */
   let applyAllCrop = false;
+  let applyAllMask = false;
   let lastCropKey = '';
   let pxPerSec = 30;
   let raf = 0;
@@ -538,7 +539,8 @@ export function editorScreen() {
     if (!path || proxying[role]) return;
     proxying[role] = true;
     const id = `proxy-${role}`;
-    startTask(id, `Optimizing ${label(role)} preview`, 0);
+    let userStopped = false;
+    startTask(id, `Optimizing ${label(role)} preview`, 0, { cancel: () => { userStopped = true; cancelProxy(path); } });
     try {
       const url = await ensureProxy(path, meta, (n) => updateTask(id, undefined, n));
       if (destroyed) return;
@@ -549,7 +551,8 @@ export function editorScreen() {
       if (wasPlaying) vid(role).addEventListener('loadedmetadata', () => { if (!destroyed) setPlaying(true); }, { once: true });
     } catch (e) {
       markFailed(role); // do not block playing forever
-      toast(`${label(role)} video: could not make a smooth preview. ${(e as Error).message || ''}`.trim());
+      if (userStopped) toast(`${label(role)} preview copy stopped.`);
+      else toast(`${label(role)} video: could not make a smooth preview. ${(e as Error).message || ''}`.trim());
     } finally {
       proxying[role] = false;
       endTask(id);
@@ -1961,6 +1964,8 @@ export function editorScreen() {
           renderPanel();
         },
       }, h('span', { class: 'tickbox' }, applyAllCrop ? icon('check', 14) : ''), 'Apply to all clips');
+      allTick.className = 'tool-all' + (applyAllCrop ? ' on' : '');
+      reset.className = 'tool-reset';
       setPanel('Crop',
         h('div', { class: 'pinfo crop-for' }, applyAllCrop ? 'Changes go to all clips.' : `Changes go to this clip only${cropSeg ? ` (${STYLE_LABEL[cropSeg.style]})` : ''}.`),
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Video'),
@@ -1970,11 +1975,17 @@ export function editorScreen() {
           h('div', { class: 'crop-ruler' }, ...rulerTicks, rotateInput),
           h('div', { class: 'crop-ruler-labels' }, h('span', {}, '−45°'), h('span', {}, '0°'), h('span', {}, '+45°'))),
         h('div', { class: 'prow crop-ratio-row' }, h('div', { class: 'plabel' }, 'Aspect ratio'), ratios),
-        h('div', { class: 'crop-actions' }, allTick, mirrorChip, reset),
-        h('div', { class: 'pinfo' }, 'Drag the corners or pinch to crop. Drag inside the frame to move it.'));
+        h('div', { class: 'crop-actions tool-actions' }, allTick, mirrorChip, reset));
     } else if (panel === 'mask') {
       const c: CropState = cropForEdit(cropRole);
-      const refresh = () => { cropEdited(cropRole); scheduleSave(); };
+      const spreadMask = () => {
+        const src = cropForEdit(cropRole);
+        const targets: CropState[] = [p.cropHost, p.cropConst];
+        for (const sg of p.segments) { sg.cropHost = sg.cropHost ?? { ...p.cropHost }; sg.cropConst = sg.cropConst ?? { ...p.cropConst }; targets.push(sg.cropHost, sg.cropConst); }
+        for (const t of targets) { t.radius = src.radius; t.strokeWidth = src.strokeWidth; t.strokeColor = src.strokeColor; }
+        applyCrop('host'); applyCrop('constant');
+      };
+      const refresh = () => { cropEdited(cropRole); if (applyAllMask) spreadMask(); scheduleSave(); };
       const radiusSlider = slider('Corner radius', 0, 48, 1, c.radius ?? 0, (v) => `${v}px`, (v) => { c.radius = v; refresh(); });
       const strokeSlider = slider('Border width', 0, 12, 1, c.strokeWidth ?? 0, (v) => `${v}px`, (v) => { c.strokeWidth = v; refresh(); });
       const colors = ['#ffffff', '#C6F277', '#facc15', '#4ade80', '#f43f5e', '#60a5fa', '#a855f7'];
@@ -1994,26 +2005,23 @@ export function editorScreen() {
         c.radius = 0; c.strokeWidth = 0;
         refresh(); renderPanel();
       } }, icon('trash', 16), 'Reset');
+      resetBtn.className = 'tool-reset';
       const applyAllBtn = h('button', {
-        class: 'chip',
-        style: 'min-height:36px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);color:#fff',
+        class: 'tool-all' + (applyAllMask ? ' on' : ''),
+        role: 'checkbox', 'aria-checked': String(applyAllMask), 'aria-label': 'Apply this mask to all clips',
         onclick: () => {
-          hist.push(snap()); updateBtns();
-          const src = cropForEdit(cropRole);
-          const targets: CropState[] = [p.cropHost, p.cropConst];
-          for (const sg of p.segments) { sg.cropHost = sg.cropHost ?? { ...p.cropHost }; sg.cropConst = sg.cropConst ?? { ...p.cropConst }; targets.push(sg.cropHost, sg.cropConst); }
-          for (const t of targets) { t.radius = src.radius; t.strokeWidth = src.strokeWidth; t.strokeColor = src.strokeColor; }
-          applyCrop('host'); applyCrop('constant'); scheduleSave();
-          toast('Applied mask to all clips.');
+          applyAllMask = !applyAllMask;
+          if (applyAllMask) { hist.push(snap()); updateBtns(); spreadMask(); scheduleSave(); toast('This mask now applies to all clips.'); }
+          renderPanel();
         },
-      }, icon('wand', 16), 'Apply to all clips');
+      }, h('span', { class: 'tickbox' }, applyAllMask ? icon('check', 14) : ''), 'Apply to all clips');
       setPanel('Mask',
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Video'),
           chipRow<Role>([['host', 'Host'], ['constant', 'Constant']], cropRole, (v) => { cropRole = v; renderPanel(); })),
         radiusSlider.row,
         strokeSlider.row,
         colorRow,
-        h('div', { class: 'crop-actions' }, resetBtn, applyAllBtn),
+        h('div', { class: 'crop-actions tool-actions' }, applyAllBtn, resetBtn),
         h('div', { class: 'pinfo' }, 'The border and rounded corners stay on the video edges when you move or zoom it.'));
     } else {
       const total = pendingCuts.reduce((a, r) => a + (r.endMs - r.startMs), 0);
@@ -2279,10 +2287,15 @@ export function editorScreen() {
     // audio -> waveforms (and what sync / auto switch need)
     if (!audioReady()) {
       let hp = 0, cp = 0;
-      startTask('audio', 'Reading audio', 0);
+      let stopAudio: () => void = () => {};
+      const stopped = new Promise<never>((_, rej) => { stopAudio = () => rej(new Error('Audio reading was stopped.')); });
+      stopped.catch(() => {});
+      startTask('audio', 'Reading audio', 0, { cancel: () => stopAudio() });
       const upd = () => updateTask('audio', 'Reading audio', (hp + cp) / 2);
       try {
-        await Promise.all([ensureAudio('host', (n) => { hp = n; upd(); }), ensureAudio('constant', (n) => { cp = n; upd(); })]);
+        const reading = Promise.all([ensureAudio('host', (n) => { hp = n; upd(); }), ensureAudio('constant', (n) => { cp = n; upd(); })]);
+        reading.catch(() => {});
+        await Promise.race([reading, stopped]);
       } catch (e) {
         hasAudioError = true;
         if (!destroyed) toast(`${(e as Error).message || 'Could not read the audio.'} Auto sync and auto switch are off.`, 4200);
@@ -2401,7 +2414,13 @@ export function editorScreen() {
         h('div', { class: 'tl-main' },
           h('div', { class: 'tl-title' }, t.label),
           h('div', { class: 'tl-pct' }, t.pct !== undefined && t.pct > 0 ? `${t.pct}%` : 'Working...')),
-        t.cancel ? iconButton('close', 'Cancel', () => t.cancel!(), 'plain') : null))
+        t.cancel ? h('button', {
+          class: 'tl-stop', 'aria-label': `Stop ${t.label}`,
+          onclick: async () => {
+            const stop = t.cancel!;
+            if (await confirmDialog('Stop this task?', `${t.label} will be cancelled.`, 'Stop task')) stop();
+          },
+        }, icon('close', 14)) : null))
     );
   }
   function openListSheet() {
@@ -2409,8 +2428,7 @@ export function editorScreen() {
     if (!lastTasks.length) return;
     const dragBar = h('div', { class: 'sheet-handle' }, h('i', { class: 'handle-bar' }));
     const head = h('div', { class: 'task-sheet-head' },
-      h('div', { class: 'task-sheet-title' }, 'In progress', h('span', { class: 'task-sheet-count' }, String(lastTasks.length))),
-      iconButton('close', 'Close', closeListSheet, 'plain'));
+      h('div', { class: 'task-sheet-title' }, 'In progress', h('span', { class: 'task-sheet-count' }, String(lastTasks.length))));
     const body = h('div', { class: 'task-sheet-body' });
     taskSheetEl = h('div', { class: 'task-sheet' }, dragBar, head, body);
 
@@ -2448,10 +2466,8 @@ export function editorScreen() {
     if (dlg) {
       const pct = dlg.pct ?? 0;
       dialogEl.replaceChildren(h('div', { class: 'taskdialog', role: 'dialog' },
-        iconButton('close', dlg.cancel ? 'Cancel' : 'Minimize', () => { if (dlg.cancel) dlg.cancel(); else minimizeTask(dlg.id); }, 'plain'),
-        h('div', { class: 'td-ring' }, spinner(34)),
-        h('div', { class: 'td-label' }, dlg.label + (pct > 0 ? `... ${pct}%` : '...')),
-        h('div', { class: 'td-bar' }, h('i', { style: pct > 0 ? `width:${pct}%` : '', class: pct > 0 ? '' : 'indet' })),
+        h('div', { class: 'td-title' }, dlg.label),
+        h('div', { class: 'td-box' }, h('div', { class: 'td-ring' }, spinner(34)), h('div', { class: 'td-pct' }, pct > 0 ? `${pct}%` : '')),
         h('button', { class: 'td-min', onclick: () => minimizeTask(dlg.id) }, 'Minimize')));
     } else dialogEl.replaceChildren();
 
@@ -2461,19 +2477,17 @@ export function editorScreen() {
       pillsEl.replaceChildren();
       closeListSheet();
     } else {
-      const one = activeTasks.length === 1 ? activeTasks[0] : null;
-      const label = one
-        ? one.label + (one.pct !== undefined && one.pct > 0 ? ` ${one.pct}%` : '')
-        : `${activeTasks.length} tasks running`;
+      const first = activeTasks[0];
+      const label = first.label + (activeTasks.length === 1 && first.pct !== undefined && first.pct > 0 ? ` ${first.pct}%` : '');
       const pillBtn = h('button', {
         class: 'pill tap',
-        'aria-label': label,
+        'aria-label': `${activeTasks.length} running: ${label}`,
         onclick: (ev: MouseEvent) => {
           ev.stopPropagation();
           if (taskSheetEl) closeListSheet();
           else openListSheet();
         },
-      }, h('span', { class: 'pill-count' }, String(activeTasks.length)), h('div', { class: 'td-ring' }, spinner(22)), h('span', { class: 'pill-text' }, label));
+      }, h('span', { class: 'pill-count' }, String(activeTasks.length)), h('span', { class: 'pill-text' }, label));
       pillsEl.replaceChildren(pillBtn);
     }
     renderListSheet();

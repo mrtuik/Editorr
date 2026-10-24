@@ -115,6 +115,21 @@ if "<queries>" not in txt:
     txt = txt.replace("<application", q + "<application", 1)
     manifest.write_text(txt)
 
+# 5c. Dark status bar + navigation bar from the very first frame (no grey / white flash before MainActivity runs).
+styles = ANDROID / "app/src/main/res/values/styles.xml"
+if styles.exists():
+    txt = styles.read_text()
+    if "navigationBarColor" not in txt:
+        items = (
+            '        <item name="android:statusBarColor">#141416</item>\n'
+            '        <item name="android:navigationBarColor">#141416</item>\n'
+            '        <item name="android:windowLightStatusBar">false</item>\n'
+            '        <item name="android:windowLightNavigationBar">false</item>\n'
+        )
+        txt = re.sub(r'(<style name="AppTheme\.NoActionBar"[^>]*>\n)', lambda m: m.group(1) + items, txt, count=1)
+        txt = re.sub(r'(<style name="AppTheme\.NoActionBarLaunch"[^>]*>\n)', lambda m: m.group(1) + items, txt, count=1)
+        styles.write_text(txt)
+
 print("Editorr: android project patched")
 
 # 5. App icon (black, no card/oval; adaptive + square + round). Replaces Capacitor's default icons.

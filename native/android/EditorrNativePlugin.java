@@ -963,6 +963,23 @@ public class EditorrNativePlugin extends Plugin {
 
     /** One Transformer per source video, so both previews can be made at the same time. */
     private final java.util.Map<String, Transformer> proxyJobs = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, PluginCall> proxyCalls = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Stop one preview-copy job (the user cancelled it in the task list). Its makeProxy call is rejected with "Cancelled". */
+    @PluginMethod
+    public void cancelProxy(PluginCall call) {
+        final String path = stripFileScheme(call.getString("path"));
+        main.post(() -> {
+            if (path != null) {
+                Transformer t = proxyJobs.remove(path);
+                if (t != null) { try { t.cancel(); } catch (Exception ignored) { } }
+                new File(previewDir(), "proxy_" + new File(path).getName() + ".mp4.tmp").delete();
+                PluginCall pc = proxyCalls.remove(path);
+                if (pc != null) pc.reject("Cancelled");
+            }
+            call.resolve();
+        });
+    }
 
     /** Transcode one video to a small H.264 file so the WebView can preview it smoothly. Cached per source file. */
     @PluginMethod
@@ -1000,7 +1017,7 @@ public class EditorrNativePlugin extends Plugin {
                         .addListener(new Transformer.Listener() {
                             @Override public void onCompleted(@NonNull Composition c, @NonNull ExportResult r) {
                                 main.removeCallbacks(poll[0]);
-                                proxyJobs.remove(path);
+                                proxyJobs.remove(path); proxyCalls.remove(path);
                                 if (tmp.renameTo(out)) {
                                     JSObject o = new JSObject();
                                     o.put("proxyPath", out.getAbsolutePath());
@@ -1009,13 +1026,14 @@ public class EditorrNativePlugin extends Plugin {
                             }
                             @Override public void onError(@NonNull Composition c, @NonNull ExportResult r, @NonNull ExportException e) {
                                 main.removeCallbacks(poll[0]);
-                                proxyJobs.remove(path);
+                                proxyJobs.remove(path); proxyCalls.remove(path);
                                 tmp.delete();
                                 call.reject("Preview copy failed: " + e.getMessage());
                             }
                         })
                         .build();
                 proxyJobs.put(path, self[0]);
+                proxyCalls.put(path, call);
                 poll[0] = new Runnable() {
                     @Override public void run() {
                         if (!proxyJobs.containsKey(path)) return;
@@ -1031,7 +1049,7 @@ public class EditorrNativePlugin extends Plugin {
                 self[0].start(item, tmp.getAbsolutePath());
                 main.post(poll[0]);
             } catch (Exception e) {
-                proxyJobs.remove(path);
+                proxyJobs.remove(path); proxyCalls.remove(path);
                 call.reject("Preview copy failed to start: " + e.getMessage());
             }
         });

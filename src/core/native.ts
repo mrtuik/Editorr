@@ -68,6 +68,8 @@ export interface EditorrNativePlugin {
   makeProxy(opts: { path: string; height: number; outW?: number; outH?: number }): Promise<{ proxyPath: string }>;
   /** Picture strip for the timeline (and the first-frame tile): `count` frames spread over the video. Emits 'thumb' {path,index,count,file}. */
   makeThumbs(opts: { path: string; count: number; height: number }): Promise<{ files: string[] }>;
+  /** Stop one running preview copy (its makeProxy promise rejects with "Cancelled"). */
+  cancelProxy(opts: { path: string }): Promise<void>;
   cancelExport(): Promise<void>;
   addListener(eventName: NativeEvent, cb: (e: any) => void): Promise<PluginListenerHandle>;
   freeSpaceMb(): Promise<{ mb: number }>;

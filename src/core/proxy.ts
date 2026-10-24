@@ -58,3 +58,8 @@ export function ensureProxy(path: string, meta: Omit<VideoRef, 'url'> | undefine
   }
   return job;
 }
+
+/** Stop the preview copy of this video (if one is running). */
+export function cancelProxy(path: string): void {
+  EditorrNative.cancelProxy({ path }).catch(() => {});
+}
