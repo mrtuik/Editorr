@@ -2,7 +2,7 @@ import { app, type Intent } from '../app';
 import { peaks, PEAKS_PER_SEC, SAMPLE_RATE } from '../core/audio';
 import { startDenoise } from '../core/denoise';
 import { detectSpeakers, lastMethod, lastSeparationDb, lastUsedLips, lastVoiceQuality } from '../core/speaker';
-import { motionToActivity, scanMotion } from '../core/motion';
+import { motionToActivity } from '../core/motion';
 import { cropForFace, FACE_SAMPLE_MS, faceBetween, motionFromScan, pickTrack, scanFaces, type FaceScan } from '../core/faces';
 import { pickFace } from './facePick';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
@@ -1626,42 +1626,13 @@ export function editorScreen() {
     const clipped = keep.length ? intersectRanges(segs, keep) : segs;
     if (clipped.length) segs = clipped;
     edit(segs); selectedId = segs[0]?.id ?? null; afterEdit();
-    if (segs.length <= 1) toast('Could not tell the two people apart. Try the lips scan or cut by hand.');
+    if (segs.length <= 1) toast('Could not tell the two people apart. Try Autoframe or cut by hand.');
     else if (lastUsedLips) toast(`Auto switch with lips + voice: ${segs.length} segments. Undo to go back.`);
     else if (lastMethod === 'voice') toast(`Auto switch by voice: ${segs.length} segments (quality ${lastVoiceQuality.toFixed(1)}). Wrong way round? Tap swap.`);
     else toast(`Auto switch by mic loudness: ${segs.length} segments (${lastSeparationDb.toFixed(1)} dB). Undo to go back.`);
   }
 
   let scanning = false, scanCancel = false;
-  async function doSmartSwitch() {
-    if (scanning || !needAudio()) return;
-    if (!runtime.hostMotion || !runtime.constMotion) {
-      // real face + lip scan first; the old pixel scan below is only the fallback when the face model cannot load
-      const fr = await ensureFaces();
-      if (fr === 'cancel') { toast('Scan cancelled'); return; }
-      if (fr === 'ok') { setMotionFromFaces(); draw(); }
-    }
-    if (!runtime.hostMotion || !runtime.constMotion) {
-      scanning = true; scanCancel = false;
-      setPlaying(false);
-      startTask('lips', 'Scanning lips', 0, { modal: true, cancel: () => { scanCancel = true; } });
-      try {
-        const dur = p.durationMs;
-        const a = await scanMotion(hostV.currentSrc || hostV.src, 0, dur, (x) => updateTask('lips', undefined, x / 2), () => scanCancel);
-        const b = a ? await scanMotion(constV.currentSrc || constV.src, p.offsetMs, dur, (x) => updateTask('lips', undefined, 50 + x / 2), () => scanCancel) : null;
-        if (a && b) { runtime.hostMotion = a; runtime.constMotion = b; }
-      } catch { /* fall through */ }
-      endTask('lips'); scanning = false;
-      if (!runtime.hostMotion || !runtime.constMotion) {
-        if (scanCancel) { toast('Scan cancelled'); return; }
-        toast('Could not read the video frames for the lips scan. Using voice only.');
-        doAutoSwitch(false); return;
-      }
-      draw();
-    }
-    doAutoSwitch(true);
-  }
-
   // ======================================================================= Faces + Autoframe
   const faceStale = (sc: FaceScan | undefined, startMs: number) => !sc || sc.startMs !== startMs || sc.n < Math.ceil(p.durationMs / FACE_SAMPLE_MS);
   const roleName = (r: Role) => (r === 'host' ? 'Host' : 'Constant');
@@ -1675,13 +1646,13 @@ export function editorScreen() {
     if (!need.length) return 'ok';
     scanning = true; scanCancel = false;
     setPlaying(false);
-    startTask('faces', 'Scanning faces', 0, { modal: true, cancel: () => { scanCancel = true; } });
+    startTask('faces', 'Loading face model', 0, { modal: true, cancel: () => { scanCancel = true; } });
     try {
       for (let k = 0; k < need.length; k++) {
         const role = need[k];
         const v = role === 'host' ? hostV : constV;
         const r = await scanFaces(v.currentSrc || v.src, role === 'host' ? 0 : p.offsetMs, p.durationMs,
-          (x) => updateTask('faces', undefined, (k * 100 + x) / need.length), () => scanCancel);
+          (x) => updateTask('faces', `Scanning faces${need.length > 1 ? ` (${k + 1}/${need.length})` : ''}`, (k * 100 + x) / need.length), () => scanCancel);
         if (!r) return scanCancel ? 'cancel' : 'fail';
         if (role === 'host') runtime.hostFaces = r; else runtime.constFaces = r;
       }
@@ -1792,7 +1763,6 @@ export function editorScreen() {
       rows.push(
         tool('sync', 'Sync', () => { selClip = 'constant'; selectedId = null; openPanel('sync'); updateSelFrame(); }),
         tool('switchSlider', 'Auto switch', () => doAutoSwitch(false)),
-        tool('lips', 'Lips scan', doSmartSwitch),
         tool('autoframe', 'Autoframe', doAutoframe),
         tool('face', 'Faces', doFaces),
         tool('silence', 'Silence', () => openPanel('silence')),
@@ -2542,7 +2512,9 @@ export function editorScreen() {
     if (!lastTasks.length) return;
     const dragBar = h('div', { class: 'sheet-handle' }, h('i', { class: 'handle-bar' }));
     const head = h('div', { class: 'task-sheet-head' },
-      h('div', { class: 'task-sheet-title' }, 'In progress', h('span', { class: 'task-sheet-count' }, String(lastTasks.length))));
+      h('div', { class: 'task-sheet-title' }, 'In progress', h('span', { class: 'task-sheet-count' }, String(lastTasks.length))),
+      // closes only this sheet; it never stops a task (the X on each task row does that)
+      h('button', { class: 'ts-close', 'aria-label': 'Close', onclick: () => closeListSheet() }, icon('close', 20)));
     const body = h('div', { class: 'task-sheet-body' });
     taskSheetEl = h('div', { class: 'task-sheet' }, dragBar, head, body);
 
@@ -2639,7 +2611,7 @@ export function editorScreen() {
       stopCleanAudio(); hostV.pause(); constV.pause();
       hostStrip?.cancel(); constStrip?.cancel();
       offTasks();
-      endTask('audio'); endTask('sync'); endTask('switch'); endTask('proxy-host'); endTask('proxy-constant'); endTask('lips'); scanCancel = true; closeListSheet();
+      endTask('audio'); endTask('sync'); endTask('switch'); endTask('proxy-host'); endTask('proxy-constant'); endTask('faces'); scanCancel = true; closeListSheet();
       try { actx?.close(); } catch { /* ignore */ }
       window.removeEventListener('resize', onResize);
       document.removeEventListener('visibilitychange', onVisible);

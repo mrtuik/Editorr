@@ -1,19 +1,19 @@
 /**
  * Face scan, face tracking, lip movement and Autoframe crop maths.
  *
- * - Uses MediaPipe FaceLandmarker (on-device, GPU when possible) on small frames, 5 per second.
+ * - Uses MediaPipe FaceLandmarker (on-device, GPU when possible) on small frames, 4 per second, while the video plays fast.
  * - Every face gets a track (Person 1, Person 2 ...). Lip opening (inner lip gap / face height) is kept per track.
  * - Lip movement of the chosen person is turned into a 100 ms activity curve that Auto switch can use.
  * - Autoframe turns a face position into the zoom / x / y of a clip crop.
  */
 import type { CropState } from './types';
 
-export const FACE_SAMPLE_MS = 200;
-const SCAN_W = 384;
-const MAX_FACES = 4;
+export const FACE_SAMPLE_MS = 250;
+const SCAN_W = 256;
+const MAX_FACES = 3;
 const MAX_TRACKS = 6;
 const MATCH_DIST = 0.18;      // how far (fraction of the frame) a face may move between samples and stay the same person
-const MAX_GAP_SAMPLES = 10;   // a person may vanish for ~2 s and still be the same person
+const MAX_GAP_SAMPLES = 8;    // a person may vanish for ~2 s and still be the same person
 
 export interface FaceTrack {
   id: number;
@@ -37,48 +37,56 @@ export interface FaceScan {
 
 // ------------------------------------------------------------------ model loading
 
-let landmarkerPromise: Promise<any> | null = null;
+let mpPromise: Promise<any> | null = null;
+let working: { srcIndex: number; delegate: 'GPU' | 'CPU' } | null = null;
 
 function baseUrl(path: string): string {
   return new URL(path, document.baseURI).href;
 }
 
-async function createLandmarker(): Promise<any> {
+function loadMediaPipe(): Promise<any> {
   // @ts-ignore - resolved after `npm install`
-  const mp: any = await import('@mediapipe/tasks-vision');
-  const sources: { wasm: string; model: string }[] = [
+  if (!mpPromise) mpPromise = import('@mediapipe/tasks-vision').catch((e: unknown) => { mpPromise = null; throw e; });
+  return mpPromise;
+}
+
+/** A fresh landmarker in VIDEO mode (it tracks faces from frame to frame, which is much faster than detecting every frame).
+ *  Local files first (offline), the internet only as a fallback. */
+async function newLandmarker(): Promise<any> {
+  const mp = await loadMediaPipe();
+  const sources = [
     { wasm: baseUrl('mediapipe/wasm'), model: baseUrl('mediapipe/face_landmarker.task') },
     {
       wasm: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21/wasm',
       model: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
     },
   ];
+  const tries: { srcIndex: number; delegate: 'GPU' | 'CPU' }[] = [];
+  if (working) tries.push(working);
+  sources.forEach((_, srcIndex) => (['GPU', 'CPU'] as const).forEach((delegate) => {
+    if (!(working && working.srcIndex === srcIndex && working.delegate === delegate)) tries.push({ srcIndex, delegate });
+  }));
   let lastError: unknown = null;
-  for (const src of sources) {
-    for (const delegate of ['GPU', 'CPU']) {
-      try {
-        const fileset = await mp.FilesetResolver.forVisionTasks(src.wasm);
-        return await mp.FaceLandmarker.createFromOptions(fileset, {
-          baseOptions: { modelAssetPath: src.model, delegate },
-          runningMode: 'IMAGE',
-          numFaces: MAX_FACES,
-          minFaceDetectionConfidence: 0.5,
-          minFacePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-        });
-      } catch (e) { lastError = e; }
-    }
+  for (const t of tries) {
+    try {
+      const src = sources[t.srcIndex];
+      const fileset = await mp.FilesetResolver.forVisionTasks(src.wasm);
+      const lm = await mp.FaceLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: src.model, delegate: t.delegate },
+        runningMode: 'VIDEO',
+        numFaces: MAX_FACES,
+        minFaceDetectionConfidence: 0.5,
+        minFacePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+      });
+      working = t;
+      return lm;
+    } catch (e) { lastError = e; }
   }
   throw lastError ?? new Error('Face model could not be loaded.');
 }
 
-/** Loads the face model once. Rejects when it cannot be loaded (the caller falls back). */
-export function loadFaceModel(): Promise<any> {
-  if (!landmarkerPromise) landmarkerPromise = createLandmarker().catch((e) => { landmarkerPromise = null; throw e; });
-  return landmarkerPromise;
-}
-
-// ------------------------------------------------------------------ scan
+// ------------------------------------------------------------------ frame sampling
 
 function waitSeek(v: HTMLVideoElement, t: number): Promise<void> {
   return new Promise((resolve) => {
@@ -89,6 +97,84 @@ function waitSeek(v: HTMLVideoElement, t: number): Promise<void> {
     try { v.currentTime = t; } catch { fin(); }
   });
 }
+
+/**
+ * Calls `cb(i)` for samples i (timeline time i * sampleMs) with the matching frame showing in `v`.
+ * Fast path: the video PLAYS at 2x-8x muted and frames are picked as they pass (no seeking, so it is many times faster).
+ * Slow path: seek for every sample, only when the fast path cannot get frames.
+ * Returns false when cancelled.
+ */
+async function sampleVideo(
+  v: HTMLVideoElement, startMs: number, n: number, sampleMs: number,
+  cb: (i: number) => void, onProgress: (pct: number) => void, cancelled: () => boolean,
+): Promise<boolean> {
+  let next = Math.ceil(Math.max(0, -startMs) / sampleMs);
+
+  const sequential = (): Promise<'done' | 'cancel' | 'stalled'> => new Promise((resolve) => {
+    const rvfc = (v as any).requestVideoFrameCallback?.bind(v) as undefined | ((f: (now: number, meta: any) => void) => number);
+    if (!rvfc) { resolve('stalled'); return; }
+    let finished = false, last = performance.now(), got = 0, rate = 4, busyMs = 0, busyN = 0;
+    const finish = (r: 'done' | 'cancel' | 'stalled') => {
+      if (finished) return; finished = true; clearInterval(watch);
+      v.removeEventListener('ended', onEnd);
+      try { v.pause(); } catch { /* ignore */ }
+      resolve(r);
+    };
+    const onEnd = () => finish('done');
+    v.addEventListener('ended', onEnd);
+    const watch = window.setInterval(() => {
+      if (cancelled()) finish('cancel');
+      else if (performance.now() - last > (got ? 5000 : 4000)) finish(got ? 'done' : 'stalled');
+    }, 400);
+    const onFrame = (now: number, meta: any) => {
+      if (finished) return;
+      last = now; got++;
+      const tl = meta.mediaTime * 1000 - startMs;
+      const due = Math.floor(tl / sampleMs);
+      if (due >= n) { finish('done'); return; }
+      if (due >= next) {
+        const t0 = performance.now();
+        try { cb(due); } catch { /* skip this sample */ }
+        busyMs += performance.now() - t0; busyN++;
+        next = due + 1;
+        if (busyN >= 8) {
+          // keep up with the detector: the video may not run faster than we can look at it
+          const per = busyMs / busyN; busyMs = 0; busyN = 0;
+          const want = Math.max(1, Math.min(8, Math.floor(sampleMs / (per + 6))));
+          if (want !== rate) { rate = want; try { v.playbackRate = rate; } catch { /* ignore */ } }
+        }
+        if (next % 6 === 0) onProgress(Math.min(99, (next / n) * 100));
+      }
+      rvfc(onFrame);
+    };
+    (async () => {
+      try {
+        await waitSeek(v, Math.max(0, (startMs + next * sampleMs) / 1000));
+        v.muted = true; v.playbackRate = rate;
+        await v.play();
+        rvfc(onFrame);
+      } catch { finish('stalled'); }
+    })();
+  });
+
+  const r = await sequential();
+  if (r === 'cancel') return false;
+  if (r === 'done' || next >= n) { onProgress(100); return true; }
+
+  // fallback: one seek per sample
+  for (let i = next; i < n; i++) {
+    if (cancelled()) return false;
+    const t = (startMs + i * sampleMs) / 1000;
+    if (t < 0 || t > v.duration) continue;
+    await waitSeek(v, t);
+    try { cb(i); } catch { /* skip */ }
+    if (i % 5 === 0) { onProgress((i / n) * 100); await new Promise((res) => setTimeout(res, 0)); }
+  }
+  onProgress(100);
+  return true;
+}
+
+// ------------------------------------------------------------------ scan
 
 interface RawFace { cx: number; cy: number; w: number; h: number; lip: number }
 
@@ -109,7 +195,8 @@ function readFaces(result: any): RawFace[] {
 
 /**
  * Scans one video. Sample i is timeline time i * FACE_SAMPLE_MS (video time = videoStartMs + that).
- * Returns null when the video cannot be read; throws when the face model cannot be loaded.
+ * `onProgress` is first called once the model is ready, so 0% means "still loading the model".
+ * Returns null when cancelled or the video cannot be read; throws when the face model cannot be loaded.
  */
 export async function scanFaces(
   url: string,
@@ -118,34 +205,27 @@ export async function scanFaces(
   onProgress: (pct: number) => void,
   cancelled: () => boolean,
 ): Promise<FaceScan | null> {
-  onProgress(0);
-  const landmarker = await loadFaceModel();
+  const landmarker = await newLandmarker();
   const v = document.createElement('video');
-  v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
-  await new Promise<void>((res) => { v.onloadeddata = () => res(); v.onerror = () => res(); window.setTimeout(res, 8000); });
-  if (!v.videoWidth) return null;
+  const cleanup = () => { try { v.pause(); } catch { /* ignore */ } v.removeAttribute('src'); v.load(); try { landmarker.close(); } catch { /* ignore */ } };
+  try {
+    v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
+    await new Promise<void>((res) => { v.onloadeddata = () => res(); v.onerror = () => res(); window.setTimeout(res, 8000); });
+    if (!v.videoWidth) return null;
+    onProgress(1);
 
-  const aspect = v.videoWidth / v.videoHeight;
-  const c = document.createElement('canvas');
-  c.width = SCAN_W; c.height = Math.max(2, Math.round(SCAN_W / aspect));
-  const g = c.getContext('2d', { willReadFrequently: true } as any) as CanvasRenderingContext2D;
-  const n = Math.ceil(durationMs / FACE_SAMPLE_MS) + 1;
+    const aspect = v.videoWidth / v.videoHeight;
+    const c = document.createElement('canvas');
+    c.width = SCAN_W; c.height = Math.max(2, Math.round(SCAN_W / aspect));
+    const g = c.getContext('2d', { willReadFrequently: false } as any) as CanvasRenderingContext2D;
+    const n = Math.ceil(durationMs / FACE_SAMPLE_MS) + 1;
 
-  type Work = { id: number; last: RawFace; lastAt: number; items: (RawFace | null)[] };
-  const works: Work[] = [];
+    type Work = { id: number; last: RawFace; lastAt: number; items: (RawFace | null)[] };
+    const works: Work[] = [];
 
-  for (let i = 0; i < n; i++) {
-    if (cancelled()) { v.removeAttribute('src'); v.load(); return null; }
-    const t = (videoStartMs + i * FACE_SAMPLE_MS) / 1000;
-    if (t >= 0 && t <= v.duration) {
-      await waitSeek(v, t);
-      let faces: RawFace[] = [];
-      try {
-        g.drawImage(v, 0, 0, c.width, c.height);
-        faces = readFaces(landmarker.detect(c));
-      } catch { /* keep going with no faces for this sample */ }
-
-      // match faces to tracks: closest first
+    const handle = (i: number) => {
+      g.drawImage(v, 0, 0, c.width, c.height);
+      const faces = readFaces(landmarker.detectForVideo(c, Math.round(i * FACE_SAMPLE_MS) + 1));
       const used = new Set<number>();
       const pairs: { d: number; fi: number; wi: number }[] = [];
       faces.forEach((f, fi) => works.forEach((wk, wi) => {
@@ -167,29 +247,29 @@ export async function scanFaces(
         items[i] = f;
         works.push({ id: works.length, last: f, lastAt: i, items });
       });
-    }
-    if (i % 5 === 0) { onProgress((i / n) * 100); await new Promise((r) => setTimeout(r, 0)); }
-  }
-  v.removeAttribute('src'); v.load();
-  onProgress(100);
+    };
 
-  const tracks: FaceTrack[] = [];
-  for (const wk of works) {
-    const cx = new Float32Array(n).fill(NaN), cy = new Float32Array(n).fill(NaN);
-    const w = new Float32Array(n).fill(NaN), hh = new Float32Array(n).fill(NaN), lip = new Float32Array(n).fill(NaN);
-    let seen = 0;
-    for (let i = 0; i < n; i++) {
-      const f = wk.items[i];
-      if (!f) continue;
-      cx[i] = f.cx; cy[i] = f.cy; w[i] = f.w; hh[i] = f.h; lip[i] = f.lip; seen++;
+    const ok = await sampleVideo(v, videoStartMs, n, FACE_SAMPLE_MS, handle, onProgress, cancelled);
+    if (!ok) return null;
+
+    const tracks: FaceTrack[] = [];
+    for (const wk of works) {
+      const cx = new Float32Array(n).fill(NaN), cy = new Float32Array(n).fill(NaN);
+      const w = new Float32Array(n).fill(NaN), hh = new Float32Array(n).fill(NaN), lip = new Float32Array(n).fill(NaN);
+      let seen = 0;
+      for (let i = 0; i < n; i++) {
+        const f = wk.items[i];
+        if (!f) continue;
+        cx[i] = f.cx; cy[i] = f.cy; w[i] = f.w; hh[i] = f.h; lip[i] = f.lip; seen++;
+      }
+      const presence = seen / n;
+      if (presence < 0.05) continue; // a flicker, not a person
+      tracks.push({ id: 0, cx, cy, w, h: hh, lip, presence });
     }
-    const presence = seen / n;
-    if (presence < 0.05) continue; // a flicker, not a person
-    tracks.push({ id: 0, cx, cy, w, h: hh, lip, presence });
-  }
-  tracks.sort((a, b) => b.presence * medianOf(b.w) - a.presence * medianOf(a.w));
-  tracks.forEach((t, k) => { t.id = k; });
-  return { sampleMs: FACE_SAMPLE_MS, n, startMs: videoStartMs, aspect, tracks };
+    tracks.sort((a, b) => b.presence * medianOf(b.w) - a.presence * medianOf(a.w));
+    tracks.forEach((t, k) => { t.id = k; });
+    return { sampleMs: FACE_SAMPLE_MS, n, startMs: videoStartMs, aspect, tracks };
+  } finally { cleanup(); }
 }
 
 // ------------------------------------------------------------------ helpers
