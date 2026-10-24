@@ -875,3 +875,33 @@ input[type=range]::-moz-range-thumb { width: 22px; height: 22px; }
 /* export sliders keep their own fill variables */
 input.xrange::-webkit-slider-runnable-track { background: linear-gradient(90deg, var(--accent) var(--p), #3a3a3c var(--p)); }
 input.xs-range::-webkit-slider-runnable-track { background: linear-gradient(90deg, var(--accent) var(--fill), #3a3a3c var(--fill)); }
+
+/* =====================================================================
+   Home screen keeps its previous look (not part of the redesign).
+   Old tokens and old component styles are restored inside .home only.
+   ===================================================================== */
+.home {
+  --bg: #0a0a0e; --surface: #121217; --elevated: #1a1a22; --border: #262632;
+  --text2: #a4a4b2; --disabled: #555562; --accent: #00f2fe;
+  font-family: Roboto, Inter, system-ui, sans-serif;
+}
+.home .title, .home .hero h1 { letter-spacing: normal; }
+.home .hero h1 { letter-spacing: -.5px; }
+.home .bigcard { border: 1px solid #262632; box-shadow: none; background: #121217; border-radius: 18px; font-weight: 500; }
+.home .bigcard:active { background: #1a1a22; transform: none; }
+.home .toolcell { background: #13131a; border: 1px solid rgba(255,255,255,0.05); border-radius: 14px; }
+.home .toolcell:active { background: #1d1d28; transform: none; }
+.home .toolcell svg { color: #f0f0f5; }
+.home .rthumb { border: 1px solid #262632; box-shadow: none; border-radius: 14px; }
+.home .pcard { border: 1px solid #262632; box-shadow: none; background: #121217; border-radius: 14px; }
+.home .circbtn { background: #1a1a22; }
+.home .htop input[type=text] { background: #14141c; border: 1px solid #242430; box-shadow: none; border-radius: 20px; }
+.home .tabbar { background: #0a0a0e; border-top: 1px solid #262632; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.home .tab { color: #a4a4b2; }
+.home .tab.on { color: #fff; font-weight: 600; }
+.home .badge { border: 1px solid #262632; background: #1a1a22; }
+/* project action sheet opened from Home */
+.project-sheet { background: #16161c; -webkit-backdrop-filter: none; backdrop-filter: none; border-top: 1px solid rgba(255,255,255,0.08); border-radius: 20px 20px 0 0; box-shadow: 0 -10px 40px rgba(0,0,0,0.7); }
+.project-sheet-drag-handle { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.2); margin: 0 auto 14px; }
+.project-sheet-cancel-item { background: rgba(255,255,255,0.06); border-radius: 12px; }
+.project-sheet-item.danger, .project-sheet-item.danger svg { color: #ff4d4f; }
