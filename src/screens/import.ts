@@ -37,6 +37,12 @@ export function importScreen() {
       // new videos: sync and auto switch run again when the editor opens
       p.segments = []; p.offsetMs = 0; p.syncConfidence = undefined; p.durationMs = 0;
       p.proxyHost = p.proxyConst = false; p.thumb = undefined;
+      const primary = hm ?? cm;
+      if (primary && primary.width && primary.height) {
+        if (primary.height > primary.width) p.aspect = '9:16';
+        else if (primary.width > primary.height) p.aspect = '16:9';
+        else p.aspect = '1:1';
+      }
     }
     runtime.projectId = p.id;
     await saveProject(p);

@@ -22,17 +22,14 @@ import { confirmDialog, fmtClock, h, ICON, icon, iconButton, spinner, toast } fr
 type Panel = 'none' | 'ratio' | 'crop' | 'silence' | 'sync' | 'layout' | 'main' | 'audio';
 
 // ---- timeline geometry (CSS px) ----
-const G = 36;            // left column with the lane icons (like CapCut)
-const RULER = 24;
-const LANE = 54;         // video clip row (CapCut filmstrip height)
-const AUD = 32;          // audio waveform row
-const LAY = 28;          // layout row
+const G = 36;            // left column with lane icons
+const RULER = 22;        // top ruler
+const LANE = 50;         // auto-cut master video filmstrip track height
+const AUD = 32;          // audio waveform track height
 const GAP = 4;
-const HOST_Y = RULER + GAP;
-const CONST_Y = HOST_Y + LANE + GAP;
-const AUD_Y = CONST_Y + LANE + GAP;
-const LAY_Y = AUD_Y + AUD + GAP;
-const TL_H = LAY_Y + LAY + 8;
+const MAIN_Y = RULER + GAP;
+const AUD_Y = MAIN_Y + LANE + GAP;
+const TL_H = AUD_Y + AUD + 10;
 const CYAN = '#19e6c1';
 const CROP_RATIOS: [CropRatio, string][] = [
   ['custom', 'Custom'], ['9:16', '9:16'], ['16:9', '16:9'], ['1:1', '1:1'], ['4:3', '4:3'], ['2:3', '2:3'],
@@ -220,6 +217,13 @@ export function editorScreen() {
     v.style.transform = Math.abs(zoom - 1) < 0.001 && Math.abs(c.x) < 0.001 && Math.abs(c.y) < 0.001 && Math.abs(rotate) < 0.001 && !mirrored
       ? ''
       : `translate(${tx}%, ${ty}%) scale(${zoom}, ${zoom}) rotate(${rotate}deg) scale(${cover})${mirrored ? ' scaleX(-1)' : ''}`;
+
+    if (cell) {
+      cell.style.borderRadius = c.radius ? `${c.radius}px` : '';
+      cell.style.overflow = 'hidden';
+      cell.style.border = c.strokeWidth ? `${c.strokeWidth}px solid ${c.strokeColor || '#ffffff'}` : '';
+      cell.style.boxSizing = 'border-box';
+    }
   }
   applyCrop('host'); applyCrop('constant');
 
@@ -812,82 +816,133 @@ export function editorScreen() {
     g.beginPath(); g.roundRect(x, y, Math.max(1, w), hh, r);
   }
 
-  /** One video clip row: thumbnails ONLY, no waveform or darkening. Clamped to [0 .. p.durationMs]. */
-  function drawVideoRow(g: CanvasRenderingContext2D, role: Role, y: number, durMs: number, strip: Strip | undefined, offsetMs: number) {
+  const filmGlyph = (g: CanvasRenderingContext2D, cx: number, cy: number, color: string) => {
+    g.save();
+    g.strokeStyle = color;
+    g.fillStyle = color;
+    g.lineWidth = 1.2;
+    const w = 14, h = 11;
+    const x = cx - w / 2, y = cy - h / 2;
+    g.strokeRect(x, y, w, h);
+    g.fillRect(x + 2, y + 2, 2, 2);
+    g.fillRect(x + w - 4, y + 2, 2, 2);
+    g.fillRect(x + 2, y + h - 4, 2, 2);
+    g.fillRect(x + w - 4, y + h - 4, 2, 2);
+    g.restore();
+  };
+
+  /** Unified Auto-Cut Master Video Track: renders filmstrip thumbnails for active speaker segments. */
+  function drawMasterVideoTrack(g: CanvasRenderingContext2D) {
     const bx1 = xOf(0), bx2 = xOf(p.durationMs);
     if (bx2 < G || bx1 > W) return;
     const bw = bx2 - bx1;
 
     g.save();
-    rrect(g, bx1, y, bw, LANE, 3);
+    rrect(g, bx1, MAIN_Y, bw, LANE, 4);
     g.clip();
 
-    // Plain dark strip background (shows through where there is no video content)
-    g.fillStyle = role === 'host' ? '#181818' : '#141d17';
-    g.fillRect(bx1, y, bw, LANE);
+    // Dark track background
+    g.fillStyle = '#141416';
+    g.fillRect(bx1, MAIN_Y, bw, LANE);
 
-    // Picture strip (content slides inside the fixed block based on offsetMs)
-    if (strip) {
-      const x1 = xOf(-offsetMs);
-      const x2 = x1 + (durMs / 1000) * pxPerSec;
-      const vx1 = Math.max(bx1, G, x1);
-      const vx2 = Math.min(bx2, W, x2);
-      if (vx2 > vx1) {
-        const tw = Math.max(16, Math.round(LANE * strip.aspect));
-        const k0 = Math.max(0, Math.floor((vx1 - x1) / tw));
-        const k1 = Math.floor((vx2 - x1) / tw);
-        for (let k = k0; k <= k1; k++) {
-          const tMs = ((k + 0.5) * tw / pxPerSec) * 1000;
-          if (tMs < 0 || tMs >= durMs) continue;
-          const idx = Math.max(0, Math.min(strip.count - 1, Math.floor((tMs / durMs) * strip.count)));
-          const img = strip.frames[idx] ?? strip.frames.find((f) => !!f);
-          if (img) {
-            g.globalAlpha = strip.frames[idx] ? 1 : 0.45;
-            g.drawImage(img, x1 + k * tw, y, tw, LANE);
-            g.globalAlpha = 1;
+    // Gaps/holes where silence was cut out
+    const kept = coverage(p.segments);
+    let at = 0;
+    const holes: Range[] = [];
+    for (const r of kept) { if (r.startMs > at) holes.push({ startMs: at, endMs: r.startMs }); at = r.endMs; }
+    if (kept.length && at < p.durationMs) holes.push({ startMs: at, endMs: p.durationMs });
+    for (const r of holes) {
+      const x1 = Math.max(G, xOf(r.startMs)), x2 = Math.min(W, xOf(r.endMs));
+      if (x2 - x1 < 2) continue;
+      g.save(); g.beginPath(); g.rect(x1, MAIN_Y, x2 - x1, LANE); g.clip();
+      g.strokeStyle = '#282828'; g.lineWidth = 1;
+      for (let k = x1 - LANE; k < x2; k += 6) { g.beginPath(); g.moveTo(k, MAIN_Y + LANE); g.lineTo(k + LANE, MAIN_Y); g.stroke(); }
+      g.restore();
+    }
+
+    // Render each cut segment
+    for (const seg of p.segments) {
+      const x1 = xOf(seg.startMs), x2 = xOf(seg.endMs);
+      if (x2 < G || x1 > W) continue;
+      const sw = x2 - x1;
+
+      g.save();
+      g.beginPath();
+      g.rect(Math.max(G, x1), MAIN_Y, Math.min(W, x2) - Math.max(G, x1), LANE);
+      g.clip();
+
+      const isHost = seg.main === 'host';
+      const strip = isHost ? hostStrip : constStrip;
+      const offsetMs = isHost ? 0 : p.offsetMs;
+      const durMs = isHost ? hostDur : constDur;
+
+      // Subtle speaker tint
+      g.fillStyle = isHost ? '#18181e' : '#121f16';
+      g.fillRect(x1, MAIN_Y, sw, LANE);
+
+      // Filmstrip thumbnails
+      if (strip) {
+        const sx1 = xOf(-offsetMs);
+        const sx2 = sx1 + (durMs / 1000) * pxPerSec;
+        const vx1 = Math.max(x1, G, sx1);
+        const vx2 = Math.min(x2, W, sx2);
+        if (vx2 > vx1) {
+          const tw = Math.max(16, Math.round(LANE * strip.aspect));
+          const k0 = Math.max(0, Math.floor((vx1 - sx1) / tw));
+          const k1 = Math.floor((vx2 - sx1) / tw);
+          for (let k = k0; k <= k1; k++) {
+            const tMs = ((k + 0.5) * tw / pxPerSec) * 1000;
+            if (tMs < 0 || tMs >= durMs) continue;
+            const idx = Math.max(0, Math.min(strip.count - 1, Math.floor((tMs / durMs) * strip.count)));
+            const img = strip.frames[idx] ?? strip.frames.find((f) => !!f);
+            if (img) {
+              g.globalAlpha = strip.frames[idx] ? 1 : 0.45;
+              g.drawImage(img, sx1 + k * tw, MAIN_Y, tw, LANE);
+              g.globalAlpha = 1;
+            }
           }
         }
       }
-    }
 
-    // Small label pill in the top-left corner
-    const label = `${role === 'host' ? 'Host' : 'Constant'}  ${fmtClock(durMs)}`;
-    g.font = '600 9px Roboto, sans-serif';
-    g.textBaseline = 'middle';
-    const lw = g.measureText(label).width;
-    const tx = Math.max(bx1, G) + 4;
-    if (tx + lw + 22 < bx2) {
-      rrect(g, tx, y + 3, lw + 20, 14, 3);
-      g.fillStyle = role === 'host' ? 'rgba(0,0,0,0.65)' : 'rgba(10,30,16,0.75)';
-      g.fill();
-      if (role === 'constant') {
-        g.strokeStyle = 'rgba(74,222,128,0.45)';
-        g.lineWidth = 0.8;
+      // Glyph indicator if width allows
+      if (sw > 24) {
+        drawGlyph(g, seg, Math.max(x1, G) + 12, MAIN_Y + 12);
+      }
+
+      g.restore();
+
+      // CapCut white subtle vertical split divider
+      g.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+      g.lineWidth = 1;
+      g.beginPath();
+      g.moveTo(x1 + 0.5, MAIN_Y);
+      g.lineTo(x1 + 0.5, MAIN_Y + LANE);
+      g.stroke();
+
+      // Active selection highlight
+      if (seg.id === selectedId) {
+        g.strokeStyle = '#FFFFFF';
+        g.lineWidth = 2;
+        rrect(g, x1 + 1, MAIN_Y + 1, sw - 2, LANE - 2, 3);
         g.stroke();
+
+        const hw = Math.min(8, Math.max(5, sw / 4));
+        g.fillStyle = '#FFFFFF';
+        rrect(g, x1, MAIN_Y + 1, hw, LANE - 2, 2); g.fill();
+        rrect(g, x2 - hw, MAIN_Y + 1, hw, LANE - 2, 2); g.fill();
+        g.fillStyle = '#000000';
+        g.fillRect(x1 + hw / 2 - 0.75, MAIN_Y + 12, 1.5, LANE - 24);
+        g.fillRect(x2 - hw / 2 - 0.75, MAIN_Y + 12, 1.5, LANE - 24);
       }
-      if (role === 'host') {
-        micGlyph(g, tx + 7.5, y + 10, '#ffffff');
-      } else {
-        cameraGlyph(g, tx + 7.5, y + 10, '#4ade80');
-      }
-      g.fillStyle = role === 'host' ? '#ffffff' : '#4ade80';
-      g.fillText(label, tx + 16, y + 10);
     }
 
     g.restore();
 
     // Outer border
-    if (selClip === role) {
-      g.strokeStyle = '#ffffff';
-      g.lineWidth = 2;
-      rrect(g, bx1 + 1, y + 1, bw - 2, LANE - 2, 3);
-      g.stroke();
-    } else {
-      g.strokeStyle = role === 'host' ? 'rgba(255,255,255,0.16)' : 'rgba(74,222,128,0.32)';
-      g.lineWidth = 1;
-      rrect(g, bx1 + 0.5, y + 0.5, bw - 1, LANE - 1, 3);
-      g.stroke();
-    }
+    g.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+    g.lineWidth = 1;
+    rrect(g, bx1 + 0.5, MAIN_Y + 0.5, bw - 1, LANE - 1, 4);
+    g.stroke();
   }
 
   /** Single audio waveform row for the selected sound (p.mainAudio). Centered mirrored bars. */
@@ -967,7 +1022,7 @@ export function editorScreen() {
         const bh = v * maxBh; if (bh > 0.5) g.fillRect(x, y + LANE - 2 - bh, 2, bh);
       }
     };
-    bars(actH!, HOST_Y, 0); bars(actC!, CONST_Y, p.offsetMs);
+    bars(actH!, MAIN_Y, 0); bars(actC!, MAIN_Y, p.offsetMs);
   }
 
   const micGlyph = (g: CanvasRenderingContext2D, cx: number, cy: number, color: string) => {
@@ -1040,99 +1095,30 @@ export function editorScreen() {
       g.beginPath(); g.arc(mx, RULER / 2, 1.4, 0, 6.3); g.fill();
     }
 
-    // ---- video and audio rows (all clipped to 0 .. p.durationMs)
-    drawVideoRow(g, 'host', HOST_Y, hostDur, hostStrip, 0);
-    drawVideoRow(g, 'constant', CONST_Y, constDur, constStrip, p.offsetMs);
+    // ---- unified master video and audio rows (all clipped to 0 .. p.durationMs)
+    drawMasterVideoTrack(g);
     drawAudioRow(g);
-    drawMotion(g);
-
-    // ---- layout lane
-    const lbx1 = xOf(0), lbx2 = xOf(p.durationMs);
-    const lbw = lbx2 - lbx1;
-    if (lbx2 >= G && lbx1 <= W) {
-      g.save();
-      rrect(g, lbx1, LAY_Y, lbw, LAY, 3);
-      g.clip();
-      g.fillStyle = '#0d0d0d';
-      g.fillRect(lbx1, LAY_Y, lbw, LAY);
-      {
-        const kept = coverage(p.segments);
-        const holes: Range[] = [];
-        let at = 0;
-        for (const r of kept) { if (r.startMs > at) holes.push({ startMs: at, endMs: r.startMs }); at = r.endMs; }
-        if (kept.length && at < p.durationMs) holes.push({ startMs: at, endMs: p.durationMs });
-        for (const r of holes) {
-          const x1 = Math.max(G, xOf(r.startMs)), x2 = Math.min(W, xOf(r.endMs));
-          if (x2 - x1 < 2) continue;
-          g.save(); g.beginPath(); g.rect(x1, LAY_Y, x2 - x1, LAY); g.clip();
-          g.strokeStyle = '#3a3a3a'; g.lineWidth = 1;
-          for (let k = x1 - LAY; k < x2; k += 6) { g.beginPath(); g.moveTo(k, LAY_Y + LAY); g.lineTo(k + LAY, LAY_Y); g.stroke(); }
-          g.restore();
-        }
-      }
-      for (const s of p.segments) {
-        const x1 = xOf(s.startMs), x2 = xOf(s.endMs);
-        if (x2 < G || x1 > W) continue;
-        g.fillStyle = segmentColor(s);
-        rrect(g, x1 + 0.5, LAY_Y + 1, x2 - x1 - 1, LAY - 2, 3); g.fill();
-        if (s.id === selectedId) {
-          g.strokeStyle = '#FFFFFF'; g.lineWidth = 2;
-          rrect(g, x1 + 1, LAY_Y + 1, x2 - x1 - 2, LAY - 2, 3); g.stroke();
-          // CapCut style active clip selection pill handles
-          const hw = Math.min(10, Math.max(6, (x2 - x1) / 4));
-          g.fillStyle = '#FFFFFF';
-          rrect(g, x1, LAY_Y + 1, hw, LAY - 2, 2); g.fill();
-          rrect(g, x2 - hw, LAY_Y + 1, hw, LAY - 2, 2); g.fill();
-          g.fillStyle = '#000000';
-          g.fillRect(x1 + hw / 2 - 0.75, LAY_Y + 6, 1.5, LAY - 14);
-          g.fillRect(x2 - hw / 2 - 0.75, LAY_Y + 6, 1.5, LAY - 14);
-        }
-        if (x2 - x1 > 24) drawGlyph(g, s, Math.max(x1, G) + 14, LAY_Y + LAY / 2);
-      }
-      g.restore();
-      g.strokeStyle = 'rgba(255,255,255,.16)';
-      g.lineWidth = 1;
-      rrect(g, lbx1 + 0.5, LAY_Y + 0.5, lbw - 1, LAY - 1, 3);
-      g.stroke();
-    }
 
     // silence found but not cut yet
     if (pendingCuts.length) {
       g.fillStyle = 'rgba(239,68,68,.38)';
       for (const r of pendingCuts) {
         const x1 = Math.max(G, xOf(r.startMs)), x2 = Math.min(W, xOf(r.endMs));
-        if (x2 > x1) g.fillRect(x1, HOST_Y, x2 - x1, LAY_Y + LAY - HOST_Y);
+        if (x2 > x1) g.fillRect(x1, MAIN_Y, x2 - x1, AUD_Y + AUD - MAIN_Y);
       }
     }
 
     // sync snap guide
     if (snapMs !== null) {
       const sx = xOf(snapMs);
-      g.fillStyle = CYAN; g.fillRect(sx - 0.75, HOST_Y - 2, 1.5, CONST_Y + LANE - HOST_Y + 4);
+      g.fillStyle = CYAN; g.fillRect(sx - 0.75, MAIN_Y - 2, 1.5, AUD_Y + AUD - MAIN_Y + 4);
     }
 
     // ---- left column (lane icons), drawn over the clips
     g.fillStyle = '#000'; g.fillRect(0, RULER, G, H - RULER);
     g.fillStyle = '#262626'; g.fillRect(G - 1, RULER, 1, H - RULER);
-    const audioHost = p.mainAudio === 'host';
-    micGlyph(g, G / 2, HOST_Y + LANE / 2, '#ffffff');
-    cameraGlyph(g, G / 2, CONST_Y + LANE / 2, '#4ade80');
-    speakerGlyph(g, G / 2, AUD_Y + AUD / 2, audioHost ? '#ffffff' : '#4ade80');
-    const lx = G / 2, ly = LAY_Y + LAY / 2;
-    g.strokeStyle = '#d6d6d6'; g.lineWidth = 1.4;
-    g.strokeRect(lx - 6, ly - 6, 5, 5); g.strokeRect(lx + 1, ly - 6, 5, 5);
-    g.strokeRect(lx - 6, ly + 1, 5, 5); g.strokeRect(lx + 1, ly + 1, 5, 5);
-
-    // ---- time (top left, like CapCut): 00:34 / 10:22
-    const cur = fmtClock(playMs), tot = ` / ${fmtClock(p.durationMs)}`;
-    const kept = keptMs(p.segments);
-    const note = p.segments.length && p.durationMs - kept > 500 ? `  (${fmtClock(kept)} kept)` : '';
-    g.font = '10px Roboto, sans-serif';
-    const wCur = g.measureText(cur).width, wTot = g.measureText(tot).width, wNote = g.measureText(note).width;
-    g.fillStyle = '#000'; g.fillRect(0, 0, 10 + wCur + wTot + wNote, RULER);
-    g.textBaseline = 'middle';
-    g.fillStyle = '#fff'; g.fillText(cur, 6, RULER / 2);
-    g.fillStyle = '#8a8a8a'; g.fillText(tot + note, 6 + wCur, RULER / 2);
+    filmGlyph(g, G / 2, MAIN_Y + LANE / 2, '#ffffff');
+    speakerGlyph(g, G / 2, AUD_Y + AUD / 2, p.mainAudio === 'host' ? '#ffffff' : '#4ade80');
 
     // ---- playhead needle (fixed at the center, CapCut style with top triangle and cyan snap glow)
     const phX = Math.round(W / 2);
@@ -1167,13 +1153,11 @@ export function editorScreen() {
   let lastClientY = 0;
   const localX = (e: PointerEvent) => e.clientX - canvas.getBoundingClientRect().left;
   const localY = (e: PointerEvent) => e.clientY - canvas.getBoundingClientRect().top;
-  type Lane = 'ruler' | 'host' | 'const' | 'audio' | 'lay' | 'none';
+  type Lane = 'ruler' | 'main' | 'audio' | 'none';
   function laneAt(y: number): Lane {
     if (y < RULER) return 'ruler';
-    if (y < HOST_Y + LANE + GAP / 2) return 'host';
-    if (y < CONST_Y + LANE + GAP / 2) return 'const';
+    if (y < MAIN_Y + LANE + GAP / 2) return 'main';
     if (y < AUD_Y + AUD + GAP / 2) return 'audio';
-    if (y < LAY_Y + LAY + 6) return 'lay';
     return 'none';
   }
   function hitSegment(x: number): Segment | undefined {
@@ -1181,7 +1165,7 @@ export function editorScreen() {
     return p.segments.find((s) => ms >= s.startMs && ms < s.endMs);
   }
   function hitBoundary(x: number, y: number): number {
-    if (y < LAY_Y - 8 || y > LAY_Y + LAY + 8) return -1;
+    if (y < MAIN_Y - 8 || y > MAIN_Y + LANE + 8) return -1;
     for (let i = 0; i < p.segments.length - 1; i++) {
       if (Math.abs(p.segments[i].endMs - p.segments[i + 1].startMs) > 1) continue; // cut part between them
       if (Math.abs(xOf(p.segments[i].endMs) - x) < 16) return i;
@@ -1202,17 +1186,16 @@ export function editorScreen() {
     const lane = laneAt(startY);
     const bi = startX >= G ? hitBoundary(startX, startY) : -1;
     if (bi >= 0) { mode = 'boundary'; boundaryIdx = bi; hist.push(snap()); }
-    else if (lane === 'const' && selClip === 'constant' && startX >= G) {
-      // the green clip is selected: dragging it moves it (that is how you sync by hand)
+    else if (panel === 'sync' && startX >= G) {
       mode = 'clip'; clipStartMs0 = -p.offsetMs; clipPushed = false; clipBefore = structuredClone(snap());
     }
     else mode = 'scrub';
     clearTimeout(lpTimer);
     lpTimer = window.setTimeout(() => {
-      if (moved || mode !== 'scrub' || laneAt(startY) !== 'lay' || startX < G) return;
+      if (moved || mode !== 'scrub' || laneAt(startY) !== 'main' || startX < G) return;
       const s = hitSegment(startX);
       if (s) { selectSeg(s.id); tick(); }
-    }, 550);
+    }, 450);
   });
 
   tl.addEventListener('pointermove', (e) => {
@@ -1274,47 +1257,44 @@ export function editorScreen() {
   function onTap(x: number, y: number) {
     const lane = laneAt(y);
     if (x < G) {
-      // left column: tap the speaker icon in the audio row to toggle sound
       if (lane === 'audio') {
         setAudio(p.mainAudio === 'host' ? 'constant' : 'host');
-      } else if (lane === 'host') {
-        setAudio('host');
-      } else if (lane === 'const') {
-        setAudio('constant');
+      } else if (lane === 'main') {
+        const seg = target();
+        if (seg) selectSeg(seg.id);
       }
       return;
     }
-    if (lane === 'lay' || lane === 'ruler' || lane === 'audio' || lane === 'none') {
-      const s = lane === 'lay' ? hitSegment(x) : undefined;
-      if (s) { if (panel !== 'none') closePanel(); selectSeg(s.id); tick(); }
-      else if (lane !== 'ruler') { selClip = null; selectedId = null; renderBar(); draw(); updateSelFrame(); }
-      return;
-    }
-    // a video clip: tap selects it and switches sound; tapping the green clip opens Sync
-    const bx1 = xOf(0), bx2 = xOf(p.durationMs);
-    if (x >= bx1 && x <= bx2) {
-      if (lane === 'const') {
-        selClip = 'constant';
-        selectedId = null;
-        setAudio('constant');
-        tick();
-        openPanel('sync');
-        updateSelFrame();
-        return;
-      }
-      if (lane === 'host') {
+    if (lane === 'main') {
+      const s = hitSegment(x);
+      if (s) {
         if (panel !== 'none') closePanel();
-        selClip = 'host';
+        selectSeg(s.id);
+        tick();
+      } else {
         selectedId = null;
-        setAudio('host');
+        selClip = null;
         renderBar();
         draw();
-        tick();
         updateSelFrame();
-        return;
       }
+      return;
     }
-    selClip = null; renderBar(); draw(); updateSelFrame();
+    if (lane === 'audio') {
+      setAudio(p.mainAudio === 'host' ? 'constant' : 'host');
+      openPanel('audio');
+      return;
+    }
+    if (lane === 'ruler') {
+      const ms = Math.max(0, Math.min(p.durationMs, msOf(x)));
+      seek(ms);
+      return;
+    }
+    selectedId = null;
+    selClip = null;
+    renderBar();
+    draw();
+    updateSelFrame();
   }
 
   // ======================================================================= Controls (CapCut layout)
@@ -1836,6 +1816,33 @@ export function editorScreen() {
             applyCrop(cropRole); positionCropFrame(); scheduleSave(); renderPanel();
           },
         }, label)));
+      const radiusSlider = slider('Corner radius', 0, 32, 1, c.radius ?? 0, (v) => `${v}px`, (v) => { c.radius = v; applyCrop(cropRole); scheduleSave(); });
+      const strokeSlider = slider('Border width', 0, 8, 1, c.strokeWidth ?? 0, (v) => `${v}px`, (v) => { c.strokeWidth = v; applyCrop(cropRole); scheduleSave(); });
+      const colors = ['#ffffff', '#19e6c1', '#facc15', '#4ade80', '#f43f5e', '#60a5fa'];
+      const curColor = c.strokeColor || '#ffffff';
+      const colorRow = h('div', { class: 'prow' },
+        h('div', { class: 'plabel' }, 'Border color'),
+        h('div', { class: 'color-swatches' },
+          ...colors.map((col) => h('button', {
+            class: 'color-swatch' + (col === curColor ? ' sel' : ''),
+            style: `background:${col}`,
+            'aria-label': `Select border color ${col}`,
+            onclick: () => { c.strokeColor = col; applyCrop(cropRole); scheduleSave(); renderPanel(); }
+          }))
+        )
+      );
+      const applyAllBtn = h('button', {
+        class: 'chip',
+        style: 'min-height:36px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);color:#fff',
+        onclick: () => {
+          const src = cropState();
+          p.cropHost = { ...p.cropHost, radius: src.radius, strokeWidth: src.strokeWidth, strokeColor: src.strokeColor };
+          p.cropConst = { ...p.cropConst, radius: src.radius, strokeWidth: src.strokeWidth, strokeColor: src.strokeColor };
+          applyCrop('host'); applyCrop('constant'); scheduleSave();
+          toast('Applied framing styling to all clips.');
+        }
+      }, icon('wand', 16), 'Apply to all clips');
+
       setPanel('Crop',
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Video'),
           chipRow<Role>([['host', 'Host'], ['constant', 'Constant']], cropRole, (v) => { cropRole = v; renderPanel(); layoutCrop(); })),
@@ -1844,7 +1851,10 @@ export function editorScreen() {
           h('div', { class: 'crop-ruler' }, ...rulerTicks, rotateInput),
           h('div', { class: 'crop-ruler-labels' }, h('span', {}, '−45°'), h('span', {}, '0°'), h('span', {}, '+45°'))),
         h('div', { class: 'prow crop-ratio-row' }, h('div', { class: 'plabel' }, 'Aspect ratio'), ratios),
-        h('div', { class: 'crop-actions' }, mirrorChip, reset),
+        radiusSlider.row,
+        strokeSlider.row,
+        colorRow,
+        h('div', { class: 'crop-actions' }, mirrorChip, reset, applyAllBtn),
         h('div', { class: 'pinfo' }, 'Drag the corners or pinch to crop. Drag inside the frame to move it.'));
     } else {
       const total = pendingCuts.reduce((a, r) => a + (r.endMs - r.startMs), 0);

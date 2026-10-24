@@ -6,7 +6,7 @@ const MAX_UNDO = 50;
 
 export const DEFAULT_SETTINGS: Settings = {
   sensitivity: 'medium',
-  minSegmentMs: 1500,
+  minSegmentMs: 1000,
   resolution: 720,
   fps: 30,
   bitrateMbps: 0,
@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS: Settings = {
   silenceMinMs: 1000,
   silencePadMs: 150,
   silenceSens: 'medium',
+  preferredAudio: 'auto',
 };
 
 // ---------------------------------------------------------------- IndexedDB
@@ -102,7 +103,13 @@ export function saveSettings(s: Settings): Promise<void> {
 /** Projects saved by older versions miss the newer fields. */
 function withDefaults(p: Project): Project {
   const cropDefaults = (crop?: Partial<CropState>): CropState => ({
-    ...NO_CROP, ...(crop ?? {}), rotate: crop?.rotate ?? 0, ratio: crop?.ratio ?? 'custom',
+    ...NO_CROP,
+    ...(crop ?? {}),
+    rotate: crop?.rotate ?? 0,
+    ratio: crop?.ratio ?? 'custom',
+    radius: crop?.radius ?? 0,
+    strokeWidth: crop?.strokeWidth ?? 0,
+    strokeColor: crop?.strokeColor ?? '#ffffff',
   });
   return {
     ...p,

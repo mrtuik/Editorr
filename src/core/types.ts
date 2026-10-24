@@ -9,8 +9,18 @@ export type SilenceSens = 'low' | 'medium' | 'high';
 export type CropRatio = 'custom' | '9:16' | '16:9' | '1:1' | '4:3' | '2:3';
 
 /** Pan/zoom of one video inside its frame. zoom 1 = no crop. x,y in -1..1 move the picture. */
-export interface CropState { zoom: number; x: number; y: number; rotate: number; ratio?: CropRatio; frameRatio?: number; }
-export const NO_CROP: CropState = { zoom: 1, x: 0, y: 0, rotate: 0, ratio: 'custom' };
+export interface CropState {
+  zoom: number;
+  x: number;
+  y: number;
+  rotate: number;
+  ratio?: CropRatio;
+  frameRatio?: number;
+  radius?: number;
+  strokeWidth?: number;
+  strokeColor?: string;
+}
+export const NO_CROP: CropState = { zoom: 1, x: 0, y: 0, rotate: 0, ratio: 'custom', radius: 0, strokeWidth: 0, strokeColor: '#ffffff' };
 
 export const ASPECTS: Record<Aspect, [number, number]> = {
   '16:9': [16, 9], '9:16': [9, 16], '1:1': [1, 1], '4:5': [4, 5], '4:3': [4, 3],
@@ -61,12 +71,13 @@ export interface Settings {
   fps: number;
   /** Export bitrate in Mbps. 0 = automatic (recommended for the picked size). */
   bitrateMbps: number;
-  bothSpeaking: 'hold' | 'side';
+  bothSpeaking: 'hold' | 'side' | 'updown' | 'popup';
   /** Silence cut: both people quiet for at least this long gets removed. */
   silenceMinMs: number;
   /** Keep this much quiet time next to speech so words are not clipped. */
   silencePadMs: number;
   silenceSens: SilenceSens;
+  preferredAudio?: 'auto' | 'host' | 'constant';
 }
 
 export interface Project {
