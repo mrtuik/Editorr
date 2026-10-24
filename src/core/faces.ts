@@ -33,6 +33,9 @@ export interface FaceScan {
   /** video width / height */
   aspect: number;
   tracks: FaceTrack[];
+  /** A picture from the moment with the most people in view, and its sample number (for the face picker). */
+  snapshot?: HTMLCanvasElement;
+  snapshotI?: number;
 }
 
 // ------------------------------------------------------------------ model loading
@@ -52,7 +55,9 @@ function loadMediaPipe(): Promise<any> {
 
 /** A fresh landmarker in VIDEO mode (it tracks faces from frame to frame, which is much faster than detecting every frame).
  *  Local files first (offline), the internet only as a fallback. */
-async function newLandmarker(): Promise<any> {
+function delegateOk(): 'GPU' | 'CPU' | null { return working ? working.delegate : null; }
+
+async function newLandmarker(forceCpu = false): Promise<any> {
   const mp = await loadMediaPipe();
   const sources = [
     { wasm: baseUrl('mediapipe/wasm'), model: baseUrl('mediapipe/face_landmarker.task') },
@@ -62,9 +67,10 @@ async function newLandmarker(): Promise<any> {
     },
   ];
   const tries: { srcIndex: number; delegate: 'GPU' | 'CPU' }[] = [];
-  if (working) tries.push(working);
-  sources.forEach((_, srcIndex) => (['GPU', 'CPU'] as const).forEach((delegate) => {
-    if (!(working && working.srcIndex === srcIndex && working.delegate === delegate)) tries.push({ srcIndex, delegate });
+  const delegates = forceCpu ? (['CPU'] as const) : (['GPU', 'CPU'] as const);
+  if (working && (!forceCpu || working.delegate === 'CPU')) tries.push(working);
+  sources.forEach((_, srcIndex) => delegates.forEach((delegate) => {
+    if (!(working && working.srcIndex === srcIndex && working.delegate === delegate && tries.length)) tries.push({ srcIndex, delegate });
   }));
   let lastError: unknown = null;
   for (const t of tries) {
@@ -107,31 +113,30 @@ function waitSeek(v: HTMLVideoElement, t: number): Promise<void> {
 async function sampleVideo(
   v: HTMLVideoElement, startMs: number, n: number, sampleMs: number,
   cb: (i: number) => void, onProgress: (pct: number) => void, cancelled: () => boolean,
-): Promise<boolean> {
+  isDone: (i: number) => boolean, recover?: () => Promise<void>,
+): Promise<{ ok: boolean; via: 'play' | 'play+seek' | 'seek' }> {
   let next = Math.ceil(Math.max(0, -startMs) / sampleMs);
 
   const sequential = (): Promise<'done' | 'cancel' | 'stalled'> => new Promise((resolve) => {
-    const rvfc = (v as any).requestVideoFrameCallback?.bind(v) as undefined | ((f: (now: number, meta: any) => void) => number);
-    if (!rvfc) { resolve('stalled'); return; }
-    let finished = false, last = performance.now(), got = 0, rate = 4, busyMs = 0, busyN = 0;
+    let finished = false, lastMoveAt = performance.now(), lastT = -1, got = 0, rate = 2, busyMs = 0, busyN = 0;
     const finish = (r: 'done' | 'cancel' | 'stalled') => {
-      if (finished) return; finished = true; clearInterval(watch);
-      v.removeEventListener('ended', onEnd);
+      if (finished) return; finished = true; window.clearInterval(timer);
       try { v.pause(); } catch { /* ignore */ }
       resolve(r);
     };
-    const onEnd = () => finish('done');
-    v.addEventListener('ended', onEnd);
-    const watch = window.setInterval(() => {
-      if (cancelled()) finish('cancel');
-      else if (performance.now() - last > (got ? 5000 : 4000)) finish(got ? 'done' : 'stalled');
-    }, 400);
-    const onFrame = (now: number, meta: any) => {
+    // Poll the playing video's clock. This works whether or not the video is visible on screen
+    // (frame callbacks do not fire for hidden videos).
+    const timer = window.setInterval(() => {
       if (finished) return;
-      last = now; got++;
-      const tl = meta.mediaTime * 1000 - startMs;
+      if (cancelled()) { finish('cancel'); return; }
+      if (v.error) { finish(got ? 'done' : 'stalled'); return; }
+      const nowMs = performance.now();
+      if (v.currentTime !== lastT) { lastT = v.currentTime; lastMoveAt = nowMs; got++; }
+      if (v.paused && !v.ended) { v.play().catch(() => {}); }
+      if (nowMs - lastMoveAt > 4000) { finish(got > 3 ? 'done' : 'stalled'); return; }
+      const tl = v.currentTime * 1000 - startMs;
       const due = Math.floor(tl / sampleMs);
-      if (due >= n) { finish('done'); return; }
+      if (v.ended || due >= n) { finish('done'); return; }
       if (due >= next) {
         const t0 = performance.now();
         try { cb(due); } catch { /* skip this sample */ }
@@ -140,38 +145,44 @@ async function sampleVideo(
         if (busyN >= 8) {
           // keep up with the detector: the video may not run faster than we can look at it
           const per = busyMs / busyN; busyMs = 0; busyN = 0;
-          const want = Math.max(1, Math.min(8, Math.floor(sampleMs / (per + 6))));
+          const want = Math.max(1, Math.min(4, Math.floor(sampleMs / (per + 6))));
           if (want !== rate) { rate = want; try { v.playbackRate = rate; } catch { /* ignore */ } }
         }
         if (next % 6 === 0) onProgress(Math.min(99, (next / n) * 100));
       }
-      rvfc(onFrame);
-    };
+    }, 16);
     (async () => {
       try {
         await waitSeek(v, Math.max(0, (startMs + next * sampleMs) / 1000));
+        lastMoveAt = performance.now();
         v.muted = true; v.playbackRate = rate;
         await v.play();
-        rvfc(onFrame);
       } catch { finish('stalled'); }
     })();
   });
 
+  const first = Math.ceil(Math.max(0, -startMs) / sampleMs);
   const r = await sequential();
-  if (r === 'cancel') return false;
-  if (r === 'done' || next >= n) { onProgress(100); return true; }
+  if (r === 'cancel') return { ok: false, via: 'play' };
+  let covered = 0;
+  for (let i = first; i < n; i++) if (isDone(i)) covered++;
+  // the video played to the end with most samples read: good. Otherwise (it stalled, errored, or skipped most): seek for the missing ones.
+  if (r === 'done' && covered >= 0.6 * Math.max(1, n - first)) { onProgress(100); return { ok: true, via: 'play' }; }
 
-  // fallback: one seek per sample
-  for (let i = next; i < n; i++) {
-    if (cancelled()) return false;
+  if (v.error && recover) await recover();
+  let usedSeek = false;
+  for (let i = first; i < n; i++) {
+    if (cancelled()) return { ok: false, via: 'play+seek' };
+    if (isDone(i)) continue;
     const t = (startMs + i * sampleMs) / 1000;
     if (t < 0 || t > v.duration) continue;
+    usedSeek = true;
     await waitSeek(v, t);
     try { cb(i); } catch { /* skip */ }
     if (i % 5 === 0) { onProgress((i / n) * 100); await new Promise((res) => setTimeout(res, 0)); }
   }
   onProgress(100);
-  return true;
+  return { ok: true, via: covered ? (usedSeek ? 'play+seek' : 'play') : 'seek' };
 }
 
 // ------------------------------------------------------------------ scan
@@ -193,39 +204,63 @@ function readFaces(result: any): RawFace[] {
   return out;
 }
 
+/** What the last scan of each video did. Shown when no face is found, so we can see why instead of guessing. */
+export interface FaceReport { samples: number; expected: number; errors: number; firstError: string; maxFaces: number; tracks: number; delegate: string; via: string; ms: number }
+export const lastReport: { host?: FaceReport; constant?: FaceReport } = {};
+
 /**
- * Scans one video. Sample i is timeline time i * FACE_SAMPLE_MS (video time = videoStartMs + that).
+ * Scans one video. It plays the GIVEN video element (the editor's own), so no extra video decoder is opened:
+ * phones only have a few, and opening more makes the editor's own videos fail.
+ * Sample i is timeline time i * FACE_SAMPLE_MS (video time = videoStartMs + that).
  * `onProgress` is first called once the model is ready, so 0% means "still loading the model".
- * Returns null when cancelled or the video cannot be read; throws when the face model cannot be loaded.
+ * @param recover reloads the video if it broke while playing fast
  */
 export async function scanFaces(
-  url: string,
+  v: HTMLVideoElement,
   videoStartMs: number,
   durationMs: number,
   onProgress: (pct: number) => void,
   cancelled: () => boolean,
+  role: 'host' | 'constant' = 'host',
+  recover?: () => Promise<void>,
 ): Promise<FaceScan | null> {
-  const landmarker = await newLandmarker();
-  const v = document.createElement('video');
-  const cleanup = () => { try { v.pause(); } catch { /* ignore */ } v.removeAttribute('src'); v.load(); try { landmarker.close(); } catch { /* ignore */ } };
-  try {
-    v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
-    await new Promise<void>((res) => { v.onloadeddata = () => res(); v.onerror = () => res(); window.setTimeout(res, 8000); });
-    if (!v.videoWidth) return null;
-    onProgress(1);
+  if (v.readyState < 1 || !v.videoWidth) return null;
+  const aspect = v.videoWidth / v.videoHeight;
+  const n = Math.ceil(durationMs / FACE_SAMPLE_MS) + 1;
+  const t00 = performance.now();
 
-    const aspect = v.videoWidth / v.videoHeight;
+  // GPU first; when it reads frames but every detect call fails (some phones), run again on the CPU.
+  for (const forceCpu of [false, true]) {
+    if (forceCpu && delegateOk() !== 'GPU') break;
+    const landmarker = await newLandmarker(forceCpu);
     const c = document.createElement('canvas');
     c.width = SCAN_W; c.height = Math.max(2, Math.round(SCAN_W / aspect));
     const g = c.getContext('2d', { willReadFrequently: false } as any) as CanvasRenderingContext2D;
-    const n = Math.ceil(durationMs / FACE_SAMPLE_MS) + 1;
-
     type Work = { id: number; last: RawFace; lastAt: number; items: (RawFace | null)[] };
     const works: Work[] = [];
+    const done = new Uint8Array(n);
+    let snapshot: HTMLCanvasElement | undefined, snapshotI = 0, snapCount = 0;
+    let errors = 0, attempts = 0, firstError = '', maxFaces = 0, tsBase = 0;
 
     const handle = (i: number) => {
-      g.drawImage(v, 0, 0, c.width, c.height);
-      const faces = readFaces(landmarker.detectForVideo(c, Math.round(i * FACE_SAMPLE_MS) + 1));
+      attempts++;
+      let faces: RawFace[];
+      try {
+        g.drawImage(v, 0, 0, c.width, c.height);
+        tsBase += 1; // strictly rising timestamps (the video clock can jump back when we seek)
+        faces = readFaces(landmarker.detectForVideo(c, tsBase * 10));
+      } catch (e) {
+        errors++; if (!firstError) firstError = String((e as Error)?.message ?? e).slice(0, 80);
+        return;
+      }
+      done[i] = 1;
+      if (faces.length > maxFaces) maxFaces = faces.length;
+      if (faces.length > snapCount) {
+        snapCount = faces.length; snapshotI = i;
+        snapshot = snapshot ?? document.createElement('canvas');
+        snapshot.width = 640; snapshot.height = Math.max(2, Math.round(640 / aspect));
+        try { snapshot.getContext('2d')!.drawImage(v, 0, 0, snapshot.width, snapshot.height); } catch { /* picker shows boxes only */ }
+      }
       const used = new Set<number>();
       const pairs: { d: number; fi: number; wi: number }[] = [];
       faces.forEach((f, fi) => works.forEach((wk, wi) => {
@@ -249,27 +284,35 @@ export async function scanFaces(
       });
     };
 
-    const ok = await sampleVideo(v, videoStartMs, n, FACE_SAMPLE_MS, handle, onProgress, cancelled);
-    if (!ok) return null;
+    try {
+      onProgress(1);
+      const r = await sampleVideo(v, videoStartMs, n, FACE_SAMPLE_MS, handle, onProgress, cancelled, (i) => done[i] === 1, recover);
+      if (!r.ok) return null;
 
-    const tracks: FaceTrack[] = [];
-    for (const wk of works) {
-      const cx = new Float32Array(n).fill(NaN), cy = new Float32Array(n).fill(NaN);
-      const w = new Float32Array(n).fill(NaN), hh = new Float32Array(n).fill(NaN), lip = new Float32Array(n).fill(NaN);
-      let seen = 0;
-      for (let i = 0; i < n; i++) {
-        const f = wk.items[i];
-        if (!f) continue;
-        cx[i] = f.cx; cy[i] = f.cy; w[i] = f.w; hh[i] = f.h; lip[i] = f.lip; seen++;
+      const tracks: FaceTrack[] = [];
+      for (const wk of works) {
+        const cx = new Float32Array(n).fill(NaN), cy = new Float32Array(n).fill(NaN);
+        const w = new Float32Array(n).fill(NaN), hh = new Float32Array(n).fill(NaN), lip = new Float32Array(n).fill(NaN);
+        let seen = 0;
+        for (let i = 0; i < n; i++) {
+          const f = wk.items[i];
+          if (!f) continue;
+          cx[i] = f.cx; cy[i] = f.cy; w[i] = f.w; hh[i] = f.h; lip[i] = f.lip; seen++;
+        }
+        const presence = seen / n;
+        if (presence < 0.02) continue; // a flicker, not a person
+        tracks.push({ id: 0, cx, cy, w, h: hh, lip, presence });
       }
-      const presence = seen / n;
-      if (presence < 0.05) continue; // a flicker, not a person
-      tracks.push({ id: 0, cx, cy, w, h: hh, lip, presence });
-    }
-    tracks.sort((a, b) => b.presence * medianOf(b.w) - a.presence * medianOf(a.w));
-    tracks.forEach((t, k) => { t.id = k; });
-    return { sampleMs: FACE_SAMPLE_MS, n, startMs: videoStartMs, aspect, tracks };
-  } finally { cleanup(); }
+      tracks.sort((a, b) => b.presence * medianOf(b.w) - a.presence * medianOf(a.w));
+      tracks.forEach((t, k) => { t.id = k; });
+      let samples = 0; for (let i = 0; i < n; i++) samples += done[i];
+      lastReport[role] = { samples, expected: n, errors, firstError, maxFaces, tracks: tracks.length, delegate: delegateOk() ?? '?', via: r.via, ms: Math.round(performance.now() - t00) };
+      // every detect call failed on the GPU: try again on the CPU
+      if (!forceCpu && delegateOk() === 'GPU' && errors > 0 && errors >= attempts * 0.5) continue;
+      return { sampleMs: FACE_SAMPLE_MS, n, startMs: videoStartMs, aspect, tracks, snapshot, snapshotI };
+    } finally { try { landmarker.close(); } catch { /* ignore */ } try { v.pause(); } catch { /* ignore */ } }
+  }
+  return null;
 }
 
 // ------------------------------------------------------------------ helpers

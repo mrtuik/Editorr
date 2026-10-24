@@ -3,7 +3,7 @@ import { peaks, PEAKS_PER_SEC, SAMPLE_RATE } from '../core/audio';
 import { startDenoise } from '../core/denoise';
 import { detectSpeakers, lastMethod, lastSeparationDb, lastUsedLips, lastVoiceQuality } from '../core/speaker';
 import { motionToActivity } from '../core/motion';
-import { cropForFace, FACE_SAMPLE_MS, faceBetween, motionFromScan, pickTrack, scanFaces, type FaceScan } from '../core/faces';
+import { cropForFace, FACE_SAMPLE_MS, faceBetween, lastReport, motionFromScan, pickTrack, scanFaces, type FaceReport, type FaceScan } from '../core/faces';
 import { pickFace } from './facePick';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
 import { detectSilence } from '../core/silence';
@@ -117,6 +117,8 @@ export function editorScreen() {
   const constV = h('video', { playsInline: true, preload: 'auto', poster: BLACK_POSTER, 'aria-label': 'Constant video' }) as HTMLVideoElement;
   const hostMsg = h('div', { class: 'vmsg', style: 'display:none' }, 'Video not found');
   const constMsg = h('div', { class: 'vmsg', style: 'display:none' }, 'Video not found');
+  hostMsg.addEventListener('click', () => retryVideo('host'));
+  constMsg.addEventListener('click', () => retryVideo('constant'));
   hostV.muted = p.mainAudio !== 'host' || p.noiseHost > 0;
   constV.muted = p.mainAudio !== 'constant' || p.noiseConst > 0;
   // Each video lives in its own clip box. Transform, border and rounded corners go on the clip box,
@@ -502,6 +504,8 @@ export function editorScreen() {
   preview.addEventListener('pointercancel', onPreviewEnd);
 
   // ---------- video sources: original, or a small preview copy when the phone's format is heavy ----------
+  /** True while the face scan plays the two preview videos itself: the editor must not seek, play or reload them. */
+  let scanLock = false;
   const ready: Record<Role, boolean> = { host: false, constant: false };
   const failed: Record<Role, boolean> = { host: false, constant: false };
   const proxying: Record<Role, boolean> = { host: false, constant: false };
@@ -509,17 +513,22 @@ export function editorScreen() {
   const vid = (r: Role) => (r === 'host' ? hostV : constV);
   const curUrl: Record<Role, string> = { host: '', constant: '' };
   const posterSet: Record<Role, boolean> = { host: false, constant: false };
-  /** Black cell with "Video not found" while a video cannot be shown; hides the moment it plays again. */
-  function showMissing(role: Role, on: boolean) {
-    (role === 'host' ? hostMsg : constMsg).style.display = on ? '' : 'none';
+  /** Black cell with a message while a video cannot be shown; hides the moment it plays again. */
+  function showMissing(role: Role, on: boolean, text = 'Video not found') {
+    const m = role === 'host' ? hostMsg : constMsg;
+    m.style.display = on ? '' : 'none';
+    m.textContent = text;
     const v = vid(role);
     if (on) { v.style.visibility = 'hidden'; } else { v.style.visibility = ''; }
   }
-  function markFailed(role: Role) {
+  /** `missing` = the file is really gone. `error` = it could not be played (often a busy decoder): tap the cell to try again. */
+  function markFailed(role: Role, kind: 'missing' | 'error' = 'missing') {
     failed[role] = true; ready[role] = true;
-    showMissing(role, true);
+    showMissing(role, true, kind === 'missing' ? 'Video not found' : 'Preview unavailable. Tap to try again.');
     if (!destroyed) updatePlayState();
   }
+  /** How often a video was loaded again after an error (a busy decoder usually frees up a moment later). */
+  const retries: Record<Role, number> = { host: 0, constant: 0 };
   const label = (r: Role) => (r === 'host' ? 'Host' : 'Constant');
 
   function setSource(role: Role, url: string) {
@@ -529,7 +538,7 @@ export function editorScreen() {
     v.src = url;
     v.load();
     v.addEventListener('loadedmetadata', () => {
-      ready[role] = true; failed[role] = false; showMissing(role, false);
+      ready[role] = true; failed[role] = false; retries[role] = 0; showMissing(role, false);
       if (!destroyed) { seekVideo(v, role === 'host' ? playMs / 1000 : (playMs + p.offsetMs) / 1000); updatePlayState(); requestDraw(); }
     }, { once: true });
   }
@@ -552,9 +561,15 @@ export function editorScreen() {
       setSource(role, url);
       if (wasPlaying) vid(role).addEventListener('loadedmetadata', () => { if (!destroyed) setPlaying(true); }, { once: true });
     } catch (e) {
-      markFailed(role); // do not block playing forever
-      if (userStopped) toast(`${label(role)} preview copy stopped.`);
-      else toast(`${label(role)} video: could not make a smooth preview. ${(e as Error).message || ''}`.trim());
+      if (userStopped) { markFailed(role, 'error'); toast(`${label(role)} preview copy stopped.`); }
+      else if (!destroyed && curUrl[role] !== (role === 'host' ? runtime.hostUrl : runtime.constUrl) && (role === 'host' ? runtime.hostUrl : runtime.constUrl)) {
+        // the copy could not be made: try the original video once, it may play fine
+        setSource(role, (role === 'host' ? runtime.hostUrl : runtime.constUrl)!);
+        toast(`${label(role)} video: using the original for preview. ${(e as Error).message || ''}`.trim());
+      } else {
+        markFailed(role, 'error'); // do not block playing forever
+        toast(`${label(role)} video: could not make a smooth preview. ${(e as Error).message || ''}`.trim());
+      }
     } finally {
       proxying[role] = false;
       endTask(id);
@@ -562,23 +577,40 @@ export function editorScreen() {
     }
   }
 
+  const listening: Record<Role, boolean> = { host: false, constant: false };
   function startSource(role: Role) {
+    const v = vid(role);
+    if (!listening[role]) {
+      listening[role] = true;
+      v.addEventListener('error', () => {
+        if (destroyed || scanLock || proxying[role]) return;
+        // First errors are usually the phone's decoders being busy for a moment: load the same video again after a pause.
+        const attempt = ++retries[role];
+        if (attempt <= 3) {
+          window.setTimeout(() => {
+            if (destroyed || scanLock || proxying[role] || !curUrl[role] || ready[role] && !v.error) return;
+            setSource(role, curUrl[role]);
+          }, attempt * 1200);
+          return;
+        }
+        if (isNative() && !usingProxy[role]) {
+          // still failing: the WebView cannot play it. Pause cleanly, make a preview copy, carry on where we were.
+          const was = playing;
+          if (playing) setPlaying(false);
+          useProxy(role, was);
+        } else if (!failed[role]) {
+          markFailed(role, 'error');
+          toast(`${label(role)} video cannot be played in the preview. Tap it to try again. Export may still work.`);
+        }
+      });
+    }
+    loadRole(role);
+  }
+  /** Check the file, then load it (or its preview copy). */
+  function loadRole(role: Role) {
     const meta = role === 'host' ? p.host : p.constant;
     const flagged = role === 'host' ? p.proxyHost : p.proxyConst;
     const url = role === 'host' ? runtime.hostUrl! : runtime.constUrl!;
-    const v = vid(role);
-    v.addEventListener('error', () => {
-      if (destroyed) return;
-      if (isNative() && !usingProxy[role] && !proxying[role]) {
-        // the WebView could not play it (or stopped halfway): pause cleanly, make a preview copy, carry on where we were
-        const was = playing;
-        if (playing) setPlaying(false);
-        useProxy(role, was);
-      } else if (!proxying[role] && !failed[role]) {
-        markFailed(role);
-        toast(`${label(role)} video cannot be played in the preview. Export may still work.`);
-      }
-    });
     const begin = () => {
       if (isNative() && (flagged || needsProxy(meta))) useProxy(role); // before playing: no stall in the middle of a video
       else setSource(role, url);
@@ -586,8 +618,15 @@ export function editorScreen() {
     const path = role === 'host' ? runtime.hostPath : runtime.constPath;
     if (isNative() && path) {
       // file deleted or moved: show "Video not found" straight away instead of a broken picture
-      EditorrNative.fileExists({ path }).then((r) => { if (destroyed) return; if (r.exists) begin(); else markFailed(role); }, () => { if (!destroyed) begin(); });
+      EditorrNative.fileExists({ path }).then((r) => { if (destroyed) return; if (r.exists) begin(); else markFailed(role, 'missing'); }, () => { if (!destroyed) begin(); });
     } else begin();
+  }
+  /** Tap on the black "Preview unavailable" cell. */
+  function retryVideo(role: Role) {
+    if (!failed[role] || proxying[role] || scanLock) return;
+    failed[role] = false; ready[role] = false; retries[role] = 0; usingProxy[role] = false;
+    showMissing(role, false);
+    loadRole(role);
   }
 
   /** The system can drop a video's decoder while the app is in the background (or the phone is busy). Load it again when we come back. */
@@ -609,6 +648,7 @@ export function editorScreen() {
   // ---------- seeking (never queue seeks: only the latest one counts, fastSeek when available) ----------
   const pendingSeek = new Map<HTMLVideoElement, number>();
   function seekVideo(v: HTMLVideoElement, t: number) {
+    if (scanLock) return;
     if (!isFinite(t) || t < 0) return;
     const dur = isFinite(v.duration) ? v.duration : Infinity;
     t = Math.min(t, Math.max(0, dur - 0.05));
@@ -669,6 +709,7 @@ export function editorScreen() {
   let lastConstSeek = 0;
   /** Keep the Constant video on its sync position with Master-Slave Virtual Clock (playbackRate micro-adjustments). */
   function syncConst(force = false) {
+    if (scanLock) return;
     const ct = (playMs + p.offsetMs) / 1000;
     const inRange = ct >= 0 && ct < (isFinite(constV.duration) ? constV.duration : Infinity);
     constV.style.visibility = inRange ? '' : 'hidden';
@@ -708,6 +749,7 @@ export function editorScreen() {
     if (playing && constV.paused && ready.constant && inRange) constV.play().catch(() => {});
   }
   function syncHost(force = false) {
+    if (scanLock) return;
     const t = playMs / 1000;
     const inRange = t >= 0 && t < (isFinite(hostV.duration) ? hostV.duration : Infinity);
     hostV.style.visibility = inRange ? '' : 'hidden';
@@ -724,6 +766,7 @@ export function editorScreen() {
   const lastEnd = () => (p.segments.length ? Math.max(...p.segments.map((s) => s.endMs)) : p.durationMs);
 
   function playReason(): string | null {
+    if (scanLock) return 'Scanning faces...';
     if (!syncReady) return 'Still syncing the two videos...';
     if (!ready.host || (!ready.constant && !failed.constant)) {
       return proxying.host || proxying.constant ? 'Still preparing the preview...' : 'The videos are still loading...';
@@ -1638,26 +1681,65 @@ export function editorScreen() {
   const roleName = (r: Role) => (r === 'host' ? 'Host' : 'Constant');
   const faceScanOf = (r: Role) => (r === 'host' ? runtime.hostFaces : runtime.constFaces);
 
-  /** Scans faces of both videos when that has not been done (or the sync offset changed). */
-  async function ensureFaces(): Promise<'ok' | 'cancel' | 'fail'> {
+  /** Load a preview video again (it broke while playing fast) and wait until it is ready. */
+  function reloadVideo(role: Role): Promise<void> {
+    return new Promise((resolve) => {
+      const v = vid(role);
+      if (!curUrl[role]) { resolve(); return; }
+      v.addEventListener('loadedmetadata', () => resolve(), { once: true });
+      window.setTimeout(resolve, 6000);
+      setSource(role, curUrl[role]);
+    });
+  }
+  const reportLine = (name: string, r?: FaceReport) => r
+    ? `${name}: ${r.samples}/${r.expected} frames, ${r.errors} errors${r.firstError ? ` (${r.firstError})` : ''}, ${r.delegate}, ${r.via}, ${Math.round(r.ms / 1000)}s`
+    : `${name}: not scanned`;
+  const noFaceMessage = () => `No face found. ${reportLine('Host', lastReport.host)}. ${reportLine('Constant', lastReport.constant)}.`;
+
+  /**
+   * Scans faces of both videos when that has not been done (or the sync offset changed).
+   * The scan plays the editor's own two preview videos (fast, muted) instead of opening more videos:
+   * a phone has only a few video decoders, and opening extra ones made the Host/Constant preview go black.
+   */
+  async function ensureFaces(): Promise<'ok' | 'cancel' | 'fail' | 'busy'> {
     const need: Role[] = [];
     if (faceStale(runtime.hostFaces, 0)) need.push('host');
     if (faceStale(runtime.constFaces, p.offsetMs)) need.push('constant');
     if (!need.length) return 'ok';
-    scanning = true; scanCancel = false;
+    const why = playReason();
+    if (why || failed.host || failed.constant) { toast(why ?? 'A video is missing, so faces cannot be scanned.'); return 'busy'; }
     setPlaying(false);
+    scanning = true; scanCancel = false; scanLock = true;
+    const savedMs = playMs;
     startTask('faces', 'Loading face model', 0, { modal: true, cancel: () => { scanCancel = true; } });
     try {
       for (let k = 0; k < need.length; k++) {
         const role = need[k];
-        const v = role === 'host' ? hostV : constV;
-        const r = await scanFaces(v.currentSrc || v.src, role === 'host' ? 0 : p.offsetMs, p.durationMs,
-          (x) => updateTask('faces', `Scanning faces${need.length > 1 ? ` (${k + 1}/${need.length})` : ''}`, (k * 100 + x) / need.length), () => scanCancel);
+        const v = vid(role);
+        v.style.visibility = ''; v.muted = true;
+        const r = await scanFaces(v, role === 'host' ? 0 : p.offsetMs, p.durationMs,
+          (x) => updateTask('faces', `Scanning faces${need.length > 1 ? ` (${k + 1}/${need.length})` : ''}`, (k * 100 + x) / need.length), () => scanCancel,
+          role, () => reloadVideo(role));
         if (!r) return scanCancel ? 'cancel' : 'fail';
         if (role === 'host') runtime.hostFaces = r; else runtime.constFaces = r;
       }
       return 'ok';
-    } catch { return 'fail'; } finally { endTask('faces'); scanning = false; }
+    } catch { return 'fail'; } finally {
+      endTask('faces'); scanning = false; scanLock = false;
+      // give the preview back exactly as it was
+      for (const r of ['host', 'constant'] as Role[]) { const v = vid(r); try { v.pause(); } catch { /* ignore */ } v.playbackRate = 1; }
+      updateVideoAudioMute();
+      if (!destroyed) {
+        playMs = savedMs;
+        // a video the fast play broke is loaded again and then seeks back to the playhead (setSource does that)
+        for (const r of ['host', 'constant'] as Role[]) {
+          const v = vid(r);
+          if (!proxying[r] && curUrl[r] && (v.error || v.readyState === 0)) setSource(r, curUrl[r]);
+        }
+        syncHost(true); syncConst(true);
+        refresh(); requestDraw();
+      }
+    }
   }
 
   function setMotionFromFaces() {
@@ -1672,8 +1754,7 @@ export function editorScreen() {
       const key = role === 'host' ? 'faceHost' : 'faceConst';
       if (!scan || scan.tracks.length < 2) continue;
       if (!force && p[key]) continue;
-      const v = role === 'host' ? hostV : constV;
-      const r = await pickFace(`Follow who in ${roleName(role)}?`, v.currentSrc || v.src, scan, p[key]);
+      const r = await pickFace(`Follow who in ${roleName(role)}?`, scan, p[key]);
       if (r === undefined) return false;
       if (r === null) delete p[key]; else p[key] = r;
       scheduleSave();
@@ -1685,10 +1766,11 @@ export function editorScreen() {
   async function doFaces() {
     if (scanning) return;
     const fr = await ensureFaces();
+    if (fr === 'busy') return;
     if (fr === 'cancel') { toast('Scan cancelled'); return; }
-    if (fr === 'fail') { toast('Face scan is not available. Check the internet once, or update the app.'); return; }
+    if (fr === 'fail') { toast('Face scan failed. Check the internet once (first run), or update the app.'); return; }
     const tracks = (runtime.hostFaces?.tracks.length ?? 0) + (runtime.constFaces?.tracks.length ?? 0);
-    if (!tracks) { toast('No face found in either video.'); return; }
+    if (!tracks) { toast(noFaceMessage(), 12000); return; }
     if (!(runtime.hostFaces!.tracks.length > 1 || runtime.constFaces!.tracks.length > 1)) { toast('Only one person in each video. Nothing to pick.'); return; }
     if (!(await choosePeople(true))) return;
     setMotionFromFaces(); draw();
@@ -1720,8 +1802,9 @@ export function editorScreen() {
   async function doAutoframe() {
     if (scanning || !needAudio()) return;
     const fr = await ensureFaces();
+    if (fr === 'busy') return;
     if (fr === 'cancel') { toast('Scan cancelled'); return; }
-    if (fr === 'fail') { toast('Face scan is not available. Check the internet once, or update the app. Use Auto switch for now.'); return; }
+    if (fr === 'fail') { toast('Face scan failed. Check the internet once (first run), or update the app. Use Auto switch for now.'); return; }
     if (!(await choosePeople(false))) return;
     setMotionFromFaces();
     const keep = coverage(p.segments); // parts removed by silence cut stay removed
@@ -1732,7 +1815,7 @@ export function editorScreen() {
     const found = (runtime.hostFaces?.tracks.length ?? 0) + (runtime.constFaces?.tracks.length ?? 0);
     segs = frameSegments(segs);
     edit(segs); selectedId = segs[0]?.id ?? null; afterEdit(); draw();
-    if (!found) toast('No face found, so only the speaker cuts were made.');
+    if (!found) toast(noFaceMessage(), 12000);
     else if (segs.length <= 1) toast('Framed the face. Could not tell the two people apart for cutting.');
     else toast(`Autoframe: ${segs.length} segments, faces centred. Undo to go back.`);
   }
@@ -2359,7 +2442,19 @@ export function editorScreen() {
 
   // ======================================================================= Start-up: thumbnails, previews, audio, sync, auto switch
   async function bootstrap() {
-    startSource('host'); startSource('constant');
+    // Load the videos ONE AFTER THE OTHER. Two <video> elements starting together, plus thumbnails, audio and preview copies,
+    // used up the phone's video decoders and one preview (Host or Constant) came up as "Video not found".
+    const settled = (r: Role) => ready[r] || failed[r] || proxying[r];
+    const waitSettled = async (roles: Role[], maxMs: number) => {
+      const t0 = Date.now();
+      while (!destroyed && Date.now() - t0 < maxMs && !roles.every(settled)) await new Promise((res) => setTimeout(res, 120));
+    };
+    startSource('host');
+    await waitSettled(['host'], 5000);
+    if (destroyed) return;
+    startSource('constant');
+    await waitSettled(['constant'], 5000);
+    if (destroyed) return;
     // until a video can play, show its first picture in the preview instead of black
     const poster = (role: Role, st: Strip | undefined) => {
       const img = st?.frames.find((f) => !!f);

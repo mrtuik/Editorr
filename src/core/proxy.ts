@@ -43,6 +43,13 @@ function listen(): void {
 }
 
 /**
+ * Preview copies are made ONE AT A TIME. Each one needs a hardware video decoder and encoder; running the Host and the
+ * Constant copy together, next to the two playing preview videos, used up the phone's decoders and made a video fail.
+ */
+let chain: Promise<unknown> = Promise.resolve();
+const cancelledWhileWaiting = new Set<string>();
+
+/**
  * Make (or find) the small preview copy of a video. Resolves with a URL the <video> element can load.
  * Copies are cached, so opening the project again is instant.
  */
@@ -51,9 +58,14 @@ export function ensureProxy(path: string, meta: Omit<VideoRef, 'url'> | undefine
   if (!job) {
     listen();
     cbs.set(path, (n) => onPct?.(n));
-    job = EditorrNative.makeProxy({ path, height: PROXY_SHORT, ...proxySize(meta) })
-      .then((r) => fileSrc(r.proxyPath))
-      .finally(() => { running.delete(path); cbs.delete(path); });
+    cancelledWhileWaiting.delete(path);
+    const run = async (): Promise<string> => {
+      if (cancelledWhileWaiting.delete(path)) throw new Error('Cancelled');
+      const r = await EditorrNative.makeProxy({ path, height: PROXY_SHORT, ...proxySize(meta) });
+      return fileSrc(r.proxyPath);
+    };
+    job = chain.then(run, run).finally(() => { running.delete(path); cbs.delete(path); });
+    chain = job.catch(() => {});
     running.set(path, job);
   }
   return job;
@@ -61,5 +73,6 @@ export function ensureProxy(path: string, meta: Omit<VideoRef, 'url'> | undefine
 
 /** Stop the preview copy of this video (if one is running). */
 export function cancelProxy(path: string): void {
+  cancelledWhileWaiting.add(path); // if it is still waiting for its turn, it will not start
   EditorrNative.cancelProxy({ path }).catch(() => {});
 }

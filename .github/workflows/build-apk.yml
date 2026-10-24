@@ -13,7 +13,7 @@ jobs:
     env:
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
       VERSION_CODE: ${{ github.run_number }}
-      VERSION_NAME: 16.4.0
+      VERSION_NAME: 16.4.4
     steps:
       - uses: actions/checkout@v4
 
