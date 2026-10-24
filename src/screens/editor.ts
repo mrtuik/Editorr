@@ -1126,7 +1126,6 @@ export function editorScreen() {
 
     // ---- left column (lane icons), drawn over the clips
     g.fillStyle = '#000'; g.fillRect(0, RULER, G, H - RULER);
-    g.fillStyle = '#262626'; g.fillRect(G - 1, RULER, 1, H - RULER);
     // audio-source button (where CapCut has "Mute clip"): shows which mic is used; tap to switch Host / Constant
     {
       const col = p.mainAudio === 'host' ? '#ffffff' : '#4ade80';
@@ -1139,7 +1138,7 @@ export function editorScreen() {
       g.restore();
     }
     {
-      const tx = G - 31, ty = AUD_Y + (AUD - 26) / 2, cx = tx + 13, cy = ty + 13;
+      const tx = Math.round(W / 2) - 51, ty = AUD_Y + (AUD - 26) / 2, cx = tx + 13, cy = ty + 13;
       g.save();
       g.fillStyle = '#262626';
       g.beginPath(); g.roundRect(tx, ty, 26, 26, 6); g.fill();
