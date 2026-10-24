@@ -1211,19 +1211,16 @@ export function editorScreen() {
       g.fillText(p.mainAudio === 'host' ? 'Host' : 'Constant', G / 2 - 1, MAIN_Y + LANE - 12);
       g.restore();
     }
-    // music-note badge: sticks to the start of the audio clip, so it scrolls with the timeline (hidden under the left column)
+    // music-note badge: lives in the left column beside the audio lane, so it never covers the waveform
     {
-      const tx = xOf(0) + 8, ty = AUD_Y + (AUD - 26) / 2, cx = tx + 13, cy = ty + 13;
-      if (tx + 26 > G && tx < W && tx + 26 < xOf(p.durationMs)) {
-        g.save();
-        g.beginPath(); g.rect(G, 0, W - G, H); g.clip();
-        g.fillStyle = '#262626';
-        g.beginPath(); g.roundRect(tx, ty, 26, 26, 6); g.fill();
-        g.strokeStyle = '#8a8a8a'; g.lineWidth = 1.5; g.lineCap = 'round'; g.lineJoin = 'round';
-        g.beginPath(); g.arc(cx - 2.5, cy + 5, 3, 0, Math.PI * 2); g.stroke();
-        g.beginPath(); g.moveTo(cx + 0.5, cy + 5); g.lineTo(cx + 0.5, cy - 6); g.lineTo(cx + 5, cy - 3.5); g.stroke();
-        g.restore();
-      }
+      const tx = G / 2 - 13, ty = AUD_Y + (AUD - 26) / 2, cx = tx + 13, cy = ty + 13;
+      g.save();
+      g.fillStyle = '#262626';
+      g.beginPath(); g.roundRect(tx, ty, 26, 26, 6); g.fill();
+      g.strokeStyle = '#8a8a8a'; g.lineWidth = 1.5; g.lineCap = 'round'; g.lineJoin = 'round';
+      g.beginPath(); g.arc(cx - 2.5, cy + 5, 3, 0, Math.PI * 2); g.stroke();
+      g.beginPath(); g.moveTo(cx + 0.5, cy + 5); g.lineTo(cx + 0.5, cy - 6); g.lineTo(cx + 5, cy - 3.5); g.stroke();
+      g.restore();
     }
 
     // ---- playhead needle (fixed at the center, CapCut style with top triangle and cyan snap glow)
@@ -2336,8 +2333,7 @@ export function editorScreen() {
   const tlRo = new ResizeObserver(fitTimeline);
   tlRo.observe(tlWrap);
   const titleEl = h('div', { class: 'edtop-title' },
-    h('span', { class: 'edtop-name' }, p.name),
-    h('span', { class: 'edtop-badge' }, 'Autosaved')
+    h('span', { class: 'edtop-name' }, p.name)
   );
   const el = h('div', { class: 'screen editor' },
     h('div', { class: 'edtop' },
