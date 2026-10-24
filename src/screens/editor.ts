@@ -833,6 +833,7 @@ export function editorScreen() {
   }
 
   function setPlaying(on: boolean) {
+    if (on) stopFling();
     if (on && actx && actx.state === 'suspended') actx.resume().catch(() => {});
     if (on && playReason()) { toast(playReason()!); on = false; }
     playing = on;
@@ -1046,7 +1047,7 @@ export function editorScreen() {
       g.fillStyle = color;
       const cy = AUD_Y + AUD / 2;
       const maxBh = (AUD - 6) / 2;
-      const vx1 = Math.max(bx1, G);
+      const vx1 = Math.max(bx1 + 34, G); // keep the waveform clear of the music badge
       const vx2 = Math.min(bx2, W);
       for (let x = Math.floor(vx1); x < vx2; x += 2) {
         const ms = msOf(x);
@@ -1211,16 +1212,19 @@ export function editorScreen() {
       g.fillText(p.mainAudio === 'host' ? 'Host' : 'Constant', G / 2 - 1, MAIN_Y + LANE - 12);
       g.restore();
     }
-    // music-note badge: lives in the left column beside the audio lane, so it never covers the waveform
+    // music-note badge: sits at the start of the audio clip and slides with the timeline; the waveform starts after it
     {
-      const tx = G / 2 - 13, ty = AUD_Y + (AUD - 26) / 2, cx = tx + 13, cy = ty + 13;
-      g.save();
-      g.fillStyle = '#262626';
-      g.beginPath(); g.roundRect(tx, ty, 26, 26, 6); g.fill();
-      g.strokeStyle = '#8a8a8a'; g.lineWidth = 1.5; g.lineCap = 'round'; g.lineJoin = 'round';
-      g.beginPath(); g.arc(cx - 2.5, cy + 5, 3, 0, Math.PI * 2); g.stroke();
-      g.beginPath(); g.moveTo(cx + 0.5, cy + 5); g.lineTo(cx + 0.5, cy - 6); g.lineTo(cx + 5, cy - 3.5); g.stroke();
-      g.restore();
+      const tx = xOf(0) + 4, ty = AUD_Y + (AUD - 26) / 2, cx = tx + 13, cy = ty + 13;
+      if (tx + 26 > G && tx < W && tx + 26 < xOf(p.durationMs)) {
+        g.save();
+        g.beginPath(); g.rect(G, 0, W - G, H); g.clip();
+        g.fillStyle = '#262626';
+        g.beginPath(); g.roundRect(tx, ty, 26, 26, 6); g.fill();
+        g.strokeStyle = '#8a8a8a'; g.lineWidth = 1.5; g.lineCap = 'round'; g.lineJoin = 'round';
+        g.beginPath(); g.arc(cx - 2.5, cy + 5, 3, 0, Math.PI * 2); g.stroke();
+        g.beginPath(); g.moveTo(cx + 0.5, cy + 5); g.lineTo(cx + 0.5, cy - 6); g.lineTo(cx + 5, cy - 3.5); g.stroke();
+        g.restore();
+      }
     }
 
     // ---- playhead needle (fixed at the center, CapCut style with top triangle and cyan snap glow)
@@ -1252,6 +1256,27 @@ export function editorScreen() {
   let mode: 'none' | 'scrub' | 'boundary' | 'pinch' | 'clip' = 'none';
   let startX = 0, startY = 0, startT = 0, moved = false, boundaryIdx = -1, pinchDist = 0, pinchZoom = 0, lpTimer = 0;
   let clipStartMs0 = 0, clipPushed = false, clipBefore: Snapshot | null = null;
+
+  // fling: after a quick swipe the timeline keeps gliding and slows down smoothly
+  let dragStartPlayMs = 0;
+  let flingRaf = 0;
+  const dragSamples: { t: number; x: number }[] = [];
+  function stopFling() { if (flingRaf) { cancelAnimationFrame(flingRaf); flingRaf = 0; } }
+  function startFling(vPxPerMs: number) {
+    stopFling();
+    let v = vPxPerMs * 1000; // px per second, finger direction
+    let last = performance.now();
+    const step = (now: number) => {
+      const dt = Math.min(48, now - last); last = now;
+      v *= Math.pow(0.94, dt / 16.67);
+      const next = playMs - (v * dt / 1000 / pxPerSec) * 1000;
+      const hitEdge = next <= 0 || next >= p.durationMs;
+      scheduleScrub(next);
+      if (Math.abs(v) < 25 || hitEdge) { flingRaf = 0; return; }
+      flingRaf = requestAnimationFrame(step);
+    };
+    flingRaf = requestAnimationFrame(step);
+  }
 
   let lastClientY = 0;
   const localX = (e: PointerEvent) => e.clientX - canvas.getBoundingClientRect().left;
@@ -1285,7 +1310,9 @@ export function editorScreen() {
       clearTimeout(lpTimer); return;
     }
     if (playing) setPlaying(false);
+    stopFling();
     startX = localX(e); startY = localY(e); startT = Date.now(); moved = false; lastClientY = e.clientY;
+    dragStartPlayMs = playMs; dragSamples.length = 0; dragSamples.push({ t: performance.now(), x: startX });
     const lane = laneAt(startY);
     const bi = startX >= G ? hitBoundary(startX, startY) : -1;
     if (bi >= 0) { mode = 'boundary'; boundaryIdx = bi; hist.push(snap()); }
@@ -1314,8 +1341,11 @@ export function editorScreen() {
     }
     if (Math.abs(x - startX) > 8) { moved = true; clearTimeout(lpTimer); }
     if (mode === 'scrub') {
-      const targetMs = Math.max(0, Math.min(p.durationMs, playMs - ((x - prev.x) / pxPerSec) * 1000));
+      const targetMs = Math.max(0, Math.min(p.durationMs, dragStartPlayMs - ((x - startX) / pxPerSec) * 1000));
       scheduleScrub(targetMs);
+      const nowT = performance.now();
+      dragSamples.push({ t: nowT, x });
+      while (dragSamples.length > 2 && nowT - dragSamples[0].t > 100) dragSamples.shift();
       if (tlWrap.scrollHeight > tlWrap.clientHeight) {
         tlWrap.scrollTop -= (e.clientY - lastClientY);
       }
@@ -1346,6 +1376,11 @@ export function editorScreen() {
     if (ptrs.size === 1 && mode === 'pinch') { mode = 'none'; return; }
     if (ptrs.size > 0) return;
     if (mode === 'scrub' && !moved && Date.now() - startT < 400) onTap(startX, startY);
+    if (mode === 'scrub' && moved && e.type === 'pointerup' && dragSamples.length >= 2) {
+      const a0 = dragSamples[0], a1 = dragSamples[dragSamples.length - 1];
+      const age = performance.now() - a1.t, span = a1.t - a0.t;
+      if (span > 0 && age < 80) { const v = (a1.x - a0.x) / span; if (Math.abs(v) > 0.15) startFling(v); }
+    }
     if (mode === 'boundary') scheduleSave();
     if (mode === 'clip') {
       snapMs = null;
@@ -2479,7 +2514,7 @@ export function editorScreen() {
       denoiseRun++;
       cancelDenoiseJob();
       endTask('denoise');
-      cancelAnimationFrame(raf); clearTimeout(saveTimer); saveProject(p);
+      cancelAnimationFrame(raf); stopFling(); clearTimeout(saveTimer); saveProject(p);
       stopCleanAudio(); hostV.pause(); constV.pause();
       hostStrip?.cancel(); constStrip?.cancel();
       offTasks();
