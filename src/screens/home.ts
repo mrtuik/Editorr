@@ -99,7 +99,7 @@ export function homeScreen() {
     const last = projects[0];
 
     const tools: [keyof typeof ICON, string, () => void][] = [
-      ['wand', 'Auto switch', () => newProject()],
+      ['switchSlider', 'Auto switch', () => newProject()],
       ['lips', 'Lips scan', () => newProject()],
       ['silence', 'Silence cut', () => newProject('silence')],
       ['crop', 'Crop', () => newProject('crop')],

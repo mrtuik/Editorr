@@ -1676,7 +1676,7 @@ export function editorScreen() {
       // nothing selected: the main tools, like CapCut's first row
       rows.push(
         tool('sync', 'Sync', () => { selClip = 'constant'; selectedId = null; openPanel('sync'); updateSelFrame(); }),
-        tool('wand', 'Auto switch', () => doAutoSwitch(false)),
+        tool('switchSlider', 'Auto switch', () => doAutoSwitch(false)),
         tool('lips', 'Lips scan', doSmartSwitch),
         tool('silence', 'Silence', () => openPanel('silence')),
         tool('layout', 'Layout', () => openPanel('layout')),

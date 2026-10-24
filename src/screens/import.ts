@@ -55,7 +55,7 @@ export function importScreen() {
 
   const slots = h('div', { class: 'slots' });
   const warnings = h('div', { class: 'import-warnings' });
-  const cont = h('button', { class: 'btn primary start-editing-btn', disabled: true, onclick: next }, icon('wand', 20), 'Start Editing');
+  const cont = h('button', { class: 'btn primary start-editing-btn', disabled: true, onclick: next }, icon('switchSlider', 20), 'Start Editing');
   let alive = true;
 
   /** A picture of the first frame for each tile (made in the background). */
