@@ -140,16 +140,6 @@ export function editorScreen() {
 
   // Selected video frame on preview with Reset button
   const selFrame = h('div', { class: 'sel-frame' });
-  const resetCropBtn = h('button', {
-    class: 'sel-reset-btn',
-    'aria-label': 'Reset video crop',
-    title: 'Reset crop',
-    onclick: (ev: MouseEvent) => {
-      ev.stopPropagation();
-      if (selClip) resetCrop(selClip);
-    },
-  }, icon('undo', 12), h('span', {}, 'Reset'));
-  selFrame.append(resetCropBtn);
   stage.append(selFrame);
 
   function resetCrop(role: Role) {
@@ -161,6 +151,7 @@ export function editorScreen() {
     c.rotate = 0;
     c.ratio = 'custom';
     c.frameRatio = undefined;
+    c.px = 0; c.py = 0; c.ps = 1;
     cropEdited(role);
     scheduleSave();
     if (panel === 'crop') { positionCropFrame(); renderPanel(); }
@@ -179,13 +170,13 @@ export function editorScreen() {
       return;
     }
     const sr = shapedRect[selClip];
-    const clipRect = sr ? cell.getBoundingClientRect() : (selClip === 'host' ? hostClip : constClip).getBoundingClientRect();
+    const clipRect = (sr ? (selClip === 'host' ? hostRing : constRing) : (selClip === 'host' ? hostClip : constClip)).getBoundingClientRect();
     const stageRect = stage.getBoundingClientRect();
-    selFrame.style.left = `${clipRect.left - stageRect.left + (sr ? sr.l : 0)}px`;
-    selFrame.style.top = `${clipRect.top - stageRect.top + (sr ? sr.t : 0)}px`;
-    selFrame.style.width = `${sr ? sr.w : clipRect.width}px`;
-    selFrame.style.height = `${sr ? sr.h : clipRect.height}px`;
-    selFrame.style.zIndex = cell.classList.contains('pop') ? '6' : '3';
+    selFrame.style.left = `${clipRect.left - stageRect.left}px`;
+    selFrame.style.top = `${clipRect.top - stageRect.top}px`;
+    selFrame.style.width = `${clipRect.width}px`;
+    selFrame.style.height = `${clipRect.height}px`;
+    selFrame.style.zIndex = '7';
     selFrame.classList.add('on');
     stage.style.touchAction = 'none';
   }
@@ -294,6 +285,12 @@ export function editorScreen() {
       clip.style.border = stroke;
       if (cell) cell.style.clipPath = '';
       ring.style.display = 'none';
+    }
+    // Free placement (CapCut style): the whole slot, with its crop and border, can sit anywhere on the stage.
+    if (cell) {
+      const fx = c.px ?? 0, fy = c.py ?? 0, fs = Math.max(0.2, Math.min(6, c.ps ?? 1));
+      cell.style.transform = fx || fy || fs !== 1 ? `translate(${fx * cw}px, ${fy * chh}px) scale(${fs})` : '';
+      cell.style.zIndex = role === selClip ? '4' : cell.classList.contains('pop') ? '2' : '1';
     }
     clip.style.overflow = 'hidden';
     clip.style.boxSizing = 'border-box';
@@ -404,15 +401,15 @@ export function editorScreen() {
           updateSelFrame();
         }
         const c = cropOf(hitRole);
-        startCropX = c.x;
-        startCropY = c.y;
+        startCropX = c.px ?? 0;
+        startCropY = c.py ?? 0;
       }
     } else if (previewPtrs.size === 2 && selClip) {
       if (!gestureSnapshot) gestureSnapshot = snap();
       const [p1, p2] = [...previewPtrs.values()];
       pinchStartDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
       const c = cropOf(selClip);
-      pinchStartZoom = Math.max(0.2, c.zoom || 1);
+      pinchStartZoom = Math.max(0.2, c.ps ?? 1);
     }
   });
 
@@ -428,17 +425,11 @@ export function editorScreen() {
 
     if (previewPtrs.size === 1 && previewMoved) {
       gestureChanged = true;
-      const zoom = Math.max(0.2, Math.min(6.0, c.zoom || 1));
-      const shiftRangeX = Math.max(cell.clientWidth / 2, (zoom - 1) * cell.clientWidth / 2);
-      const shiftRangeY = Math.max(cell.clientHeight / 2, (zoom - 1) * cell.clientHeight / 2);
+      // free move: the finger drags the whole clip, wherever it should sit on the stage
       const dx = e.clientX - previewDownX;
       const dy = e.clientY - previewDownY;
-      if (shiftRangeX > 0) {
-        c.x = Math.max(-2, Math.min(2, startCropX + dx / shiftRangeX));
-      }
-      if (shiftRangeY > 0) {
-        c.y = Math.max(-2, Math.min(2, startCropY + dy / shiftRangeY));
-      }
+      c.px = Math.max(-2, Math.min(2, startCropX + dx / Math.max(1, cell.clientWidth)));
+      c.py = Math.max(-2, Math.min(2, startCropY + dy / Math.max(1, cell.clientHeight)));
       if (!previewGestureRaf) {
         const roleToUpdate = selClip;
         previewGestureRaf = requestAnimationFrame(() => {
@@ -451,7 +442,7 @@ export function editorScreen() {
       const [p1, p2] = [...previewPtrs.values()];
       const currentDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
       const factor = currentDist / (pinchStartDist || 1);
-      c.zoom = Math.max(0.2, Math.min(6.0, pinchStartZoom * factor));
+      c.ps = Math.max(0.2, Math.min(6.0, pinchStartZoom * factor));
       if (!previewGestureRaf) {
         const roleToUpdate = selClip;
         previewGestureRaf = requestAnimationFrame(() => {

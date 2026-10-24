@@ -1100,7 +1100,7 @@ public class EditorrNativePlugin extends Plugin {
 
     /** Pan/zoom of one video inside its frame. zoom 1 = no crop. x,y in -1..1 move the picture. */
     private static class CropSpec {
-        float zoom = 1f, x = 0f, y = 0f, rotate = 0f, ratio = 0f, frameRatio = 0f;
+        float zoom = 1f, x = 0f, y = 0f, rotate = 0f, ratio = 0f, frameRatio = 0f, px = 0f, py = 0f, ps = 1f;
     }
 
     private static CropSpec readCrop(JSONObject o) {
@@ -1110,6 +1110,9 @@ public class EditorrNativePlugin extends Plugin {
         c.x = (float) o.optDouble("x", 0.0);
         c.y = (float) o.optDouble("y", 0.0);
         c.rotate = (float) o.optDouble("rotate", 0.0);
+        c.px = (float) o.optDouble("px", 0.0);
+        c.py = (float) o.optDouble("py", 0.0);
+        c.ps = (float) Math.max(0.2, Math.min(6.0, o.optDouble("ps", 1.0)));
         c.frameRatio = (float) o.optDouble("frameRatio", 0.0);
         String ratio = o.optString("ratio", "custom");
         if (!"custom".equals(ratio)) {
@@ -1134,7 +1137,7 @@ public class EditorrNativePlugin extends Plugin {
         if (p == q) return true;
         if (p == null || q == null) return false;
         return Math.abs(p.zoom - q.zoom) < 0.0005f && Math.abs(p.x - q.x) < 0.0005f && Math.abs(p.y - q.y) < 0.0005f
-                && Math.abs(p.rotate - q.rotate) < 0.0005f && Math.abs(p.ratio - q.ratio) < 0.0005f && Math.abs(p.frameRatio - q.frameRatio) < 0.0005f;
+                && Math.abs(p.rotate - q.rotate) < 0.0005f && Math.abs(p.px - q.px) < 0.0005f && Math.abs(p.py - q.py) < 0.0005f && Math.abs(p.ps - q.ps) < 0.0005f && Math.abs(p.ratio - q.ratio) < 0.0005f && Math.abs(p.frameRatio - q.frameRatio) < 0.0005f;
     }
 
     @PluginMethod
@@ -1168,8 +1171,8 @@ public class EditorrNativePlugin extends Plugin {
                 s.style = o.optString("style", "one"); s.main = o.optString("main", "host");
                 s.corner = o.optString("corner", "br"); s.size = o.optString("size", "M");
                 JSONObject ch = o.optJSONObject("cropHost"), cc = o.optJSONObject("cropConst");
-                s.cropHost = ch == null ? null : readCrop(ch);
-                s.cropConst = cc == null ? null : readCrop(cc);
+                s.cropHost = ch == null ? cropHost : readCrop(ch);
+                s.cropConst = cc == null ? cropConst : readCrop(cc);
                 segs.add(s);
             }
             // A missing/zero duration must never cut everything: fall back to the end of the last segment.
@@ -1428,28 +1431,36 @@ public class EditorrNativePlugin extends Plugin {
         for (Seg x : segs) if (tMs >= x.start && tMs < x.end) { s = x; break; }
         StaticOverlaySettings.Builder b = new StaticOverlaySettings.Builder();
         boolean mainIsHost = "host".equals(s.main);
+        // free placement of this clip (move in slot sizes, extra size)
+        CropSpec fc = isHost ? s.cropHost : s.cropConst;
+        float fpx = fc == null ? 0f : fc.px, fpy = fc == null ? 0f : fc.py, fps = fc == null ? 1f : fc.ps;
+        boolean placed = Math.abs(fpx) > 0.001f || Math.abs(fpy) > 0.001f || Math.abs(fps - 1f) > 0.001f;
         switch (s.style) {
             case "side":
                 // uniform scale 0.5 (letterboxed in each half). TODO: crop shader for true 50/50 fill.
-                b.setScale(0.5f, 0.5f).setBackgroundFrameAnchor(isHost ? -0.5f : 0.5f, 0f);
+                b.setScale(0.5f * fps, 0.5f * fps).setBackgroundFrameAnchor((isHost ? -0.5f : 0.5f) + fpx, -2f * fpy);
                 break;
             case "updown":
-                b.setScale(0.5f, 0.5f).setBackgroundFrameAnchor(0f, isHost ? 0.5f : -0.5f);
+                b.setScale(0.5f * fps, 0.5f * fps).setBackgroundFrameAnchor(2f * fpx, (isHost ? 0.5f : -0.5f) - fpy);
                 break;
             case "popup": {
                 boolean isMain = isHost == mainIsHost;
-                if (isMain) break; // full frame
+                if (isMain) {
+                    if (placed) b.setScale(fps, fps).setBackgroundFrameAnchor(2f * fpx, -2f * fpy);
+                    break; // full frame
+                }
                 float sc = "S".equals(s.size) ? 0.24f : "L".equals(s.size) ? 0.42f : 0.32f;
                 float ax = (s.corner.endsWith("l") ? -1f : 1f);
                 float ay = (s.corner.startsWith("t") ? 1f : -1f);
-                b.setScale(sc, sc)
+                b.setScale(sc * fps, sc * fps)
                  .setOverlayFrameAnchor(ax, ay)
-                 .setBackgroundFrameAnchor(ax * 0.94f, ay * 0.90f);
+                 .setBackgroundFrameAnchor(ax * 0.94f + 2f * fpx * sc, ay * 0.90f - 2f * fpy * sc);
                 break;
             }
             default: { // one-to-one
                 boolean isMain = isHost == mainIsHost;
                 if (!isMain) b.setAlphaScale(0f);
+                else if (placed) b.setScale(fps, fps).setBackgroundFrameAnchor(2f * fpx, -2f * fpy);
             }
         }
         return b.build();

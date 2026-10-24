@@ -19,6 +19,10 @@ export interface CropState {
   radius?: number;
   strokeWidth?: number;
   strokeColor?: string;
+  /** Free placement of the whole clip box: move (fraction of its slot size) and size. Not the crop. */
+  px?: number;
+  py?: number;
+  ps?: number;
 }
 export const NO_CROP: CropState = { zoom: 1, x: 0, y: 0, rotate: 0, ratio: 'custom', radius: 0, strokeWidth: 0, strokeColor: '#ffffff' };
 
