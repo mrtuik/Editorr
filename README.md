@@ -26,7 +26,8 @@ The `android/` folder is generated in CI (`cap add android` + `scripts/patch-and
 | Audio extract (MediaCodec to mono 16 kHz PCM) | Built (native) |
 | Auto sync (FFT cross-correlation of energy envelopes, confidence, nudge buttons, overlay) | Built |
 | Speaker detect: mic loudness difference when mics differ; voice-print (MFCC 2-speaker) when both phones hear both people; uses the audio picked as Sound: Host/Const | Built, tested on synthetic audio only |
-| Lips scan: samples face-area movement from both videos and fuses it with voice (Auto switch with lips) | Built, tested on synthetic data only |
+| Autoframe: one tap finds faces (MediaPipe FaceLandmarker, 5 fps, on device), cuts to whoever speaks (voice + real lip opening) and centres that person in every clip for the chosen ratio. Faces tool: tap which person to follow when a video shows more than one | Built, not yet tested on a phone |
+| Lips scan (old note): samples face-area movement from both videos and fuses it with voice (Auto switch with lips) | Built, tested on synthetic data only |
 | CapCut-style icon toolbar (auto, lips, split, layout, who is on screen, audio, merge, delete, swap, zoom) | Built |
 | Timeline: ruler, 2 waveforms, layout track, fixed playhead, pinch zoom, tap select, long-press menu, boundary drag, split/merge/delete, undo/redo (50), autosave | Built |
 | 4 layouts with live preview, popup corner/size/main | Built |

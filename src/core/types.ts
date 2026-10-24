@@ -109,6 +109,9 @@ export interface Project {
   cropConst: CropState;
   mirrorHost: boolean;
   mirrorConst: boolean;
+  /** Which person to follow in each video (a point on the frame, 0..1). Missing = the main person. */
+  faceHost?: { x: number; y: number };
+  faceConst?: { x: number; y: number };
   /** Noise reduction strength, 0 (off) to 100, per source video. */
   noiseHost: number;
   noiseConst: number;

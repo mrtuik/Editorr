@@ -1,3 +1,4 @@
+import type { FaceScan } from './faces';
 import { NO_CROP, type CropState, type Project, type Segment, type Settings } from './types';
 
 const OLD_PROJECTS_KEY = 'editorr.projects.v1';
@@ -275,6 +276,9 @@ export interface Runtime {
   /** lip/face movement per 100 ms timeline frame (not saved) */
   hostMotion?: Float32Array;
   constMotion?: Float32Array;
+  /** face tracks of each video (not saved) */
+  hostFaces?: FaceScan;
+  constFaces?: FaceScan;
 }
 
 /** Small, runtime-only strength cache. Tied to the source PCM object to avoid cross-project reuse. */

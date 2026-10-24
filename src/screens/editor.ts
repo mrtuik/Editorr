@@ -3,6 +3,8 @@ import { peaks, PEAKS_PER_SEC, SAMPLE_RATE } from '../core/audio';
 import { startDenoise } from '../core/denoise';
 import { detectSpeakers, lastMethod, lastSeparationDb, lastUsedLips, lastVoiceQuality } from '../core/speaker';
 import { motionToActivity, scanMotion } from '../core/motion';
+import { cropForFace, FACE_SAMPLE_MS, faceBetween, motionFromScan, pickTrack, scanFaces, type FaceScan } from '../core/faces';
+import { pickFace } from './facePick';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
 import { detectSilence } from '../core/silence';
 import { EditorrNative, fileSrc, isNative, tick } from '../core/native';
@@ -1634,6 +1636,12 @@ export function editorScreen() {
   async function doSmartSwitch() {
     if (scanning || !needAudio()) return;
     if (!runtime.hostMotion || !runtime.constMotion) {
+      // real face + lip scan first; the old pixel scan below is only the fallback when the face model cannot load
+      const fr = await ensureFaces();
+      if (fr === 'cancel') { toast('Scan cancelled'); return; }
+      if (fr === 'ok') { setMotionFromFaces(); draw(); }
+    }
+    if (!runtime.hostMotion || !runtime.constMotion) {
       scanning = true; scanCancel = false;
       setPlaying(false);
       startTask('lips', 'Scanning lips', 0, { modal: true, cancel: () => { scanCancel = true; } });
@@ -1652,6 +1660,110 @@ export function editorScreen() {
       draw();
     }
     doAutoSwitch(true);
+  }
+
+  // ======================================================================= Faces + Autoframe
+  const faceStale = (sc: FaceScan | undefined, startMs: number) => !sc || sc.startMs !== startMs || sc.n < Math.ceil(p.durationMs / FACE_SAMPLE_MS);
+  const roleName = (r: Role) => (r === 'host' ? 'Host' : 'Constant');
+  const faceScanOf = (r: Role) => (r === 'host' ? runtime.hostFaces : runtime.constFaces);
+
+  /** Scans faces of both videos when that has not been done (or the sync offset changed). */
+  async function ensureFaces(): Promise<'ok' | 'cancel' | 'fail'> {
+    const need: Role[] = [];
+    if (faceStale(runtime.hostFaces, 0)) need.push('host');
+    if (faceStale(runtime.constFaces, p.offsetMs)) need.push('constant');
+    if (!need.length) return 'ok';
+    scanning = true; scanCancel = false;
+    setPlaying(false);
+    startTask('faces', 'Scanning faces', 0, { modal: true, cancel: () => { scanCancel = true; } });
+    try {
+      for (let k = 0; k < need.length; k++) {
+        const role = need[k];
+        const v = role === 'host' ? hostV : constV;
+        const r = await scanFaces(v.currentSrc || v.src, role === 'host' ? 0 : p.offsetMs, p.durationMs,
+          (x) => updateTask('faces', undefined, (k * 100 + x) / need.length), () => scanCancel);
+        if (!r) return scanCancel ? 'cancel' : 'fail';
+        if (role === 'host') runtime.hostFaces = r; else runtime.constFaces = r;
+      }
+      return 'ok';
+    } catch { return 'fail'; } finally { endTask('faces'); scanning = false; }
+  }
+
+  function setMotionFromFaces() {
+    if (runtime.hostFaces) runtime.hostMotion = motionFromScan(runtime.hostFaces, p.faceHost, p.durationMs);
+    if (runtime.constFaces) runtime.constMotion = motionFromScan(runtime.constFaces, p.faceConst, p.durationMs);
+  }
+
+  /** Asks which person to follow in a video that shows more than one person. false = the user cancelled. */
+  async function choosePeople(force: boolean): Promise<boolean> {
+    for (const role of ['host', 'constant'] as Role[]) {
+      const scan = faceScanOf(role);
+      const key = role === 'host' ? 'faceHost' : 'faceConst';
+      if (!scan || scan.tracks.length < 2) continue;
+      if (!force && p[key]) continue;
+      const v = role === 'host' ? hostV : constV;
+      const r = await pickFace(`Follow who in ${roleName(role)}?`, v.currentSrc || v.src, scan, p[key]);
+      if (r === undefined) return false;
+      if (r === null) delete p[key]; else p[key] = r;
+      scheduleSave();
+    }
+    return true;
+  }
+
+  /** "Faces" tool: scan, then let the user tap the person to follow in each video. */
+  async function doFaces() {
+    if (scanning) return;
+    const fr = await ensureFaces();
+    if (fr === 'cancel') { toast('Scan cancelled'); return; }
+    if (fr === 'fail') { toast('Face scan is not available. Check the internet once, or update the app.'); return; }
+    const tracks = (runtime.hostFaces?.tracks.length ?? 0) + (runtime.constFaces?.tracks.length ?? 0);
+    if (!tracks) { toast('No face found in either video.'); return; }
+    if (!(runtime.hostFaces!.tracks.length > 1 || runtime.constFaces!.tracks.length > 1)) { toast('Only one person in each video. Nothing to pick.'); return; }
+    if (!(await choosePeople(true))) return;
+    setMotionFromFaces(); draw();
+    toast('Saved. Autoframe will follow the picked people.');
+  }
+
+  /** Crop of every clip so the followed person is centred with some headroom for the chosen ratio. */
+  function frameSegments(segs: Segment[]): Segment[] {
+    const a0 = aspectValue(p.aspect);
+    return segs.map((sg) => {
+      const out: Segment = { ...sg };
+      for (const role of ['host', 'constant'] as Role[]) {
+        const scan = faceScanOf(role);
+        if (!scan) continue;
+        const track = pickTrack(scan, role === 'host' ? p.faceHost : p.faceConst);
+        const face = faceBetween(track, scan.sampleMs, sg.startMs, sg.endMs);
+        if (!face) continue;
+        const slot = sg.style === 'side' ? a0 / 2 : sg.style === 'updown' ? a0 * 2 : a0;
+        const k = CK(role);
+        const crop = cropForFace(face, scan.aspect, slot, role === 'host' ? p.mirrorHost : p.mirrorConst, sg[k] ?? p[k]);
+        crop.ratio = 'custom'; delete crop.frameRatio;
+        out[k] = crop;
+      }
+      return out;
+    });
+  }
+
+  /** One tap: find the faces, cut to whoever speaks (voice + lips), and frame that person in every clip. */
+  async function doAutoframe() {
+    if (scanning || !needAudio()) return;
+    const fr = await ensureFaces();
+    if (fr === 'cancel') { toast('Scan cancelled'); return; }
+    if (fr === 'fail') { toast('Face scan is not available. Check the internet once, or update the app. Use Auto switch for now.'); return; }
+    if (!(await choosePeople(false))) return;
+    setMotionFromFaces();
+    const keep = coverage(p.segments); // parts removed by silence cut stay removed
+    let segs = detectSpeakers(runtime.hostPcm!, runtime.constPcm!, p.offsetMs, p.durationMs, app.settings, p.mainAudio,
+      { host: runtime.hostMotion!, constant: runtime.constMotion! });
+    const clipped = keep.length ? intersectRanges(segs, keep) : segs;
+    if (clipped.length) segs = clipped;
+    const found = (runtime.hostFaces?.tracks.length ?? 0) + (runtime.constFaces?.tracks.length ?? 0);
+    segs = frameSegments(segs);
+    edit(segs); selectedId = segs[0]?.id ?? null; afterEdit(); draw();
+    if (!found) toast('No face found, so only the speaker cuts were made.');
+    else if (segs.length <= 1) toast('Framed the face. Could not tell the two people apart for cutting.');
+    else toast(`Autoframe: ${segs.length} segments, faces centred. Undo to go back.`);
   }
 
   function doSwap() { edit(p.segments.map((s) => ({ ...s, main: (s.main === 'host' ? 'constant' : 'host') as Role }))); }
@@ -1681,6 +1793,8 @@ export function editorScreen() {
         tool('sync', 'Sync', () => { selClip = 'constant'; selectedId = null; openPanel('sync'); updateSelFrame(); }),
         tool('switchSlider', 'Auto switch', () => doAutoSwitch(false)),
         tool('lips', 'Lips scan', doSmartSwitch),
+        tool('autoframe', 'Autoframe', doAutoframe),
+        tool('face', 'Faces', doFaces),
         tool('silence', 'Silence', () => openPanel('silence')),
         tool('layout', 'Layout', () => openPanel('layout')),
         tool('user', 'On screen', () => openPanel('main')),

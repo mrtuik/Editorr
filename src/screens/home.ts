@@ -31,6 +31,7 @@ export function homeScreen() {
     runtime.hostFile = runtime.constFile = undefined;
     runtime.hostPcm = runtime.constPcm = undefined;
     runtime.hostMotion = runtime.constMotion = undefined;
+    runtime.hostFaces = runtime.constFaces = undefined;
     app.go('import');
   }
 

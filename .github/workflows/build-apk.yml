@@ -13,7 +13,7 @@ jobs:
     env:
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
       VERSION_CODE: ${{ github.run_number }}
-      VERSION_NAME: 16.3.1
+      VERSION_NAME: 16.4.0
     steps:
       - uses: actions/checkout@v4
 
@@ -72,6 +72,9 @@ jobs:
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+
+      - name: Get face model and MediaPipe files (offline Autoframe)
+        run: npm run face-assets
 
       - name: Remove stale v8 screens
         run: rm -f src/screens/sync.ts src/screens/analyze.ts

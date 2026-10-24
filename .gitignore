@@ -7,3 +7,4 @@ android/local.properties
 *.jks
 *.keystore
 .DS_Store
+public/mediapipe/

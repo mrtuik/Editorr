@@ -165,6 +165,8 @@ export const ICON = {
   lips: '<path d="M2.5 12c3-4.5 6-4.5 9.5-2.5 3.500-2 6.500-2 9.500 2.500-3 5-6 6.500-9.500 6.500S5.500 17 2.500 12.500zM2.500 12.500h19" />',
   scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.5 8l11.500 9M8.500 16L20 7" />',
   layout: '<rect x="3" y="3" width="8" height="8" rx="1.500"/><rect x="13" y="3" width="8" height="8" rx="1.500"/><rect x="3" y="13" width="8" height="8" rx="1.500"/><rect x="13" y="13" width="8" height="8" rx="1.500"/>',
+  face: '<path d="M4 8V5a1 1 0 011-1h3M16 4h3a1 1 0 011 1v3M20 16v3a1 1 0 01-1 1h-3M8 20H5a1 1 0 01-1-1v-3" /><circle cx="9.500" cy="10" r="0.800" fill="currentColor"/><circle cx="14.500" cy="10" r="0.800" fill="currentColor"/><path d="M9 14.500c1.500 1.500 4.500 1.500 6 0" />',
+  autoframe: '<path d="M4 8V5a1 1 0 011-1h3M16 4h3a1 1 0 011 1v3M20 16v3a1 1 0 01-1 1h-3M8 20H5a1 1 0 01-1-1v-3" /><path d="M13 7l-3 5h4l-3 5" />',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.500 3.500-7 8-7s8 2.500 8 7" />',
   volume: '<path d="M4 9v6h4l5 4V5L8 9H4zM16.500 8.500a5 5 0 010 7M19 6a8.500 8.500 0 010 12" />',
   merge: '<path d="M10 14a4 4 0 005.700 0l3-3a4 4 0 00-5.700-5.700l-1 1M14 10a4 4 0 00-5.700 0l-3 3a4 4 0 005.700 5.700l1-1" />',
