@@ -66,10 +66,10 @@ Still to do: IndexedDB storage + keeping the picked videos out of the cache fold
 
 Android only installs a new APK over an old one when both are signed with the SAME key and the new `versionCode` is higher. The workflow now does both:
 
-- `versionCode` = GitHub run number, `versionName` = `0.1.<run number>`.
+- `versionCode` = GitHub run number, `versionName` = `16.2.1`.
 - Every build (signed release APK) uses one fixed keystore.
 - `applicationId` stays `com.tuik.editorr`.
-- The only APK uploaded is `Editorr-apk` (named `Editorr-v0.1.N.apk`).
+- The only APK uploaded is `Editorrr-apk` (named `Editorrr-v16.2.1.apk`).
 
 ### Keystore: do this once (recommended)
 
