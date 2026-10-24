@@ -19,10 +19,10 @@ import {
 import { Aspect, ASPECTS, aspectValue, Corner, CropRatio, CropState, LayoutStyle, NO_CROP, PopupSize, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
 import { confirmDialog, fmtClock, h, ICON, icon, iconButton, spinner, toast } from '../ui';
 
-type Panel = 'none' | 'ratio' | 'crop' | 'silence' | 'sync' | 'layout' | 'main' | 'audio';
+type Panel = 'none' | 'ratio' | 'crop' | 'mask' | 'silence' | 'sync' | 'layout' | 'main' | 'audio';
 
 // ---- timeline geometry (CSS px) ----
-const G = 36;            // left column with lane icons
+const G = 64;            // left column: audio-source button + lane icons
 const RULER = 22;        // top ruler
 const LANE = 50;         // auto-cut master video filmstrip track height
 const AUD = 32;          // audio waveform track height
@@ -111,8 +111,12 @@ export function editorScreen() {
   const constMsg = h('div', { class: 'vmsg', style: 'display:none' }, 'Video not found');
   hostV.muted = p.mainAudio !== 'host' || p.noiseHost > 0;
   constV.muted = p.mainAudio !== 'constant' || p.noiseConst > 0;
-  const hostCell = h('div', { class: 'cell' }, hostV, hostMsg);
-  const constCell = h('div', { class: 'cell' }, constV, constMsg);
+  // Each video lives in its own clip box. Transform, border and rounded corners go on the clip box,
+  // so the border always hugs the video and moves/scales with it (CapCut behaviour).
+  const hostClip = h('div', { class: 'clip-box' }, hostV);
+  const constClip = h('div', { class: 'clip-box' }, constV);
+  const hostCell = h('div', { class: 'cell' }, hostClip, hostMsg);
+  const constCell = h('div', { class: 'cell' }, constClip, constMsg);
   const stage = h('div', { class: 'stage' }, hostCell, constCell);
   const guideV = h('div', { class: 'guide v' });
   const guideH = h('div', { class: 'guide h' });
@@ -169,10 +173,12 @@ export function editorScreen() {
       stage.style.touchAction = '';
       return;
     }
-    selFrame.style.left = cell.style.left;
-    selFrame.style.top = cell.style.top;
-    selFrame.style.width = cell.style.width;
-    selFrame.style.height = cell.style.height;
+    const clipRect = (selClip === 'host' ? hostClip : constClip).getBoundingClientRect();
+    const stageRect = stage.getBoundingClientRect();
+    selFrame.style.left = `${clipRect.left - stageRect.left}px`;
+    selFrame.style.top = `${clipRect.top - stageRect.top}px`;
+    selFrame.style.width = `${clipRect.width}px`;
+    selFrame.style.height = `${clipRect.height}px`;
     selFrame.style.zIndex = cell.classList.contains('pop') ? '6' : '3';
     selFrame.classList.add('on');
     stage.style.touchAction = 'none';
@@ -206,7 +212,8 @@ export function editorScreen() {
   function applyCrop(role: Role) {
     const c = role === 'host' ? p.cropHost : p.cropConst;
     const v = role === 'host' ? hostV : constV;
-    const cell = v.parentElement;
+    const clip = role === 'host' ? hostClip : constClip;
+    const cell = clip.parentElement;
     const aspect = cell && cell.clientWidth > 0 && cell.clientHeight > 0 ? cell.clientWidth / cell.clientHeight : aspectValue(p.aspect);
     const zoom = Math.max(0.2, Math.min(6.0, c.zoom || 1));
     const rotate = c.rotate ?? 0;
@@ -214,16 +221,19 @@ export function editorScreen() {
     const mirrored = role === 'host' ? p.mirrorHost : p.mirrorConst;
     const tx = zoom > 1 ? c.x * (zoom - 1) * 50 : c.x * 50;
     const ty = zoom > 1 ? c.y * (zoom - 1) * 50 : c.y * 50;
-    v.style.transform = Math.abs(zoom - 1) < 0.001 && Math.abs(c.x) < 0.001 && Math.abs(c.y) < 0.001 && Math.abs(rotate) < 0.001 && !mirrored
-      ? ''
-      : `translate(${tx}%, ${ty}%) scale(${zoom}, ${zoom}) rotate(${rotate}deg) scale(${cover})${mirrored ? ' scaleX(-1)' : ''}`;
+    const identity = Math.abs(zoom - 1) < 0.001 && Math.abs(c.x) < 0.001 && Math.abs(c.y) < 0.001 && Math.abs(rotate) < 0.001;
 
-    if (cell) {
-      cell.style.borderRadius = c.radius ? `${c.radius}px` : '';
-      cell.style.overflow = 'hidden';
-      cell.style.border = c.strokeWidth ? `${c.strokeWidth}px solid ${c.strokeColor || '#ffffff'}` : '';
-      cell.style.boxSizing = 'border-box';
-    }
+    // Pan, zoom and rotate move the whole clip box, so the border and rounded corners travel with the video.
+    clip.style.transform = identity ? '' : `translate(${tx}%, ${ty}%) scale(${zoom}, ${zoom}) rotate(${rotate}deg) scale(${cover})`;
+    clip.style.borderRadius = c.radius ? `${c.radius}px` : '0px';
+    clip.style.border = c.strokeWidth ? `${c.strokeWidth}px solid ${c.strokeColor || '#ffffff'}` : 'none';
+    clip.style.overflow = 'hidden';
+    clip.style.boxSizing = 'border-box';
+    // Mirroring only flips the picture, never the border.
+    v.style.transform = mirrored ? 'scaleX(-1)' : '';
+
+    if (cell) { cell.style.border = ''; cell.style.borderRadius = ''; }
+    if (role === selClip) updateSelFrame();
   }
   applyCrop('host'); applyCrop('constant');
 
@@ -1117,7 +1127,21 @@ export function editorScreen() {
     // ---- left column (lane icons), drawn over the clips
     g.fillStyle = '#000'; g.fillRect(0, RULER, G, H - RULER);
     g.fillStyle = '#262626'; g.fillRect(G - 1, RULER, 1, H - RULER);
-    filmGlyph(g, G / 2, MAIN_Y + LANE / 2, '#ffffff');
+    // audio-source button (where CapCut has "Mute clip"): shows which mic is used; tap to switch Host / Constant
+    {
+      const col = p.mainAudio === 'host' ? '#ffffff' : '#4ade80';
+      g.save();
+      g.fillStyle = '#1c1c1c';
+      g.beginPath(); g.roundRect(5, MAIN_Y + 1, G - 11, LANE - 2, 8); g.fill();
+      g.strokeStyle = p.mainAudio === 'host' ? 'rgba(255,255,255,0.18)' : 'rgba(74,222,128,0.4)';
+      g.lineWidth = 1; g.stroke();
+      speakerGlyph(g, G / 2 - 1, MAIN_Y + 16, col);
+      g.font = '600 9px Roboto, sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillStyle = col;
+      g.fillText(p.mainAudio === 'host' ? 'Host' : 'Constant', G / 2 - 1, MAIN_Y + LANE - 12);
+      g.restore();
+    }
     speakerGlyph(g, G / 2, AUD_Y + AUD / 2, p.mainAudio === 'host' ? '#ffffff' : '#4ade80');
 
     // ---- playhead needle (fixed at the center, CapCut style with top triangle and cyan snap glow)
@@ -1259,9 +1283,11 @@ export function editorScreen() {
     if (x < G) {
       if (lane === 'audio') {
         setAudio(p.mainAudio === 'host' ? 'constant' : 'host');
+        if (panel === 'audio') renderPanel();
       } else if (lane === 'main') {
-        const seg = target();
-        if (seg) selectSeg(seg.id);
+        setAudio(p.mainAudio === 'host' ? 'constant' : 'host');
+        if (panel === 'audio') renderPanel();
+        toast(p.mainAudio === 'host' ? 'Audio: Host mic' : 'Audio: Constant mic', 1400);
       }
       return;
     }
@@ -1554,6 +1580,7 @@ export function editorScreen() {
         tool('user', 'On screen', () => openPanel('main')),
         tool('volume', 'Audio', () => openPanel('audio')),
         tool('crop', 'Crop', () => openPanel('crop')),
+        tool('mask', 'Mask', () => openPanel('mask')),
         tool('mirror', 'Mirror', toggleMirrorForScreen),
         tool('ratio', 'Ratio', () => openPanel('ratio')),
         tool('zoomOut', 'Zoom out', () => { pxPerSec = Math.max(minPx(), pxPerSec / 1.5); draw(); }),
@@ -1564,6 +1591,7 @@ export function editorScreen() {
       rows.push(backTool(),
         tool('undo', 'Reset crop', () => { if (selClip) resetCrop(selClip); }),
         tool('crop', 'Crop', () => { cropRole = selClip!; openPanel('crop'); }),
+        tool('mask', 'Mask', () => { const r = selClip!; openPanel('mask'); cropRole = r; renderPanel(); }),
         tool('mirror', 'Mirror', () => { if (selClip) toggleMirror(selClip); }),
         tool('volume', 'Audio', () => openPanel('audio')));
       if (selClip === 'constant') rows.push(tool('sync', 'Sync', () => openPanel('sync')));
@@ -1575,6 +1603,7 @@ export function editorScreen() {
         tool('user', 'On screen', () => openPanel('main')),
         tool('volume', 'Audio', () => openPanel('audio')),
         tool('crop', 'Crop', () => openPanel('crop')),
+        tool('mask', 'Mask', () => openPanel('mask')),
         tool('mirror', 'Mirror', toggleMirrorForScreen),
         tool('merge', 'Merge', doMerge),
         tool('trash', 'Delete', doDelete),
@@ -1595,7 +1624,7 @@ export function editorScreen() {
     panel = n;
     pendingCuts = [];
     if (n !== 'sync') selClip = null;
-    if (n === 'crop') cropRole = segmentAt(p.segments, playMs)?.main ?? 'host';
+    if (n === 'crop' || n === 'mask') cropRole = segmentAt(p.segments, playMs)?.main ?? 'host';
     if (n === 'silence') { if (!needAudio()) { panel = 'none'; return; } runDetect(); }
     cropView.classList.toggle('on', n === 'crop');
     updateSelFrame();
@@ -1816,33 +1845,6 @@ export function editorScreen() {
             applyCrop(cropRole); positionCropFrame(); scheduleSave(); renderPanel();
           },
         }, label)));
-      const radiusSlider = slider('Corner radius', 0, 32, 1, c.radius ?? 0, (v) => `${v}px`, (v) => { c.radius = v; applyCrop(cropRole); scheduleSave(); });
-      const strokeSlider = slider('Border width', 0, 8, 1, c.strokeWidth ?? 0, (v) => `${v}px`, (v) => { c.strokeWidth = v; applyCrop(cropRole); scheduleSave(); });
-      const colors = ['#ffffff', '#19e6c1', '#facc15', '#4ade80', '#f43f5e', '#60a5fa'];
-      const curColor = c.strokeColor || '#ffffff';
-      const colorRow = h('div', { class: 'prow' },
-        h('div', { class: 'plabel' }, 'Border color'),
-        h('div', { class: 'color-swatches' },
-          ...colors.map((col) => h('button', {
-            class: 'color-swatch' + (col === curColor ? ' sel' : ''),
-            style: `background:${col}`,
-            'aria-label': `Select border color ${col}`,
-            onclick: () => { c.strokeColor = col; applyCrop(cropRole); scheduleSave(); renderPanel(); }
-          }))
-        )
-      );
-      const applyAllBtn = h('button', {
-        class: 'chip',
-        style: 'min-height:36px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);color:#fff',
-        onclick: () => {
-          const src = cropState();
-          p.cropHost = { ...p.cropHost, radius: src.radius, strokeWidth: src.strokeWidth, strokeColor: src.strokeColor };
-          p.cropConst = { ...p.cropConst, radius: src.radius, strokeWidth: src.strokeWidth, strokeColor: src.strokeColor };
-          applyCrop('host'); applyCrop('constant'); scheduleSave();
-          toast('Applied framing styling to all clips.');
-        }
-      }, icon('wand', 16), 'Apply to all clips');
-
       setPanel('Crop',
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Video'),
           chipRow<Role>([['host', 'Host'], ['constant', 'Constant']], cropRole, (v) => { cropRole = v; renderPanel(); layoutCrop(); })),
@@ -1851,11 +1853,49 @@ export function editorScreen() {
           h('div', { class: 'crop-ruler' }, ...rulerTicks, rotateInput),
           h('div', { class: 'crop-ruler-labels' }, h('span', {}, '−45°'), h('span', {}, '0°'), h('span', {}, '+45°'))),
         h('div', { class: 'prow crop-ratio-row' }, h('div', { class: 'plabel' }, 'Aspect ratio'), ratios),
+        h('div', { class: 'crop-actions' }, mirrorChip, reset),
+        h('div', { class: 'pinfo' }, 'Drag the corners or pinch to crop. Drag inside the frame to move it.'));
+    } else if (panel === 'mask') {
+      const c: CropState = cropRole === 'host' ? p.cropHost : p.cropConst;
+      const refresh = () => { applyCrop(cropRole); scheduleSave(); };
+      const radiusSlider = slider('Corner radius', 0, 48, 1, c.radius ?? 0, (v) => `${v}px`, (v) => { c.radius = v; refresh(); });
+      const strokeSlider = slider('Border width', 0, 12, 1, c.strokeWidth ?? 0, (v) => `${v}px`, (v) => { c.strokeWidth = v; refresh(); });
+      const colors = ['#ffffff', '#19e6c1', '#facc15', '#4ade80', '#f43f5e', '#60a5fa', '#a855f7'];
+      const curColor = c.strokeColor || '#ffffff';
+      const colorRow = h('div', { class: 'prow' },
+        h('div', { class: 'plabel' }, 'Border color'),
+        h('div', { class: 'color-swatches' },
+          ...colors.map((col) => h('button', {
+            class: 'color-swatch' + (col === curColor ? ' sel' : ''),
+            style: `background:${col}`,
+            'aria-label': `Select border color ${col}`,
+            onclick: () => { hist.push(snap()); updateBtns(); c.strokeColor = col; refresh(); renderPanel(); },
+          }))));
+      const resetBtn = h('button', { class: 'chip crop-reset', onclick: () => {
+        if (!c.radius && !c.strokeWidth) return;
+        hist.push(snap()); updateBtns();
+        c.radius = 0; c.strokeWidth = 0;
+        refresh(); renderPanel();
+      } }, icon('trash', 16), 'Reset');
+      const applyAllBtn = h('button', {
+        class: 'chip',
+        style: 'min-height:36px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);color:#fff',
+        onclick: () => {
+          hist.push(snap()); updateBtns();
+          const src = cropRole === 'host' ? p.cropHost : p.cropConst;
+          for (const t of [p.cropHost, p.cropConst]) { t.radius = src.radius; t.strokeWidth = src.strokeWidth; t.strokeColor = src.strokeColor; }
+          applyCrop('host'); applyCrop('constant'); scheduleSave();
+          toast('Applied mask to all clips.');
+        },
+      }, icon('wand', 16), 'Apply to all clips');
+      setPanel('Mask',
+        h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Video'),
+          chipRow<Role>([['host', 'Host'], ['constant', 'Constant']], cropRole, (v) => { cropRole = v; renderPanel(); })),
         radiusSlider.row,
         strokeSlider.row,
         colorRow,
-        h('div', { class: 'crop-actions' }, mirrorChip, reset, applyAllBtn),
-        h('div', { class: 'pinfo' }, 'Drag the corners or pinch to crop. Drag inside the frame to move it.'));
+        h('div', { class: 'crop-actions' }, resetBtn, applyAllBtn),
+        h('div', { class: 'pinfo' }, 'The border and rounded corners stay on the video edges when you move or zoom it.'));
     } else {
       const total = pendingCuts.reduce((a, r) => a + (r.endMs - r.startMs), 0);
       const info = pendingCuts.length

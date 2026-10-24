@@ -182,6 +182,7 @@ export const ICON = {
   zoomIn: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.500-4.500M11 8v6M8 11h6" />',
   zoomOut: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.500-4.500M8 11h6" />',
   search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4" />',
+  mask: '<rect x="3" y="3" width="18" height="18" rx="6"/><circle cx="12" cy="12" r="4"/>',
   crop: '<path d="M6 2v14a2 2 0 002 2h14M2 6h14a2 2 0 012 2v14" />',
   ratio: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h2M7 10v2M17 14h-2M17 14v-2" />',
   silence: '<path d="M2 12h3M19 12h3M8 8v8M12 5v14M16 8v8" /><path d="M3 3l18 18" />',

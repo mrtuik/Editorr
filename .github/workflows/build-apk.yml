@@ -1,4 +1,4 @@
-name: Build Editorr APK
+name: Build Editorrr v16 APK
 
 on:
   push:
@@ -13,7 +13,7 @@ jobs:
     env:
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
       VERSION_CODE: ${{ github.run_number }}
-      VERSION_NAME: 0.1.${{ github.run_number }}
+      VERSION_NAME: 16.2.1
     steps:
       - uses: actions/checkout@v4
 
@@ -104,10 +104,10 @@ jobs:
           APK=android/app/build/outputs/apk/release/app-release.apk
           "$ANDROID_HOME/build-tools/$BT/apksigner" verify --print-certs "$APK" | head -5
           "$ANDROID_HOME/build-tools/$BT/aapt" dump badging "$APK" | head -1
-          cp "$APK" "Editorr-v${VERSION_NAME}.apk"
+          cp "$APK" "Editorrr-v${VERSION_NAME}.apk"
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: Editorr-apk
-          path: Editorr-v*.apk
+          name: Editorrr-apk
+          path: Editorrr-v*.apk
