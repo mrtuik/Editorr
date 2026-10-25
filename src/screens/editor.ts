@@ -33,7 +33,7 @@ import {
   coverage, defaultSegments, deleteSegment, dropSlivers, fitSegmentsToDuration, intersectRanges, isKept, keptMs, mergeWithPrev,
   moveBoundary, nextKeptStart, overlapDuration, segmentAt, splitAt, subtractRanges, updateSegment, type Range,
 } from '../core/timeline';
-import { Aspect, ASPECTS, aspectValue, Corner, CropRatio, CropState, LayoutStyle, NO_CROP, PopupSize, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
+import { Aspect, ASPECTS, aspectValue, Corner, CropRatio, CropState, LayoutStyle, NO_CROP, PopupSize, Project, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
 import { confirmDialog, fmtClock, h, ICON, icon, iconButton, spinner, toast } from '../ui';
 
 type Panel = 'none' | 'ratio' | 'crop' | 'mask' | 'silence' | 'sync' | 'layout' | 'main' | 'audio' | 'denoise';
@@ -48,9 +48,10 @@ const MAIN_Y = RULER + GAP;
 const AUD_Y = MAIN_Y + LANE + GAP;
 // "voice-scan" icon (14x14 viewBox) for the Host / Constant audio-source button
 const VOICE_ICON = new Path2D('M2 1.625A.375.375 0 0 0 1.625 2v2a.625.625 0 1 1-1.25 0V2A1.625 1.625 0 0 1 2 .375h2a.625.625 0 1 1 0 1.25zm8-1.25a.625.625 0 1 0 0 1.25h2a.375.375 0 0 1 .375.375v2a.625.625 0 1 0 1.25 0V2A1.625 1.625 0 0 0 12 .375zM7 3.5a.75.75 0 0 1 .75.75v5.5a.75.75 0 0 1-1.5 0v-5.5A.75.75 0 0 1 7 3.5m-2.75 1a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5a.75.75 0 0 1 .75-.75m6.25.75a.75.75 0 0 0-1.5 0v3.5a.75.75 0 0 0 1.5 0zM13 9.375c.345 0 .625.28.625.625v2A1.625 1.625 0 0 1 12 13.625h-2a.625.625 0 1 1 0-1.25h2a.375.375 0 0 0 .375-.375v-2c0-.345.28-.625.625-.625M1.625 10a.625.625 0 1 0-1.25 0v2A1.625 1.625 0 0 0 2 13.625h2a.625.625 0 1 0 0-1.25H2A.375.375 0 0 1 1.625 12z');
-const MUS = 26;           // music row (Auto BGM, songs, effects)
-const MUS_Y = AUD_Y + AUD + GAP;
-const TL_H = MUS_Y + MUS + 10;
+const SUB_M = 24;        // music row height (one line)
+const SUB_S = 18;        // sound-effect row height
+const SUB_T = 20;        // text row height
+const TL_H = AUD_Y + AUD + GAP + SUB_M + 10;   // smallest timeline (only the Add music row)
 const CYAN = '#C6F277';
 const CROP_RATIOS: [CropRatio, string][] = [
   ['custom', 'Custom'], ['9:16', '9:16'], ['16:9', '16:9'], ['1:1', '1:1'], ['4:3', '4:3'], ['2:3', '2:3'],
@@ -1122,31 +1123,63 @@ export function editorScreen() {
 
   /** Single audio waveform row for the selected sound (p.mainAudio). Centered mirrored bars. */
   const MUSIC_COLOR = { bgm: '#2b6f69', music: '#2b5f94', sfx: '#a8651f' } as const;
-  function drawMusicRow(g: CanvasRenderingContext2D) {
+  type MItem = NonNullable<Project['bgm']>['items'] extends (infer T)[] | undefined ? T : never;
+  /** Greedy packing: items that overlap in time go to the next line of their row. */
+  function pack(spans: [number, number][]): { line: number[]; n: number } {
+    const order = spans.map((_, i) => i).sort((a, b) => spans[a]![0] - spans[b]![0]);
+    const ends: number[] = [], line: number[] = new Array(spans.length).fill(0);
+    for (const i of order) {
+      let l = ends.findIndex((e) => e <= spans[i]![0]);
+      if (l < 0) { l = ends.length; ends.push(0); }
+      ends[l] = Math.max(spans[i]![1], spans[i]![0] + 400); line[i] = l;
+    }
+    return { line, n: Math.max(1, ends.length) };
+  }
+  /** Rows under the waveform, like CapCut: Music, SFX and Text each get their own row; overlapping items stack. */
+  function tlRows() {
     const items = p.bgm?.items ?? [];
+    const mus = items.filter((i) => i.kind !== 'sfx'), sfx = items.filter((i) => i.kind === 'sfx'), txt = p.texts ?? [];
+    const pm = pack(mus.map((i) => [i.startMs, i.endMs])), ps = pack(sfx.map((i) => [i.startMs, i.endMs])), pt = pack(txt.map((t) => [t.s, t.e]));
+    let y = AUD_Y + AUD + GAP;
+    const music = { y, h: pm.n * SUB_M + (pm.n - 1) * 3 }; y += music.h + GAP;
+    const fx = sfx.length ? { y, h: ps.n * SUB_S + (ps.n - 1) * 3 } : null; if (fx) y += fx.h + GAP;
+    const text = txt.length ? { y, h: pt.n * SUB_T + (pt.n - 1) * 3 } : null; if (text) y += text.h + GAP;
+    return { mus, sfx, txt, pm, ps, pt, music, fx, text, tlH: y + 10 };
+  }
+  let rowsNow = tlRows();
+  let minTlH = TL_H;
+  function pill(g: CanvasRenderingContext2D, a: number, y: number, w: number, hh: number, color: string, label: string) {
+    rrect(g, a, y, w, hh, 5); g.fillStyle = color; g.fill();
+    if (label && w > 28) {
+      g.save();
+      g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), hh); g.clip();
+      g.fillStyle = '#ffffff'; g.font = '600 9px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+      g.fillText(label, Math.max(a, G) + 5, y + hh / 2 + 0.5);
+      g.restore();
+    }
+  }
+  function drawMusicRow(g: CanvasRenderingContext2D) {
+    const R = rowsNow, items = R.mus;
+    const MUS_Y = R.music.y;
     const x0 = xOf(0), x1 = xOf(p.durationMs);
-    if (x1 < G || x0 > W) return;
     g.save();
-    g.beginPath(); g.rect(G, MUS_Y - 1, W - G, MUS + 2); g.clip();
+    g.beginPath(); g.rect(G, MUS_Y - 1, W - G, R.music.h + 2); g.clip();
     if (!items.length) {
-      rrect(g, x0, MUS_Y, Math.max(0, x1 - x0), MUS, 6);
+      rrect(g, x0, MUS_Y, Math.max(0, x1 - x0), SUB_M, 6);
       g.fillStyle = '#0d0d0d'; g.fill();
       g.strokeStyle = 'rgba(255,255,255,0.14)'; g.lineWidth = 1; g.stroke();
       g.fillStyle = '#8a8a8a'; g.font = '600 10px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-      g.fillText('+  Add music', Math.max(x0, G) + 10, MUS_Y + MUS / 2);
-      g.restore();
-      return;
+      g.fillText('+  Add music', Math.max(x0, G) + 10, MUS_Y + SUB_M / 2);
     }
-    for (const it of items) {
+    items.forEach((it: MItem, n) => {
       const a = xOf(it.startMs), b = xOf(it.endMs);
-      if (b < G || a > W) continue;
-      const small = it.kind === 'sfx';
-      const w = Math.max(small ? 16 : 6, b - a), hh = small ? 14 : MUS, y = MUS_Y + (MUS - hh) / 2;
-      rrect(g, a, y, w, hh, small ? 5 : 6);
+      if (b < G || a > W) return;
+      const w = Math.max(6, b - a), y = MUS_Y + R.pm.line[n]! * (SUB_M + 3);
+      rrect(g, a, y, w, SUB_M, 6);
       g.fillStyle = MUSIC_COLOR[it.kind]; g.fill();
-      if (!small && bgmPeaks) {
+      if (bgmPeaks) {
         g.fillStyle = 'rgba(255,255,255,0.35)';
-        const cy = MUS_Y + MUS - 7;
+        const cy = y + SUB_M - 7;
         for (let x = Math.max(Math.floor(a) + 2, G); x < Math.min(a + w, W); x += 2) {
           const ms = msOf(x);
           const v = bgmPeaks[Math.round((ms / 1000) * 20)] ?? 0;
@@ -1154,18 +1187,37 @@ export function editorScreen() {
           g.fillRect(x, cy - bh, 1.4, bh * 2);
         }
       }
-      if (!small) {
-        g.save();
-        g.beginPath(); g.rect(Math.max(a, G), y, Math.min(a + w, W) - Math.max(a, G), hh); g.clip();
-        g.fillStyle = '#ffffff'; g.font = '600 9px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-        const label = it.mood && it.mood in MOOD_LABEL ? `${MOOD_LABEL[it.mood as keyof typeof MOOD_LABEL]} · ${it.name}` : it.name;
-        g.fillText(label, Math.max(a, G) + 6, MUS_Y + 8);
-        g.restore();
-      }
-    }
+      g.save();
+      g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_M); g.clip();
+      g.fillStyle = '#ffffff'; g.font = '600 9px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+      const label = it.mood && it.mood in MOOD_LABEL ? `${MOOD_LABEL[it.mood as keyof typeof MOOD_LABEL]} · ${it.name}` : it.name;
+      g.fillText(label, Math.max(a, G) + 6, y + 8);
+      g.restore();
+    });
     g.restore();
   }
-
+  function drawSfxRow(g: CanvasRenderingContext2D) {
+    const R = rowsNow; if (!R.fx) return;
+    g.save();
+    g.beginPath(); g.rect(G, R.fx.y - 1, W - G, R.fx.h + 2); g.clip();
+    R.sfx.forEach((it: MItem, n) => {
+      const a = xOf(it.startMs), b = xOf(it.endMs);
+      if (b < G || a > W) return;
+      pill(g, a, R.fx!.y + R.ps.line[n]! * (SUB_S + 3), Math.max(16, b - a), SUB_S, MUSIC_COLOR.sfx, it.name);
+    });
+    g.restore();
+  }
+  function drawTextRow(g: CanvasRenderingContext2D) {
+    const R = rowsNow; if (!R.text) return;
+    g.save();
+    g.beginPath(); g.rect(G, R.text.y - 1, W - G, R.text.h + 2); g.clip();
+    R.txt.forEach((t, n) => {
+      const a = xOf(t.s), b = xOf(t.e);
+      if (b < G || a > W) return;
+      pill(g, a, R.text!.y + R.pt.line[n]! * (SUB_T + 3), Math.max(16, b - a), SUB_T, '#7a4fc4', t.text);
+    });
+    g.restore();
+  }
   function computeBgmPeaks(b: AudioBuffer) {
     const per = 20, n = Math.ceil(b.duration * per), d = b.getChannelData(0), win = Math.max(1, Math.floor(b.sampleRate / per));
     const out = new Float32Array(n);
@@ -1330,7 +1382,11 @@ export function editorScreen() {
     // ---- unified master video and audio rows (all clipped to 0 .. p.durationMs)
     drawMasterVideoTrack(g);
     drawAudioRow(g);
+    rowsNow = tlRows();
+    if (rowsNow.tlH !== minTlH) { minTlH = rowsNow.tlH; tl.style.height = `${Math.max(minTlH, tl.parentElement?.clientHeight ?? 0)}px`; requestDraw(); }
     drawMusicRow(g);
+    drawSfxRow(g);
+    drawTextRow(g);
 
     // silence found but not cut yet
     if (pendingCuts.length) {
@@ -1366,16 +1422,28 @@ export function editorScreen() {
       g.fillText(p.mainAudio === 'host' ? 'Host' : 'Constant', G / 2 - 1, MAIN_Y + LANE - 12);
       g.restore();
     }
-    // left label of the music row
+    // left labels: Music, SFX and Text rows
     {
-      const cy = MUS_Y + MUS / 2, has = !!p.bgm?.items?.length;
-      g.save();
-      g.strokeStyle = has ? '#ffffff' : '#8a8a8a'; g.lineWidth = 1.5; g.lineCap = 'round'; g.lineJoin = 'round';
-      g.beginPath(); g.arc(G / 2 - 12, cy + 4, 2.6, 0, Math.PI * 2); g.stroke();
-      g.beginPath(); g.moveTo(G / 2 - 9.4, cy + 4); g.lineTo(G / 2 - 9.4, cy - 6); g.lineTo(G / 2 - 5, cy - 4); g.stroke();
-      g.font = '600 9px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillStyle = has ? '#ffffff' : '#8a8a8a';
-      g.fillText('Music', G / 2 - 2, cy);
-      g.restore();
+      const R = rowsNow;
+      const label = (y: number, h: number, text: string, on: boolean, glyph: 'note' | 'bolt' | 'text') => {
+        const cy = y + Math.min(h, SUB_M) / 2, col = on ? '#ffffff' : '#8a8a8a';
+        g.save();
+        g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 1.5; g.lineCap = 'round'; g.lineJoin = 'round';
+        if (glyph === 'note') {
+          g.beginPath(); g.arc(G / 2 - 12, cy + 4, 2.6, 0, Math.PI * 2); g.stroke();
+          g.beginPath(); g.moveTo(G / 2 - 9.4, cy + 4); g.lineTo(G / 2 - 9.4, cy - 6); g.lineTo(G / 2 - 5, cy - 4); g.stroke();
+        } else if (glyph === 'bolt') {
+          g.beginPath(); g.moveTo(G / 2 - 9, cy - 6); g.lineTo(G / 2 - 13, cy + 1); g.lineTo(G / 2 - 10, cy + 1); g.lineTo(G / 2 - 11, cy + 6); g.lineTo(G / 2 - 7, cy - 1); g.lineTo(G / 2 - 10, cy - 1); g.closePath(); g.fill();
+        } else {
+          g.font = '700 12px Roboto, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('T', G / 2 - 10, cy);
+        }
+        g.font = '600 9px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+        g.fillText(text, G / 2 - 2, cy);
+        g.restore();
+      };
+      label(R.music.y, R.music.h, 'Music', R.mus.length > 0, 'note');
+      if (R.fx) label(R.fx.y, R.fx.h, 'SFX', true, 'bolt');
+      if (R.text) label(R.text.y, R.text.h, 'Text', true, 'text');
     }
     // music-note badge: sits at the start of the audio clip and slides with the timeline; the waveform starts after it
     {
@@ -1446,12 +1514,15 @@ export function editorScreen() {
   let lastClientY = 0;
   const localX = (e: PointerEvent) => e.clientX - canvas.getBoundingClientRect().left;
   const localY = (e: PointerEvent) => e.clientY - canvas.getBoundingClientRect().top;
-  type Lane = 'ruler' | 'main' | 'audio' | 'music' | 'none';
+  type Lane = 'ruler' | 'main' | 'audio' | 'music' | 'sfx' | 'text' | 'none';
   function laneAt(y: number): Lane {
     if (y < RULER) return 'ruler';
     if (y < MAIN_Y + LANE + GAP / 2) return 'main';
     if (y < AUD_Y + AUD + GAP / 2) return 'audio';
-    if (y < MUS_Y + MUS + GAP / 2) return 'music';
+    const R = rowsNow;
+    if (y < R.music.y + R.music.h + GAP / 2) return 'music';
+    if (R.fx && y < R.fx.y + R.fx.h + GAP / 2) return 'sfx';
+    if (R.text && y < R.text.y + R.text.h + GAP / 2) return 'text';
     return 'none';
   }
   function hitSegment(x: number): Segment | undefined {
@@ -1560,7 +1631,9 @@ export function editorScreen() {
 
   function onTap(x: number, y: number) {
     const lane = laneAt(y);
-    if (lane === 'music') { openMusic('home'); return; }
+    if (lane === 'music') { openMusic(rowsNow.mus.length ? 'bgm' : 'home'); return; }
+    if (lane === 'sfx') { openMusic('sfx'); return; }
+    if (lane === 'text') { openTexts(); return; }
     if (x < G) {
       if (lane === 'audio') {
         openAudioGroup();
@@ -2219,7 +2292,7 @@ export function editorScreen() {
       const items = [
         ...(songFiles.length ? [{ name: songFiles.map((s) => s.name).join(' + '), startMs: 0, endMs: p.durationMs, kind: 'bgm' as const }] : []),
         ...clipFiles.map((c) => ({ name: c.name, startMs: c.startMs, endMs: Math.min(p.durationMs, c.endMs ?? c.startMs + Math.round(c.buf.duration * 1000)), kind: (c.kind ?? 'music') as 'bgm' | 'music', mood: c.mood })),
-        ...sfxFiles.map((s) => ({ name: s.name, startMs: s.startMs, endMs: s.startMs + Math.min(2000, Math.round(s.buf.duration * 1000)), kind: 'sfx' as const })),
+        ...sfxFiles.map((s) => ({ name: s.name, startMs: s.startMs, endMs: s.startMs + Math.round(s.buf.duration * 1000), kind: 'sfx' as const })),
       ];
       p.bgm = { items, path, names: [...songFiles.map((s) => s.name), ...clipFiles.map((c) => c.name), ...sfxFiles.map((s) => s.name)], levelDb: o.levelDb, duckDb: o.duckDb, fadeMs: o.fadeMs, sfx: sfxFiles.map((s) => ({ name: s.name, startMs: s.startMs })) };
       scheduleSave();
@@ -2278,12 +2351,30 @@ export function editorScreen() {
       if (ytOk) {
         try {
           o.status(`${label}: searching YouTube...`);
-          const r = await EditorrNative.youtubeSearch({ query: moodQuery(s.mood, o.lang), ccOnly: false });
-          const pick = r.items.find((it: { id: string; durationMs: number }) => !used.has(it.id) && it.durationMs >= 60_000 && it.durationMs <= 8 * 60_000);
-          if (!pick) throw new Error('No suitable song found.');
-          o.status(`${label}: downloading ${pick.title.slice(0, 30)}...`);
-          const d = await EditorrNative.youtubeDownload({ id: pick.id });
-          const buf = await decodeUrl(fileSrc(d.path));
+          // Try several searches; take the best length first (1-8 min), then anything up to 25 min. Try the next song if one fails.
+          const base = moodQuery(s.mood, o.lang);
+          const queries = [base, `${base} 3 minutes`, `${MOOD_LABEL[s.mood].toLowerCase()} instrumental music no copyright`];
+          type Cand = { id: string; title: string; durationMs: number };
+          const cands: Cand[] = [];
+          for (const q of queries) {
+            const r = await EditorrNative.youtubeSearch({ query: q, ccOnly: false });
+            for (const it of r.items as Cand[]) if (!used.has(it.id) && !cands.some((c) => c.id === it.id) && it.durationMs >= 30_000 && it.durationMs <= 25 * 60_000) cands.push(it);
+            if (cands.some((c) => c.durationMs >= 60_000 && c.durationMs <= 8 * 60_000)) break;
+          }
+          const tier = (c: Cand) => (c.durationMs >= 60_000 && c.durationMs <= 8 * 60_000 ? 0 : 1);
+          cands.sort((a, b) => tier(a) - tier(b));
+          if (!cands.length) throw new Error('No suitable song found.');
+          let got: { pick: Cand; d: { path: string; title: string }; buf: AudioBuffer } | null = null;
+          for (const pick of cands.slice(0, 3)) {
+            try {
+              o.status(`${label}: downloading ${pick.title.slice(0, 30)}...`);
+              const d = await EditorrNative.youtubeDownload({ id: pick.id });
+              got = { pick, d, buf: await decodeUrl(fileSrc(d.path)) };
+              break;
+            } catch (error) { why = error instanceof Error ? error.message : String(error); }
+          }
+          if (!got) throw new Error(why || 'No song could be downloaded.');
+          const { pick, d, buf } = got;
           used.add(pick.id);
           const title = d.title || pick.title;
           clipFiles.push({ name: title, buf, startMs: s.startMs, endMs: s.endMs, loop: buf.duration * 1000 < s.endMs - s.startMs, kind: 'bgm', mood: s.mood });
@@ -2305,13 +2396,31 @@ export function editorScreen() {
     return plan;
   }
 
-  /** A downloaded effect: starts at its first sound (no silence before it) and is at most `maxS` seconds long. */
-  function tidySfx(buf: AudioBuffer, maxS = 4): AudioBuffer {
+  /** A downloaded effect: only the loudest hit is kept (no silence, no second sound after it), with a tiny fade in and a soft fade out.
+   *  peakMs = where the loudest part is inside the clip, so the effect can be placed with its peak on the cut. */
+  function tidySfx(buf: AudioBuffer, maxS = 4): { buf: AudioBuffer; peakMs: number } {
     const d = buf.getChannelData(0);
-    let peak = 1e-6; for (let i = 0; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]!));
-    let from = 0; while (from < d.length && Math.abs(d[from]!) < peak * 0.05) from++;
-    from = Math.max(0, from - Math.round(0.02 * BGM_RATE));
-    return toBuffer(d.slice(from, Math.min(d.length, from + Math.round(maxS * BGM_RATE))));
+    const F = Math.round(0.01 * BGM_RATE), nF = Math.floor(d.length / F);
+    if (nF < 3) return { buf, peakMs: 0 };
+    const env = new Float32Array(nF);
+    for (let i = 0; i < nF; i++) { let m = 0; for (let k = i * F; k < (i + 1) * F; k += 4) m = Math.max(m, Math.abs(d[k] ?? 0)); env[i] = m; }
+    let pk = 0; for (let i = 1; i < nF; i++) if (env[i]! > env[pk]!) pk = i;
+    const peak = Math.max(env[pk]!, 1e-6);
+    let from = pk; while (from > 0 && env[from - 1]! > peak * 0.1 && pk - from < 90) from--;
+    from = Math.max(0, from - 2);
+    let to = pk, quiet = 0;
+    const maxF = Math.round(maxS * 100);
+    while (to < nF - 1 && to - from < maxF) {
+      to++;
+      if (env[to]! < peak * 0.06) { if (++quiet >= 6) { to -= 5; break; } } else quiet = 0;
+    }
+    to = Math.max(to, Math.min(nF - 1, pk + 12));
+    const out = d.slice(from * F, Math.min(d.length, (to + 1) * F));
+    const fin = Math.min(out.length, Math.round(0.004 * BGM_RATE));
+    const fout = Math.min(Math.floor(out.length / 3), Math.round(0.12 * BGM_RATE));
+    for (let k = 0; k < fin; k++) out[k] *= k / fin;
+    for (let k = 0; k < fout; k++) out[out.length - 1 - k] *= k / fout;
+    return { buf: toBuffer(out), peakMs: (pk - from) * 10 };
   }
 
   /** Auto SFX: a whoosh where the layout changes, a soft pop where the camera moves to the other person.
@@ -2324,7 +2433,7 @@ export function editorScreen() {
       const a = p.segments[i - 1]!, b = p.segments[i]!;
       const kind: SfxKind | null = a.style !== b.style ? 'whoosh' : a.main !== b.main ? 'pop' : null;
       if (!kind || b.startMs - last < 2500) continue;
-      cuts.push({ kind, startMs: Math.max(0, b.startMs - (kind === 'whoosh' ? 200 : 0)) });
+      cuts.push({ kind, startMs: b.startMs });
       last = b.startMs;
     }
     if (!cuts.length) return { count: 0, fromYoutube: 0 };
@@ -2332,9 +2441,9 @@ export function editorScreen() {
     let ytOk = await youtubeAvailable();
     let note = ytOk ? '' : 'YouTube works only in the Android app.';
     let fromYoutube = 0;
-    const variants = new Map<SfxKind, { name: string; buf: AudioBuffer }[]>();
+    const variants = new Map<SfxKind, { name: string; buf: AudioBuffer; peakMs: number }[]>();
     for (const kind of new Set(cuts.map((c) => c.kind))) {
-      const list: { name: string; buf: AudioBuffer }[] = [];
+      const list: { name: string; buf: AudioBuffer; peakMs: number }[] = [];
       if (ytOk) {
         try {
           o.status(`Searching YouTube for ${kind === 'whoosh' ? 'whoosh' : 'pop'} sounds...`);
@@ -2346,7 +2455,7 @@ export function editorScreen() {
             try {
               o.status(`Downloading ${pick.title.slice(0, 28)}...`);
               const d = await EditorrNative.youtubeDownload({ id: pick.id });
-              list.push({ name: d.title || pick.title, buf: tidySfx(await decodeUrl(fileSrc(d.path)), kind === 'whoosh' ? 2.5 : 1.5) });
+              list.push({ name: d.title || pick.title, ...tidySfx(await decodeUrl(fileSrc(d.path)), kind === 'whoosh' ? 1.4 : 0.7) });
             } catch (error) { note = error instanceof Error ? error.message : String(error); }
           }
           if (!list.length) throw new Error(note || 'No sound could be downloaded.');
@@ -2355,7 +2464,7 @@ export function editorScreen() {
           if (!/no suitable/i.test(note)) ytOk = false;
         }
       }
-      if (!list.length) list.push({ name: SFX_LABEL[kind], buf: toBuffer(synthSfx(kind)) });
+      if (!list.length) list.push({ name: SFX_LABEL[kind], ...tidySfx(toBuffer(synthSfx(kind)), 3) });
       variants.set(kind, list);
     }
     const count: Record<string, number> = {};
@@ -2363,7 +2472,9 @@ export function editorScreen() {
       const list = variants.get(c.kind)!;
       const n = count[c.kind] = (count[c.kind] ?? -1) + 1;
       const v = list[n % list.length]!;
-      sfxFiles.push({ name: v.name, buf: v.buf, startMs: c.startMs, auto: true });
+      // the loudest part of the effect lands exactly on the cut (a whoosh may start up to 0.9 s before it, a pop starts right on it)
+      const lead = Math.min(v.peakMs, c.kind === 'whoosh' ? 900 : 40);
+      sfxFiles.push({ name: v.name, buf: v.buf, startMs: Math.max(0, c.startMs - lead), auto: true });
       if (v.name !== SFX_LABEL[c.kind]) fromYoutube++;
     }
     return { count: cuts.length, fromYoutube, ...(fromYoutube < cuts.length && note ? { note } : {}) };
@@ -2391,7 +2502,7 @@ export function editorScreen() {
       p, playMs: () => playMs, songs: songFiles, sfx: sfxFiles, clips: clipFiles,
       autoBgm, autoSfx, previewAuto, previewSfx, stopPreview,
       addSfxFromPath: async (path, title, startMs) => {
-        try { sfxFiles.push({ name: title, buf: tidySfx(await decodeUrl(fileSrc(path)), 8), startMs }); } catch { toast(`Cannot play the audio of ${title}.`, 5000); throw new Error('decode'); }
+        try { sfxFiles.push({ name: title, buf: tidySfx(await decodeUrl(fileSrc(path)), 6).buf, startMs }); } catch { toast(`Cannot play the audio of ${title}.`, 5000); throw new Error('decode'); }
       },
       addSongs: async (files) => {
         for (const f of files) {
@@ -3192,7 +3303,7 @@ export function editorScreen() {
 
   const tlWrap = h('div', { class: 'tl-wrap' }, tl);
   // The timeline fills all the free space under the preview: the playhead runs the full height and a swipe anywhere there scrubs the video.
-  const fitTimeline = () => { tl.style.height = `${Math.max(TL_H, tlWrap.clientHeight)}px`; draw(); };
+  const fitTimeline = () => { tl.style.height = `${Math.max(minTlH, tlWrap.clientHeight)}px`; draw(); };
   const tlRo = new ResizeObserver(fitTimeline);
   tlRo.observe(tlWrap);
   const titleEl = h('div', { class: 'edtop-title' },
