@@ -1451,13 +1451,13 @@ public class EditorrNativePlugin extends Plugin {
             final long durationMs = durationRaw;
             cancelProxyJobs();
             exportHandler().post(() ->
-                    startTransformer(call, hostUri, constUri, cleanAudioUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate));
+                    startTransformer(call, hostUri, constUri, cleanAudioUri, captionsJson, bgmUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate));
         } catch (JSONException e) {
             call.reject("Bad export request: " + e.getMessage());
         }
     }
 
-    private void startTransformer(PluginCall call, String hostUri, String constUri, String cleanAudioUri, long offsetMs, long durationMs,
+    private void startTransformer(PluginCall call, String hostUri, String constUri, String cleanAudioUri, JSONObject captionsJson, String bgmUri, long offsetMs, long durationMs,
                                   int outW, int outH, boolean hostAudio, List<Seg> segs,
                                   CropSpec cropHost, CropSpec cropConst, boolean mirrorHost, boolean mirrorConst,
                                   float gain, int fps, int bitrate) {
