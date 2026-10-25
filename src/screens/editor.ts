@@ -2427,15 +2427,23 @@ export function editorScreen() {
   async function autoSfx(o: { status: (s: string) => void }): Promise<{ count: number; fromYoutube: number; note?: string }> {
     for (let i = sfxFiles.length - 1; i >= 0; i--) if (sfxFiles[i]!.auto) sfxFiles.splice(i, 1);
     const cuts: { kind: SfxKind; startMs: number }[] = [];
-    let last = -1e9;
-    for (let i = 1; i < p.segments.length && cuts.length < 40; i++) {
+    // every moment that needs a sound: layout change = whoosh, other camera = pop, reaction cutaway = hit, text appearing = ding
+    const all: { kind: SfxKind; startMs: number }[] = [];
+    for (let i = 1; i < p.segments.length; i++) {
       const a = p.segments[i - 1]!, b = p.segments[i]!;
-      const kind: SfxKind | null = a.style !== b.style ? 'whoosh' : a.main !== b.main ? 'pop' : null;
-      if (!kind || b.startMs - last < 2500) continue;
-      cuts.push({ kind, startMs: b.startMs });
-      last = b.startMs;
+      const kind: SfxKind | null = b.reaction && !a.reaction ? 'hit' : a.style !== b.style ? 'whoosh' : a.main !== b.main ? 'pop' : null;
+      if (kind) all.push({ kind, startMs: b.startMs });
+    }
+    for (const t of p.texts ?? []) if (t.e > t.s) all.push({ kind: 'ding', startMs: t.s });
+    all.sort((x, y) => x.startMs - y.startMs);
+    let last = -1e9;
+    for (const c of all) {
+      if (cuts.length >= 80 || c.startMs - last < 2000) continue;
+      cuts.push(c); last = c.startMs;
     }
     if (!cuts.length) return { count: 0, fromYoutube: 0 };
+    const QUERY: Partial<Record<SfxKind, string>> = { whoosh: 'whoosh transition sound effect', pop: 'pop click sound effect', ding: 'notification ding sound effect', hit: 'impact hit boom sound effect' };
+    const MAXS: Partial<Record<SfxKind, number>> = { whoosh: 1.4, pop: 0.7, ding: 1.2, hit: 1.0 };
 
     let ytOk = await youtubeAvailable();
     let note = ytOk ? '' : 'YouTube works only in the Android app.';
@@ -2445,8 +2453,8 @@ export function editorScreen() {
       const list: { name: string; buf: AudioBuffer; peakMs: number }[] = [];
       if (ytOk) {
         try {
-          o.status(`Searching YouTube for ${kind === 'whoosh' ? 'whoosh' : 'pop'} sounds...`);
-          const r = await EditorrNative.youtubeSearch({ query: kind === 'whoosh' ? 'whoosh transition sound effect' : 'pop click sound effect', ccOnly: false, shortOnly: true, maxSeconds: 20 });
+          o.status(`Searching YouTube for ${SFX_LABEL[kind].toLowerCase()} sounds...`);
+          const r = await EditorrNative.youtubeSearch({ query: QUERY[kind] ?? 'sound effect', ccOnly: false, shortOnly: true, maxSeconds: 20 });
           const picks = r.items.filter((it: { durationMs: number }) => it.durationMs >= 300 && it.durationMs <= 12_000).slice(0, 4);
           if (!picks.length) throw new Error('No suitable sound found.');
           for (const pick of picks) {
@@ -2454,7 +2462,7 @@ export function editorScreen() {
             try {
               o.status(`Downloading ${pick.title.slice(0, 28)}...`);
               const d = await EditorrNative.youtubeDownload({ id: pick.id });
-              list.push({ name: d.title || pick.title, ...tidySfx(await decodeUrl(fileSrc(d.path)), kind === 'whoosh' ? 1.4 : 0.7) });
+              list.push({ name: d.title || pick.title, ...tidySfx(await decodeUrl(fileSrc(d.path)), MAXS[kind] ?? 1) });
             } catch (error) { note = error instanceof Error ? error.message : String(error); }
           }
           if (!list.length) throw new Error(note || 'No sound could be downloaded.');
@@ -2573,7 +2581,7 @@ export function editorScreen() {
     const hasSegSel = !!selected();
     if (!hasClipSel && !hasSegSel && toolGroup === 'music') {
       rows.push(groupBack(),
-        tool('wand', 'Auto BGM', () => openMusic('bgm')),
+        tool('bgm', 'Auto BGM', () => openMusic('bgm')),
         tool('note', 'Music', () => openMusic('music')),
         tool('bolt', 'SFX', () => openMusic('sfx')),
         ...(p.bgm ? [tool('trash', 'Remove', () => { clearMusic(); renderBar(); })] : []));

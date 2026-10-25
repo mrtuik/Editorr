@@ -90,7 +90,7 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
     unmount(); setLayout(false);
     view = 'home'; title.textContent = 'Music'; foot.className = 'at-foot'; foot.replaceChildren();
     body.replaceChildren(h('div', { class: 'at-tiles' },
-      h('button', { class: 'at-tile', onclick: bgm }, icon('wand', 26), h('span', {}, 'Auto BGM')),
+      h('button', { class: 'at-tile', onclick: bgm }, icon('bgm', 26), h('span', {}, 'Auto BGM')),
       h('button', { class: 'at-tile', onclick: music }, icon('volume', 26), h('span', {}, 'Music')),
       h('button', { class: 'at-tile', onclick: sfx }, icon('bolt', 26), h('span', {}, 'SFX'))),
       ctx.p.bgm ? h('div', { class: 'at-hint' }, `Music is on this video (${ctx.p.bgm.names.length} item${ctx.p.bgm.names.length === 1 ? '' : 's'}).`)
@@ -183,8 +183,36 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
       ...(mode === 'sfx' ? [autoSfxTab()] : []),
       { key: 'added', label: 'Added', at: 'end', render: (el) => { chosenRows(el, mode); } },
     ];
+    const quietApply = async () => {
+      box.style.display = 'none';
+      const ok = await ctx.apply({ levelDb: level(), duckDb: duck(), fadeMs: fade(), clipDb: clipDb(), clipDuck: clipDuck() });
+      box.style.display = '';
+      if (ok) ctx.preview();
+      paintBrowserFoot();
+    };
     browser = mountSoundBrowser(hostEl, {
       mode, first: '0', extraTabs: extra, onClose: leaveView,
+      autoToggle: {
+        label: 'Add with auto',
+        isOn: () => (mode === 'sfx' ? ctx.sfx.some((x) => x.auto) : ctx.clips.some((c) => c.kind === 'bgm')),
+        run: async (on, status) => {
+          if (on) {
+            if (mode === 'sfx') {
+              const r = await ctx.autoSfx({ status });
+              if (!r.count) { toast('No place in this video needs an effect yet.', 4000); return; }
+            } else {
+              const plan = await ctx.autoBgm({ lang: lang(), status });
+              if (!plan) return;
+            }
+            status('Making the track...');
+            await quietApply();
+          } else {
+            if (mode === 'sfx') { for (let i = ctx.sfx.length - 1; i >= 0; i--) if (ctx.sfx[i]!.auto) ctx.removeSfx(i); }
+            else { for (let i = ctx.clips.length - 1; i >= 0; i--) if (ctx.clips[i]!.kind === 'bgm') ctx.removeClip(i); }
+            if (hasAny()) await quietApply(); else ctx.clear();
+          }
+        },
+      },
       onAdd: async (path, name) => {
         if (mode === 'sfx') await ctx.addSfxFromPath(path, name, ctx.playMs());
         else await ctx.addClipFromPath!(path, name, ctx.playMs());
@@ -210,7 +238,7 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
         sbBtn(on ? 'pause' : 'play', on ? 'Stop' : 'Play', () => { if (on) { ctx.stopPreview(); playing = -1; } else { playing = ctx.previewAuto(n) ? n : -1; } render(); }));
       });
       const top = h('div', { class: 'sb-search' },
-        h('div', { class: 'sb-pill static' }, icon('wand', 22), h('span', {}, 'Auto BGM')),
+        h('div', { class: 'sb-pill static' }, icon('bgm', 22), h('span', {}, 'Auto BGM')),
         h('button', { class: 'sb-collapse', 'aria-label': 'Close', onclick: leaveView }, icon('chevD', 26)));
       const tabs = h('div', { class: 'sb-tabs', role: 'tablist' }, ...([['en', 'English'], ['hi', 'Hindi'], ['te', 'Telugu']] as [MusicLang, string][]).map(([k, label]) =>
         h('button', { class: 'sb-tab' + (lang() === k ? ' on' : ''), role: 'tab', 'aria-selected': String(lang() === k), disabled: busy ? 'true' : undefined,

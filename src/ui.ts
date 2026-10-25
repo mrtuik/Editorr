@@ -162,6 +162,7 @@ export const ICON = {
   side: '<rect x="3" y="6" width="8" height="12" rx="1"/><rect x="13" y="6" width="8" height="12" rx="1"/>',
   updown: '<rect x="5" y="3" width="14" height="8" rx="1"/><rect x="5" y="13" width="14" height="8" rx="1"/>',
   popup: '<rect x="3" y="5" width="18" height="14" rx="2"/><rect x="13" y="12" width="6" height="5" rx="1" fill="currentColor"/>',
+  bgm: '<g fill="currentColor" stroke="none"><path d="M2 12h8v2H2zm0 2h2v4H2zm0 4h8v2H2z"/><path d="M8 6h2v12H8zm10 0h2v12h-2zm-6 8h2v4h-2z"/><path d="M12 12h8v2h-8zm0 6h8v2h-8zM8 4h12v2H8z"/></g>',
   wand: '<path d="M5 19L17 7M14 4l1.2 2.3L17.5 7.5l-2.3 1.2L14 11l-1.2-2.3L10.5 7.5l2.3-1.2zM19 13l.7 1.3 1.3.7-1.3.7-.7 1.3-.7-1.3-1.3-.7 1.3-.7z" />',
   lips: '<path d="M2.5 12c3-4.5 6-4.5 9.5-2.5 3.500-2 6.500-2 9.500 2.500-3 5-6 6.500-9.500 6.500S5.500 17 2.500 12.500zM2.500 12.500h19" />',
   scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.5 8l11.500 9M8.500 16L20 7" />',

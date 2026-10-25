@@ -60,10 +60,10 @@ export function stopSound(): void {
 export function sbBtn(name: Parameters<typeof icon>[0], label: string, run: () => void, cls = ''): HTMLElement {
   return h('button', { class: 'sb-btn ' + cls, 'aria-label': label, onclick: (e: Event) => { e.stopPropagation(); run(); } }, icon(name, 24));
 }
-export function sbRow(o: { title: string; sub?: string; dur?: string; active?: boolean; onTap?: () => void }, ...ends: (Node | null)[]): HTMLElement {
+export function sbRow(o: { title: string; sub?: string; dur?: string; active?: boolean; tag?: string; onTap?: () => void }, ...ends: (Node | null)[]): HTMLElement {
   return h('div', { class: 'sb-row' + (o.active ? ' on' : '') + (o.onTap ? ' tap' : ''), role: o.onTap ? 'button' : undefined, onclick: o.onTap },
     h('span', { class: 'sb-note' }, icon(o.active ? 'pause' : 'note', 22)),
-    h('div', { class: 'sb-txt' }, h('div', { class: 'sb-title' }, o.title), o.sub ? h('div', { class: 'sb-sub' }, o.sub) : null),
+    h('div', { class: 'sb-txt' }, h('div', { class: 'sb-title' }, o.tag ? h('span', { class: 'sb-tag' }, o.tag) : null, o.title), o.sub ? h('div', { class: 'sb-sub' }, o.sub) : null),
     o.dur ? h('span', { class: 'sb-dur' }, o.dur) : null,
     ...ends);
 }
@@ -76,6 +76,8 @@ export interface SoundBrowserOpts {
   /** The chevron next to the search pill. */
   onClose: () => void;
   extraTabs?: ExtraTab[];
+  /** The "Add with auto" switch under the search bar: on = everything the whole video needs is added by itself. */
+  autoToggle?: { label: string; isOn: () => boolean; run: (on: boolean, status: (s: string) => void) => Promise<void> };
   /** Tab to open first: 'saved', an extra tab key, or the number of a category. */
   first?: string | number;
 }
@@ -99,7 +101,28 @@ export function mountSoundBrowser(host: HTMLElement, o: SoundBrowserOpts): { des
     h('button', { class: 'sb-collapse', 'aria-label': 'Close', onclick: () => o.onClose() }, icon('chevD', 26)));
   const tabsEl = h('div', { class: 'sb-tabs', role: 'tablist' });
   const listEl = h('div', { class: 'sb-list' });
-  host.replaceChildren(search, tabsEl, listEl);
+  const autoEl = h('div', { class: 'sb-auto' });
+  let autoBusy = false, autoStatus = '';
+  function drawAuto() {
+    const t = o.autoToggle;
+    if (!t || !alive) return;
+    const on = t.isOn();
+    autoEl.replaceChildren(
+      h('span', { class: 'sb-auto-ic' }, icon(mode === 'sfx' ? 'bolt' : 'bgm', 20)),
+      h('div', { class: 'sb-auto-txt' }, h('div', { class: 'sb-auto-label' }, t.label),
+        autoBusy ? h('div', { class: 'sb-auto-sub' }, h('span', { class: 'sb-spin' }), autoStatus || 'Working...') : null),
+      h('button', { class: 'sb-switch' + (on ? ' on' : ''), role: 'switch', 'aria-checked': String(on), 'aria-label': t.label, disabled: autoBusy ? 'true' : undefined,
+        onclick: async () => {
+          if (autoBusy) return;
+          autoBusy = true; autoStatus = 'Starting...'; drawAuto();
+          try { await t.run(!on, (s) => { autoStatus = s; if (alive) drawAuto(); }); }
+          catch (error) { toast(`Auto failed: ${error instanceof Error ? error.message : 'unknown error'}`, 6000); }
+          autoBusy = false; drawAuto();
+          if (tab !== 'saved' && !(o.extraTabs?.some((x) => x.key === tab))) draw(); else if (o.extraTabs?.some((x) => x.key === tab)) select(tab);
+        } }, h('i', {})));
+  }
+  host.replaceChildren(search, ...(o.autoToggle ? [autoEl] : []), tabsEl, listEl);
+  drawAuto();
 
   void EditorrNative.addListener('ytProgress', (e: { id: string; percent: number }) => {
     if (!busy.has(e.id)) return;
@@ -225,7 +248,7 @@ export function mountSoundBrowser(host: HTMLElement, o: SoundBrowserOpts): { des
       pctEls.set(it.id, t);
       end = h('span', { class: 'sb-btn busy', 'aria-label': 'Downloading' }, t);
     } else end = sbBtn('download', 'Download', () => void fetchFile(it));
-    return sbRow({ title: it.title, dur: fmtClock(it.durationMs), active: playingId === it.id, onTap: () => void toggle(it) },
+    return sbRow({ title: it.title, tag: mode === 'sfx' ? 'SFX' : undefined, dur: fmtClock(it.durationMs), active: playingId === it.id, onTap: () => void toggle(it) },
       sbBtn(isSaved ? 'bookmarkFill' : 'bookmark', isSaved ? 'Remove from saved' : 'Save', () => flipSaved(it), isSaved ? 'sb-saved' : ''), end);
   }
 

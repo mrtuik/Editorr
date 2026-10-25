@@ -1331,3 +1331,16 @@ input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-webkit-s
 .sb-foot .btn { flex: 1; min-height: 48px; }
 
 .sb-pill .sb-input { background: transparent; border: 0; box-shadow: none; border-radius: 0; height: 100%; min-height: 0; padding: 0; }
+
+/* Add with auto switch (under the sound search bar) */
+.sb-auto { flex: none; display: flex; align-items: center; gap: 12px; padding: 8px 16px 10px 18px; background: #1f1f1f; color: #fff; }
+.sb-auto-ic { flex: none; width: 24px; display: inline-flex; justify-content: center; color: #1fc8db; }
+.sb-auto-txt { flex: 1; min-width: 0; }
+.sb-auto-label { font-size: 16px; font-weight: 600; }
+.sb-auto-sub { display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: 12.5px; color: #9a9a9f; }
+.sb-switch { flex: none; position: relative; width: 52px; height: 30px; border: 0; border-radius: 15px; background: #48484a; padding: 0; transition: background .15s; }
+.sb-switch i { position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.sb-switch.on { background: #1fc8db; }
+.sb-switch.on i { transform: translateX(22px); }
+.sb-switch:disabled { opacity: .6; }
+.sb-tag { display: inline-block; margin-right: 8px; padding: 1px 6px; border-radius: 4px; background: #3a3a3d; color: #c7c7cc; font-size: 11px; font-weight: 700; letter-spacing: .3px; vertical-align: 1px; }
