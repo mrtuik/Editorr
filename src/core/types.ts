@@ -129,6 +129,20 @@ export interface Settings {
   sfxLevel?: number;
 }
 
+/** A video placed on top of the edit (picture-in-picture or full-frame b-roll). Timeline time, not source time. */
+export interface OverlayClip {
+  id: string;
+  uri: string;          // file://... in the app videos folder
+  name: string;
+  durationMs: number;   // length of the file
+  startMs: number;      // where it appears on the timeline
+  lenMs: number;        // how long it stays (<= file length)
+  cx: number;           // centre of the clip in the frame, 0..1 (0.5 = middle)
+  cy: number;
+  scale: number;        // size of the clip frame compared with the output frame, 0.1..1
+  volume: number;       // its own sound, 0..100 (percent)
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -136,6 +150,10 @@ export interface Project {
   updatedAt: number;
   host?: Omit<VideoRef, 'url'>;
   constant?: Omit<VideoRef, 'url'>;
+  /** Videos placed on top of the edit (Overlay tool and the + button). */
+  overlays?: OverlayClip[];
+  /** One-video project: Host and Constant point at the same file, no sync and no auto switch. */
+  single?: boolean;
   /** constantTime = hostTime + offsetMs */
   offsetMs: number;
   syncConfidence?: Confidence;

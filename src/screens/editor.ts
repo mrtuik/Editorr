@@ -36,8 +36,10 @@ import {
 } from '../core/timeline';
 import { Aspect, ASPECTS, aspectValue, Corner, CropRatio, CropState, LayoutStyle, NO_CROP, PopupSize, Project, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
 import { confirmDialog, fmtClock, h, ICON, icon, iconButton, spinner, toast } from '../ui';
+import { pickVideosCapcut } from './mediaPicker';
+import type { OverlayClip } from '../core/types';
 
-type Panel = 'none' | 'ratio' | 'crop' | 'mask' | 'silence' | 'sync' | 'layout' | 'main' | 'audio' | 'denoise';
+type Panel = 'none' | 'overlay' | 'ratio' | 'crop' | 'mask' | 'silence' | 'sync' | 'layout' | 'main' | 'audio' | 'denoise';
 
 // ---- timeline geometry (CSS px) ----
 const G = 64;            // left column: audio-source button + lane icons
@@ -159,6 +161,12 @@ export function editorScreen() {
   const constCell = h('div', { class: 'cell' }, constClip, constMsg);
   const capCanvas = h('canvas', { class: 'cap-overlay' }) as HTMLCanvasElement;
   const stage = h('div', { class: 'stage' }, hostCell, constCell, capCanvas);
+  // Overlay videos (Overlay tool and the + button) sit between the two cells and the captions
+  const ovLayer = h('div', { class: 'ov-layer' });
+  stage.insertBefore(ovLayer, capCanvas);
+  const ovEls = new Map<string, { box: HTMLElement; v: HTMLVideoElement }>();
+  let ovSel: string | null = null;
+  let ovBusy = false;
   const guideV = h('div', { class: 'guide v' });
   const guideH = h('div', { class: 'guide h' });
   const pillsEl = h('div', { class: 'pills' });
@@ -741,6 +749,7 @@ export function editorScreen() {
   let lastConstSeek = 0;
   /** Keep the Constant video on its sync position with Master-Slave Virtual Clock (playbackRate micro-adjustments). */
   function syncConst(force = false) {
+    syncOverlays(force);
     if (scanLock) return;
     const ct = (playMs + p.offsetMs) / 1000;
     const inRange = ct >= 0 && ct < (isFinite(constV.duration) ? constV.duration : Infinity);
@@ -946,7 +955,7 @@ export function editorScreen() {
         syncConst(true);
         startCleanAudio();
       }).catch(() => {});
-    } else { stopCleanAudio(); hostV.pause(); constV.pause(); }
+    } else { stopCleanAudio(); hostV.pause(); constV.pause(); pauseOverlays(); }
     updatePlayState();
   }
 
@@ -972,6 +981,122 @@ export function editorScreen() {
     } catch { /* thumbnail is optional */ }
   }
   if (!p.thumb) hostV.addEventListener('loadeddata', () => window.setTimeout(captureThumb, 500), { once: true });
+
+
+  // ======================================================================= Overlay videos (picture-in-picture / b-roll)
+  const ovPath = (o: OverlayClip) => (o.uri.startsWith('file://') ? o.uri.slice(7) : o.uri);
+  const ovList = () => p.overlays ?? [];
+  const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+
+  function updateOvEl(o: OverlayClip) {
+    const e = ovEls.get(o.id);
+    if (!e) return;
+    e.box.style.width = `${o.scale * 100}%`;
+    e.box.style.height = `${o.scale * 100}%`;
+    e.box.style.left = `${o.cx * 100}%`;
+    e.box.style.top = `${o.cy * 100}%`;
+    e.box.classList.toggle('sel', panel === 'overlay' && o.id === ovSel);
+    e.v.muted = o.volume <= 0;
+    e.v.volume = clamp01(o.volume / 100);
+  }
+
+  function buildOv(o: OverlayClip) {
+    if (ovEls.has(o.id)) return;
+    const v = h('video', { playsInline: true, preload: 'auto', poster: BLACK_POSTER, 'aria-label': 'Overlay video' }) as HTMLVideoElement;
+    v.src = fileSrc(ovPath(o));
+    const box = h('div', { class: 'ov-box', style: 'display:none' }, v);
+    let drag: { x: number; y: number; cx: number; cy: number } | null = null;
+    box.addEventListener('pointerdown', (ev: PointerEvent) => {
+      if (panel !== 'overlay') return;
+      ev.preventDefault();
+      if (ovSel !== o.id) { ovSel = o.id; ovList().forEach(updateOvEl); renderPanel(); }
+      drag = { x: ev.clientX, y: ev.clientY, cx: o.cx, cy: o.cy };
+      try { box.setPointerCapture(ev.pointerId); } catch { /* ignore */ }
+    });
+    box.addEventListener('pointermove', (ev: PointerEvent) => {
+      if (!drag) return;
+      const r = stage.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      o.cx = clamp01(drag.cx + (ev.clientX - drag.x) / r.width);
+      o.cy = clamp01(drag.cy + (ev.clientY - drag.y) / r.height);
+      updateOvEl(o);
+    });
+    const end = () => { if (drag) { drag = null; scheduleSave(); } };
+    box.addEventListener('pointerup', end);
+    box.addEventListener('pointercancel', end);
+    ovLayer.append(box);
+    ovEls.set(o.id, { box, v });
+    updateOvEl(o);
+  }
+
+  function pauseOverlays() { ovEls.forEach((e) => { try { e.v.pause(); } catch { /* ignore */ } }); }
+
+  /** Show each overlay only inside its time window and keep its video on the playhead. */
+  function syncOverlays(force: boolean) {
+    for (const o of ovList()) {
+      const e = ovEls.get(o.id);
+      if (!e) continue;
+      const inWin = playMs >= o.startMs && playMs < o.startMs + o.lenMs;
+      e.box.style.display = inWin ? '' : 'none';
+      if (!inWin) { if (!e.v.paused) e.v.pause(); continue; }
+      const t = (playMs - o.startMs) / 1000;
+      const drift = e.v.currentTime - t;
+      if (force || (!playing && Math.abs(drift) > 0.05) || (playing && Math.abs(drift) > 0.4)) {
+        try { e.v.currentTime = t; } catch { /* not ready yet */ }
+      }
+      if (playing) { if (e.v.paused) e.v.play().catch(() => {}); }
+      else if (!e.v.paused) e.v.pause();
+    }
+  }
+
+  function removeOv(id: string) {
+    p.overlays = ovList().filter((x) => x.id !== id);
+    const e = ovEls.get(id);
+    if (e) { try { e.v.pause(); e.v.removeAttribute('src'); e.v.load(); } catch { /* ignore */ } e.box.remove(); ovEls.delete(id); }
+    if (ovSel === id) ovSel = null;
+    if (!p.overlays.length) p.overlays = undefined;
+    scheduleSave();
+  }
+
+  /** Overlay tool (small corner video) and the + button (full-frame clip): pick one video and put it on top at the playhead. */
+  async function addOverlay(full: boolean) {
+    if (!isNative()) { toast('Overlay videos work in the Android app.'); return; }
+    if (ovBusy) return;
+    ovBusy = true;
+    if (playing) setPlaying(false);
+    const box = h('div', { class: 'dialog' }, h('div', { class: 'box row' }, spinner(24), h('div', { class: 'title' }, 'Adding video...')));
+    let shown = false;
+    const sub = await EditorrNative.addListener('copyProgress', () => { if (!shown && !destroyed) { shown = true; document.body.append(box); } });
+    try {
+      const res = await pickVideosCapcut({ max: 1 });
+      const v = res.videos[0];
+      if (!v || destroyed) return;
+      let start = Math.round(playMs);
+      let remaining = lastEnd() - start;
+      if (remaining < 500) { start = Math.max(firstStart(), lastEnd() - Math.min(v.durationMs, 3000)); remaining = lastEnd() - start; }
+      const len = Math.max(500, Math.min(v.durationMs, remaining));
+      const scale = full ? 1 : 0.45;
+      const o: OverlayClip = {
+        id: uid(), uri: 'file://' + v.path, name: v.name, durationMs: v.durationMs,
+        startMs: start, lenMs: len,
+        cx: full ? 0.5 : 1 - scale / 2 - 0.04, cy: full ? 0.5 : 1 - scale / 2 - 0.04,
+        scale, volume: 100,
+      };
+      p.overlays = [...ovList(), o];
+      ovSel = o.id;
+      buildOv(o);
+      scheduleSave();
+      openPanel('overlay');
+      seek(start);
+    } catch (e) {
+      const m = (e as Error).message || '';
+      if (!/cancel/i.test(m)) toast(m || 'Could not add this video.');
+    } finally {
+      sub.remove().catch(() => {});
+      box.remove();
+      ovBusy = false;
+    }
+  }
 
   // ======================================================================= Timeline canvas
   const canvas = h('canvas') as HTMLCanvasElement;
@@ -2625,6 +2750,7 @@ export function editorScreen() {
         tool('face', 'Faces', doFaces),
         tool('text', 'Text', () => openGroup('text')),
         tool('reaction', 'Reaction', doReactionTool),
+        tool('overlay', 'Overlay', () => { if (ovList().length) openPanel('overlay'); else void addOverlay(false); }),
         tool('punch', 'Auto zoom', doAutoZoom),
         tool('note', 'Music', () => openGroup('music')),
         tool('silence', 'Silence', () => openPanel('silence')),
@@ -2674,6 +2800,8 @@ export function editorScreen() {
     if (n === 'none') return closePanel();
     if (playing) setPlaying(false);
     panel = n;
+    ovLayer.classList.toggle('editing', n === 'overlay');
+    ovList().forEach(updateOvEl);
     pendingCuts = [];
     if (n !== 'sync') selClip = null;
     if (n === 'crop' || n === 'mask') {
@@ -2693,6 +2821,7 @@ export function editorScreen() {
   }
   function closePanel() {
     panel = 'none'; pendingCuts = []; snapMs = null;
+    ovLayer.classList.remove('editing'); ovList().forEach(updateOvEl);
     if (selClip === 'constant') selClip = null;
     cropView.classList.remove('on'); guideV.classList.remove('on'); guideH.classList.remove('on');
     panelEl.style.display = 'none';
@@ -2707,7 +2836,7 @@ export function editorScreen() {
     h('div', { class: 'ptitle' }, title),
     h('button', { class: 'pcheck', 'aria-label': 'Done', title: 'Done', onclick: closePanel }, icon('check', 24)));
   const pHandle = () => h('div', { class: 'panel-drag-handle' });
-  const setPanel = (title: string, ...body: Node[]) => panelEl.replaceChildren(pHandle(), h('div', { class: 'pbody' }, ...body), pFoot(title));
+  const setPanel = (title: string, ...body: (Node | null)[]) => panelEl.replaceChildren(pHandle(), h('div', { class: 'pbody' }, ...(body.filter(Boolean) as Node[])), pFoot(title));
   /** CapCut tile: rounded square with an icon, label under it. Selected = white outline. */
   const ptile = (inner: Node, label: string, run: () => void, o: { sel?: boolean; disabled?: boolean } = {}) =>
     h('button', { class: 'ptile' + (o.sel ? ' sel' : ''), disabled: !!o.disabled, 'aria-label': label, onclick: run },
@@ -2751,7 +2880,7 @@ export function editorScreen() {
 
   // ----- sync panel -----
   const shiftText = () => { const s = -p.offsetMs; return `${s >= 0 ? '+' : '-'}${(Math.abs(s) / 1000).toFixed(3)} s`; };
-  let syncNote = p.syncConfidence ? `${p.syncConfidence} confidence` : '';
+  let syncNote = p.single ? '' : p.syncConfidence ? `${p.syncConfidence} confidence` : '';
   let syncNoteCls = p.syncConfidence ?? '';
 
   /** Move the green clip by d ms (+ = later / to the right). Undoable. */
@@ -2819,6 +2948,42 @@ export function editorScreen() {
           h('button', { class: 'chip', onclick: doAutoSync, disabled: !audioReady() }, icon('sync', 16), 'Auto sync')),
         h('div', { class: 'chips nudges2' }, ...nudges.map(([d, l]) => h('button', { class: 'chip', onclick: () => nudge(d) }, l))),
         h('div', { class: 'pinfo' }, 'Drag the green clip on the timeline until its waves line up with the white ones. + moves it later.'));
+    } else if (panel === 'overlay') {
+      const list = ovList();
+      const o = list.find((x) => x.id === ovSel) ?? list[0];
+      if (!o) {
+        setPanel('Overlay', pstrip(ptile(icon('plus', 26), 'Add video', () => void addOverlay(false))));
+      } else {
+        ovSel = o.id;
+        list.forEach(updateOvEl);
+        const upd = () => { updateOvEl(o); syncOverlays(true); scheduleSave(); };
+        const place = (hx: 'l' | 'c' | 'r', vy: 't' | 'c' | 'b') => {
+          const half = o.scale / 2, m = 0.04;
+          o.cx = hx === 'l' ? Math.min(0.5, half + m) : hx === 'r' ? Math.max(0.5, 1 - half - m) : 0.5;
+          o.cy = vy === 't' ? Math.min(0.5, half + m) : vy === 'b' ? Math.max(0.5, 1 - half - m) : 0.5;
+          upd();
+        };
+        const maxStart = Math.max(1, (lastEnd() - 500) / 1000);
+        const sSize = slider('Size', 10, 100, 1, Math.round(o.scale * 100), (v) => `${Math.round(v)}%`, (v) => { o.scale = v / 100; upd(); });
+        const sVol = slider('Volume', 0, 100, 1, Math.round(o.volume), (v) => `${Math.round(v)}%`, (v) => { o.volume = v; upd(); });
+        const sStart = slider('Start', 0, maxStart, 0.1, Math.min(maxStart, o.startMs / 1000), (v) => `${v.toFixed(1)} s`, (v) => { o.startMs = Math.round(v * 1000); upd(); });
+        const sLen = slider('Length', 0.5, Math.max(0.5, o.durationMs / 1000), 0.1, Math.min(o.durationMs / 1000, o.lenMs / 1000), (v) => `${v.toFixed(1)} s`, (v) => { o.lenMs = Math.round(v * 1000); upd(); });
+        const tiles: Node[] = [
+          ptile(icon('plus', 26), 'Add video', () => void addOverlay(false)),
+          ptile(icon('play', 26), 'Go to start', () => seek(o.startMs)),
+          ptile(icon('one', 26), 'Full frame', () => { o.scale = 1; o.cx = 0.5; o.cy = 0.5; upd(); renderPanel(); }),
+          ptile(icon('cTL', 26), 'Top left', () => place('l', 't')),
+          ptile(icon('cTR', 26), 'Top right', () => place('r', 't')),
+          ptile(icon('cBL', 26), 'Bottom left', () => place('l', 'b')),
+          ptile(icon('cBR', 26), 'Bottom right', () => place('r', 'b')),
+          ptile(icon('trash', 26), 'Delete', () => { removeOv(o.id); if (ovList().length) renderPanel(); else closePanel(); }),
+        ];
+        setPanel('Overlay',
+          list.length > 1 ? chipRow<string>(list.map((x, i) => [x.id, `Video ${i + 1}`] as [string, string]), o.id, (id) => { ovSel = id; renderPanel(); }) : null as any,
+          pstrip(...tiles),
+          h('div', { class: 'pinfo' }, 'Drag the video on the preview to move it.'),
+          sSize.row, sVol.row, sStart.row, sLen.row);
+      }
     } else if (panel === 'ratio') {
       const tiles = (Object.keys(ASPECTS) as Aspect[]).map((a) => {
         const [aw, ah] = ASPECTS[a]; const k = 20 / Math.max(aw, ah);
@@ -3274,7 +3439,18 @@ export function editorScreen() {
     applyVolume();
 
     const freshProject = !p.segments.length;
-    if (!p.segments.length) {
+    if (!p.segments.length && p.single) {
+      // one video only: nothing to sync and nobody to switch between
+      p.offsetMs = 0; p.syncConfidence = 'High';
+      p.durationMs = hostDur;
+      p.segments = defaultSegments(p.durationMs, 'host');
+      selectedId = p.segments[0].id;
+      syncNote = ''; syncNoteCls = 'High';
+      syncReady = true;
+      hist.reset();
+      seek(0); afterEdit(); updatePlayState();
+      saveProject(p);
+    } else if (!p.segments.length) {
       // first time in the editor with these two videos
       if (audioReady()) {
         startTask('sync', 'Syncing audio', 0, { modal: true });
@@ -3329,7 +3505,8 @@ export function editorScreen() {
   } }, h('span', {}, resChipText(p)), icon('chevD', 14));
   function setResChip() { (resChip.firstElementChild as HTMLElement).textContent = resChipText(p); }
 
-  const tlWrap = h('div', { class: 'tl-wrap' }, tl);
+  const plusBtn = h('button', { class: 'tl-plus', 'aria-label': 'Add video', onclick: () => void addOverlay(true) }, icon('plus', 22));
+  const tlWrap = h('div', { class: 'tl-wrap' }, tl, plusBtn);
   // The timeline fills all the free space under the preview: the playhead runs the full height and a swipe anywhere there scrubs the video.
   const fitTimeline = () => { tl.style.height = `${Math.max(minTlH, tlWrap.clientHeight)}px`; draw(); };
   const tlRo = new ResizeObserver(fitTimeline);
@@ -3493,6 +3670,8 @@ export function editorScreen() {
     if (!destroyed) updatePlayState();
   });
 
+  for (const o of ovList()) buildOv(o);
+
   requestAnimationFrame(() => {
     selectedId = null;
     applyPreviewHeight();
@@ -3521,7 +3700,8 @@ export function editorScreen() {
       cancelDenoiseJob();
       endTask('denoise');
       cancelAnimationFrame(raf); stopFling(); clearTimeout(saveTimer); saveProject(p);
-      stopCleanAudio(); hostV.pause(); constV.pause();
+      stopCleanAudio(); hostV.pause(); constV.pause(); pauseOverlays();
+      ovEls.forEach((e) => { try { e.v.removeAttribute('src'); e.v.load(); } catch { /* ignore */ } });
       hostStrip?.cancel(); constStrip?.cancel();
       offTasks();
       endTask('audio'); endTask('sync'); endTask('switch'); endTask('proxy-host'); endTask('proxy-constant'); endTask('faces'); scanCancel = true; closeListSheet();

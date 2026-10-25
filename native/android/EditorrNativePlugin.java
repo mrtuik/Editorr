@@ -2,6 +2,7 @@ package com.tuik.editorr;
 
 import android.app.Activity;
 import android.content.ClipData;
+import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.media.MediaCodec;
@@ -66,6 +67,9 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
+import com.getcapacitor.PermissionState;
 import com.google.common.collect.ImmutableList;
 
 import org.json.JSONArray;
@@ -94,7 +98,10 @@ import java.util.List;
  * NOTE: pickVideo/extractAudio are straightforward Android APIs. exportProject uses the
  * Media3 multi-sequence compositor and MUST be verified on a real device (the "spike" in the PRD).
  */
-@CapacitorPlugin(name = "EditorrNative")
+@CapacitorPlugin(name = "EditorrNative", permissions = {
+        @Permission(alias = "media", strings = { android.Manifest.permission.READ_MEDIA_VIDEO }),
+        @Permission(alias = "mediaLegacy", strings = { android.Manifest.permission.READ_EXTERNAL_STORAGE })
+})
 public class EditorrNativePlugin extends Plugin {
 
     private static final int TARGET_RATE = 16000;
@@ -126,13 +133,131 @@ public class EditorrNativePlugin extends Plugin {
 
     // ------------------------------------------------------------------ pick
 
+    private volatile int pickMax = 2;
+
     @PluginMethod
     public void pickVideos(PluginCall call) {
+        boolean multiple = Boolean.TRUE.equals(call.getBoolean("multiple", false));
+        int max = call.getInt("max", 2);
+        if (max < 1) max = 1;
+        pickMax = multiple ? max : 1;
+        // Android 13+: the system photo picker (grid with thumbnails and durations, like CapCut's media screen)
+        if (Build.VERSION.SDK_INT >= 33) {
+            Intent pi = new Intent(MediaStore.ACTION_PICK_IMAGES);
+            pi.setType("video/*");
+            if (multiple && pickMax > 1) pi.putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, Math.min(pickMax, MediaStore.getPickImagesMaxLimit()));
+            startActivityForResult(call, pi, "pickResult");
+            return;
+        }
         Intent i = new Intent(Intent.ACTION_GET_CONTENT);
         i.setType("video/*");
         i.addCategory(Intent.CATEGORY_OPENABLE);
-        if (Boolean.TRUE.equals(call.getBoolean("multiple", false))) i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        if (multiple) i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         startActivityForResult(call, Intent.createChooser(i, "Pick video"), "pickResult");
+    }
+
+
+    // ------------------------------------------------------- in-app gallery (CapCut-style picker)
+
+    private String mediaAlias() { return Build.VERSION.SDK_INT >= 33 ? "media" : "mediaLegacy"; }
+    private boolean mediaGranted() { return getPermissionState(mediaAlias()) == PermissionState.GRANTED; }
+    private final java.util.concurrent.ExecutorService thumbPool = java.util.concurrent.Executors.newFixedThreadPool(3);
+
+    /** All videos on the phone (newest first): id, name, duration, album. Asks for the media permission the first time. */
+    @PluginMethod
+    public void listVideos(PluginCall call) {
+        if (!mediaGranted()) { requestPermissionForAlias(mediaAlias(), call, "listPerm"); return; }
+        doListVideos(call);
+    }
+
+    @PermissionCallback
+    private void listPerm(PluginCall call) {
+        if (mediaGranted()) doListVideos(call); else call.reject("PERMISSION_DENIED");
+    }
+
+    private void doListVideos(PluginCall call) {
+        new Thread(() -> {
+            try {
+                JSArray items = new JSArray();
+                String[] proj = { MediaStore.Video.Media._ID, MediaStore.Video.Media.DISPLAY_NAME, MediaStore.Video.Media.DURATION,
+                        MediaStore.Video.Media.BUCKET_ID, MediaStore.Video.Media.BUCKET_DISPLAY_NAME };
+                try (Cursor c = getContext().getContentResolver().query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, proj, null, null,
+                        MediaStore.Video.Media.DATE_ADDED + " DESC")) {
+                    if (c != null) {
+                        while (c.moveToNext()) {
+                            long dur = c.isNull(2) ? 0 : c.getLong(2);
+                            JSObject o = new JSObject();
+                            o.put("id", c.getLong(0));
+                            o.put("name", c.getString(1));
+                            o.put("durationMs", dur);
+                            o.put("albumId", c.isNull(3) ? "0" : c.getString(3));
+                            o.put("album", c.isNull(4) ? "Other" : c.getString(4));
+                            items.put(o);
+                        }
+                    }
+                }
+                JSObject res = new JSObject();
+                res.put("items", items);
+                call.resolve(res);
+            } catch (Exception e) {
+                call.reject("Could not read the gallery: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    /** Small picture of one gallery video, saved in cache. Returns its file path. */
+    @PluginMethod
+    public void videoThumb(PluginCall call) {
+        final long id = call.getLong("id", -1L);
+        if (id < 0) { call.reject("no id"); return; }
+        thumbPool.execute(() -> {
+            try {
+                File dir = new File(getContext().getCacheDir(), "pickthumbs");
+                if (!dir.exists()) dir.mkdirs();
+                File out = new File(dir, id + ".jpg");
+                if (!out.exists() || out.length() == 0) {
+                    Uri uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id);
+                    Bitmap bmp;
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        bmp = getContext().getContentResolver().loadThumbnail(uri, new android.util.Size(320, 320), null);
+                    } else {
+                        //noinspection deprecation
+                        bmp = MediaStore.Video.Thumbnails.getThumbnail(getContext().getContentResolver(), id, MediaStore.Video.Thumbnails.MINI_KIND, null);
+                    }
+                    if (bmp == null) { call.reject("no thumbnail"); return; }
+                    try (FileOutputStream fo = new FileOutputStream(out)) { bmp.compress(Bitmap.CompressFormat.JPEG, 82, fo); }
+                    bmp.recycle();
+                }
+                JSObject res = new JSObject();
+                res.put("path", out.getAbsolutePath());
+                call.resolve(res);
+            } catch (Exception e) {
+                call.reject("thumb failed");
+            }
+        });
+    }
+
+    /** Copy the chosen gallery videos (by id, in the order given) into the app and read their info. Emits 'copyProgress'. */
+    @PluginMethod
+    public void importVideos(PluginCall call) {
+        JSArray ids = call.getArray("ids");
+        if (ids == null || ids.length() == 0) { call.reject("Cancelled"); return; }
+        final List<Uri> uris = new ArrayList<>();
+        try {
+            for (int k = 0; k < ids.length(); k++) uris.add(ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, ids.getLong(k)));
+        } catch (JSONException e) { call.reject("bad ids"); return; }
+        new Thread(() -> {
+            try {
+                JSArray videos = new JSArray();
+                for (int idx = 0; idx < uris.size(); idx++) videos.put(copyAndProbe(uris.get(idx), idx, uris.size()));
+                JSObject res = new JSObject();
+                res.put("videos", videos);
+                res.put("ignored", 0);
+                call.resolve(res);
+            } catch (Exception e) {
+                call.reject("Could not read this video: " + e.getMessage());
+            }
+        }).start();
     }
 
     @ActivityCallback
@@ -151,8 +276,9 @@ public class EditorrNativePlugin extends Plugin {
             uris.add(data.getData());
         }
         if (uris.isEmpty()) { call.reject("Cancelled"); return; }
-        final int ignored = Math.max(0, uris.size() - 2);
-        final List<Uri> use = uris.subList(0, Math.min(2, uris.size()));
+        final int cap = Math.max(1, pickMax);
+        final int ignored = Math.max(0, uris.size() - cap);
+        final List<Uri> use = uris.subList(0, Math.min(cap, uris.size()));
         new Thread(() -> {
             try {
                 JSArray videos = new JSArray();
@@ -1434,6 +1560,7 @@ public class EditorrNativePlugin extends Plugin {
             final String cleanAudioUri = call.getString("cleanAudioUri");
             final JSONObject captionsJson = call.getData().optJSONObject("captions");
             final String bgmUri = call.getString("bgmUri");
+            final JSONArray overlaysJson = call.getData().optJSONArray("overlays");
             final JSONArray textsJson = call.getData().optJSONArray("texts");
             final float gain = (float) Math.max(0.0, Math.min(10.0, call.getDouble("gain", 1.0)));
             // Enhanced Audio: EQ + de-esser + compressor + limiter on the audio-source mic ("voice") and on the final mix ("master")
@@ -1458,7 +1585,7 @@ public class EditorrNativePlugin extends Plugin {
             final long durationMs = durationRaw;
             cancelProxyJobs();
             exportHandler().post(() ->
-                    startTransformer(call, hostUri, constUri, cleanAudioUri, captionsJson, textsJson, bgmUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate, voiceFx, masterFx));
+                    startTransformer(call, hostUri, constUri, cleanAudioUri, captionsJson, textsJson, bgmUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate, voiceFx, masterFx, overlaysJson));
         } catch (JSONException e) {
             call.reject("Bad export request: " + e.getMessage());
         }
@@ -1467,7 +1594,7 @@ public class EditorrNativePlugin extends Plugin {
     private void startTransformer(PluginCall call, String hostUri, String constUri, String cleanAudioUri, JSONObject captionsJson, JSONArray textsJson, String bgmUri, long offsetMs, long durationMs,
                                   int outW, int outH, boolean hostAudio, List<Seg> segs,
                                   CropSpec cropHost, CropSpec cropConst, boolean mirrorHost, boolean mirrorConst,
-                                  float gain, int fps, int bitrate, FxCfg voiceFx, FxCfg masterFx) {
+                                  float gain, int fps, int bitrate, FxCfg voiceFx, FxCfg masterFx, JSONArray overlaysJson) {
         try {
             // Timeline time = Host time. The Constant video is offsetMs ahead of it.
             final long hostStart = Math.max(0, -offsetMs);
@@ -1530,6 +1657,51 @@ public class EditorrNativePlugin extends Plugin {
                 }
             }
 
+            // ---- overlay videos (picture-in-picture / b-roll): one extra sequence each, drawn on top of Host + Constant.
+            // Outside its time window a sequence plays a hidden stand-in piece of the Host video (alpha 0), so no gaps are needed.
+            final List<float[]> ovCfg = new ArrayList<>();          // scale, cx, cy
+            final List<List<long[]>> ovWin = new ArrayList<>();     // output-time windows where the overlay is visible
+            final List<EditedMediaItemSequence> overlaySeqs = new ArrayList<>();
+            for (int oi = 0; overlaysJson != null && oi < overlaysJson.length() && oi < 4; oi++) {
+                JSONObject oj = overlaysJson.optJSONObject(oi);
+                if (oj == null) continue;
+                String ouri = oj.optString("uri", "");
+                if (ouri.isEmpty()) continue;
+                long os = Math.round(oj.optDouble("startMs", 0));
+                long olen = Math.round(oj.optDouble("lenMs", 0));
+                long odur = Math.round(oj.optDouble("durationMs", 0));
+                if (odur > 0) olen = Math.min(olen, odur);
+                final long oe = os + olen;
+                float vol = (float) Math.max(0.0, Math.min(1.0, oj.optDouble("volume", 1.0)));
+                List<EditedMediaItem> oItems = new ArrayList<>();
+                List<long[]> wins = new ArrayList<>();
+                boolean anyPiece = false;
+                for (int ri = 0; ri < ranges.size(); ri++) {
+                    Range r = ranges.get(ri);
+                    long ia = Math.max(os, r.a), ib = Math.min(oe, r.b);
+                    if (ib - ia < 100) {
+                        oItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, true, false, null, 1f, null));
+                        continue;
+                    }
+                    long pa = ia;
+                    if (ia - r.a < 100) pa = r.a;               // starts within 100 ms of the part: no tiny stand-in piece
+                    if (pa > r.a) oItems.add(item(hostUri, r.a, pa - r.a, outW, outH, true, false, null, 1f, null));
+                    long srcStart = Math.max(0, ia - os);
+                    oItems.add(item(ouri, srcStart, ib - pa, outW, outH, vol <= 0.01f, false, null, vol, null));
+                    long outA = cumStart[ri] + (pa - r.a);
+                    wins.add(new long[] { outA, outA + (ib - pa) });
+                    anyPiece = true;
+                    if (r.b > ib) oItems.add(item(hostUri, ib, r.b - ib, outW, outH, true, false, null, 1f, null));
+                }
+                if (!anyPiece || oItems.isEmpty()) continue;
+                overlaySeqs.add(new EditedMediaItemSequence.Builder(oItems.toArray(new EditedMediaItem[0])).build());
+                ovCfg.add(new float[] {
+                        (float) Math.max(0.1, Math.min(1.0, oj.optDouble("scale", 0.4))),
+                        (float) Math.max(0.0, Math.min(1.0, oj.optDouble("cx", 0.5))),
+                        (float) Math.max(0.0, Math.min(1.0, oj.optDouble("cy", 0.5))) });
+                ovWin.add(wins);
+            }
+
             EditedMediaItemSequence hostSeq = new EditedMediaItemSequence.Builder(hostItems.toArray(new EditedMediaItem[0])).build();
             EditedMediaItemSequence constSeq = new EditedMediaItemSequence.Builder(constItems.toArray(new EditedMediaItem[0])).build();
             EditedMediaItemSequence cleanAudioSeq = cleanAudioItems.isEmpty() ? null
@@ -1539,6 +1711,20 @@ public class EditorrNativePlugin extends Plugin {
                 @Override public Size getOutputSize(List<Size> inputSizes) { return new Size(outW, outH); }
                 @Override public OverlaySettings getOverlaySettings(int inputId, long presentationTimeUs) {
                     long tc = presentationTimeUs / 1000;
+                    if (inputId >= 2) {
+                        // overlay video k = inputId - 2: visible only inside its windows, centred at (cx, cy)
+                        int k = inputId - 2;
+                        StaticOverlaySettings.Builder ob = new StaticOverlaySettings.Builder();
+                        if (k >= ovCfg.size()) return ob.setAlphaScale(0f).build();
+                        boolean on = false;
+                        for (long[] w : ovWin.get(k)) { if (tc >= w[0] && tc < w[1] + 20) { on = true; break; } }
+                        if (!on) return ob.setAlphaScale(0f).build();
+                        float[] c = ovCfg.get(k);
+                        if (c[0] < 0.999f || Math.abs(c[1] - 0.5f) > 0.001f || Math.abs(c[2] - 0.5f) > 0.001f) {
+                            ob.setScale(c[0], c[0]).setBackgroundFrameAnchor(2f * c[1] - 1f, 1f - 2f * c[2]);
+                        }
+                        return ob.build();
+                    }
                     int idx = 0;
                     for (int i = 0; i < cumStart.length; i++) { if (tc >= cumStart[i]) idx = i; else break; }
                     long hostT = ranges.get(idx).a + (tc - cumStart[idx]);
@@ -1555,6 +1741,7 @@ public class EditorrNativePlugin extends Plugin {
             List<EditedMediaItemSequence> seqList = new ArrayList<>();
             seqList.add(hostSeq);
             seqList.add(constSeq);
+            seqList.addAll(overlaySeqs);
             if (cleanAudioSeq != null) seqList.add(cleanAudioSeq);
             if (!bgmItems.isEmpty()) seqList.add(new EditedMediaItemSequence.Builder(bgmItems.toArray(new EditedMediaItem[0])).build());
             ImmutableList<EditedMediaItemSequence> sequences = ImmutableList.copyOf(seqList);

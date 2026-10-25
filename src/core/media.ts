@@ -6,7 +6,7 @@ const stripScheme = (u: string) => (u.startsWith('file://') ? u.slice(7) : u);
 
 /** The two video files a project points at (native app only). */
 export function projectVideoPaths(p: Project): string[] {
-  return [p.host?.uri, p.constant?.uri].filter((x): x is string => !!x).map(stripScheme);
+  return [p.host?.uri, p.constant?.uri, ...(p.overlays ?? []).map((o) => o.uri)].filter((x): x is string => !!x).map(stripScheme);
 }
 
 /** True when this project's videos are already attached to the runtime (audio may still be loading). */

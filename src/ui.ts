@@ -148,6 +148,7 @@ export const ICON = {
   duplicate: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />',
   back: '<path d="M15 5l-7 7 7 7" />',
   plus: '<path d="M12 5v14M5 12h14" />',
+  overlay: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5" /><path d="M3.5 15.5l4.5-4.5 4 4 3-3 5.5 5.5" /><circle cx="15.5" cy="9" r="1.3" />',
   play: '<path d="M8 5l11 7-11 7z" fill="currentColor"/>',
   pause: '<path d="M8 5v14M16 5v14" />',
   undo: '<path d="M9 7L4 12l5 5M4 12h11a5 5 0 010 10h-3" />',

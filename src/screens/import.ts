@@ -4,6 +4,7 @@ import { runtime, saveMedia, saveProject } from '../core/store';
 import type { Role, VideoRef } from '../core/types';
 import { EditorrNative, fileSrc, isNative, type PickedVideo } from '../core/native';
 import { projectVideoPaths } from '../core/media';
+import { pickVideosCapcut } from './mediaPicker';
 import { askAutoEdit } from './autoOptions';
 import { firstFrame } from '../core/thumbs';
 import { fmtClock, h, icon, iconButton, spinner, toast } from '../ui';
@@ -90,7 +91,7 @@ export function importScreen() {
       render();
     });
     try {
-      const res = await EditorrNative.pickVideos({ multiple: true });
+      const res = await pickVideosCapcut({ max: 2 });
       const vids: PickedVideo[] = res.videos;
       const want: Role[] = vids.length >= 2 ? [role, other(role)] : [role];
       vids.forEach((v, i) => {

@@ -3,6 +3,11 @@ import { deleteProject, listProjects, runtime, saveProject } from '../core/store
 import type { Project } from '../core/types';
 import { attachProjectMedia, isLoaded, removeProjectMedia } from '../core/media';
 import { profileMenu, avatar } from '../profileMenu';
+import { EditorrNative, fileSrc, isNative } from '../core/native';
+import { pickVideosCapcut } from './mediaPicker';
+import { probeVideo } from '../core/audio';
+import { saveMedia } from '../core/store';
+import type { VideoRef } from '../core/types';
 import { actionSheet, confirmDialog, fmtTime, h, ICON, icon, projectActionSheet, promptDialog, spinner, tabBar, TabName, toast } from '../ui';
 
 /**
@@ -22,6 +27,69 @@ export function homeScreen() {
   const all = () => projects.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
   const shortDate = (t: number) => { const d = new Date(t); return `${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`; };
 
+  let picking = false;
+  /**
+   * New project (and every tool except Auto switch / Auto sync): the video picker opens straight away,
+   * ONE video is enough and the editor opens right after. Host and Constant both point at that file.
+   */
+  async function newSingleProject(intent?: Intent) {
+    if (picking) return;
+    picking = true;
+    try {
+      let ref: VideoRef | undefined;
+      let path: string | undefined;
+      let file: File | undefined;
+      if (isNative()) {
+        const box = h('div', { class: 'dialog' }, h('div', { class: 'box row' }, spinner(24), h('div', { class: 'title' }, 'Adding video...')));
+        let shown = false;
+        const sub = await EditorrNative.addListener('copyProgress', () => { if (!shown) { shown = true; document.body.append(box); } });
+        try {
+          const res = await pickVideosCapcut({ max: 1 });
+          const v = res.videos[0];
+          if (!v) return;
+          path = v.path;
+          ref = { name: v.name, url: fileSrc(v.path), uri: 'file://' + v.path, durationMs: v.durationMs, width: v.width, height: v.height, fps: v.fps || 30, codec: v.codec, bitrate: v.bitrate };
+        } finally { sub.remove().catch(() => {}); box.remove(); }
+      } else {
+        file = await new Promise<File | undefined>((resolve) => {
+          const input = h('input', { type: 'file', accept: 'video/*' }) as HTMLInputElement;
+          input.onchange = () => resolve(input.files?.[0]);
+          input.addEventListener('cancel', () => resolve(undefined));
+          input.click();
+        });
+        if (!file) return;
+        const url = URL.createObjectURL(file);
+        const meta = await probeVideo(url);
+        ref = { name: file.name, url, durationMs: meta.durationMs, width: meta.width, height: meta.height, fps: 30 };
+      }
+      if (!ref) return;
+
+      startNewProject();
+      app.intent = intent;
+      const p = app.project;
+      const { url: _u, ...meta } = ref;
+      p.host = { ...meta }; p.constant = { ...meta };
+      p.single = true;
+      p.mainAudio = 'host';
+      p.offsetMs = 0; p.durationMs = ref.durationMs; p.segments = [];
+      if (ref.width && ref.height) p.aspect = ref.height > ref.width ? '9:16' : ref.width > ref.height ? '16:9' : '1:1';
+      runtime.projectId = p.id;
+      runtime.hostUrl = runtime.constUrl = ref.url;
+      runtime.hostPath = runtime.constPath = path;
+      runtime.hostFile = runtime.constFile = file;
+      runtime.hostPcm = runtime.constPcm = undefined;
+      runtime.hostMotion = runtime.constMotion = undefined;
+      runtime.hostFaces = runtime.constFaces = undefined;
+      await saveProject(p);
+      if (!isNative()) { await saveMedia(p.id, 'host', file, ref.name); await saveMedia(p.id, 'constant', file, ref.name); }
+      app.go('editor');
+    } catch (e) {
+      const m = (e as Error).message || '';
+      if (!/cancel/i.test(m)) toast(m || 'Could not open this video.');
+    } finally { picking = false; }
+  }
+
+  /** Auto switch / Auto sync: two videos (Host + Constant) on the Import screen. */
   function newProject(intent?: Intent) {
     startNewProject();
     app.intent = intent;
@@ -101,20 +169,20 @@ export function homeScreen() {
 
     const tools: [keyof typeof ICON, string, () => void][] = [
       ['switchSlider', 'Auto switch', () => newProject()],
-      ['lips', 'Lips scan', () => newProject()],
-      ['silence', 'Silence cut', () => newProject('silence')],
-      ['crop', 'Crop', () => newProject('crop')],
-      ['ratio', 'Aspect ratio', () => newProject('ratio')],
-      ['layout', 'Layouts', () => newProject()],
+      ['lips', 'Lips scan', () => newSingleProject()],
+      ['silence', 'Silence cut', () => newSingleProject('silence')],
+      ['crop', 'Crop', () => newSingleProject('crop')],
+      ['ratio', 'Aspect ratio', () => newSingleProject('ratio')],
+      ['layout', 'Layouts', () => newSingleProject()],
       ['sync', 'Auto sync', () => newProject()],
-      ['volume', 'Audio source', () => newProject()],
+      ['volume', 'Audio source', () => newSingleProject()],
       ['gear', 'Settings', () => app.go('settings')],
     ];
 
     return [
       h('div', { class: 'hero' }, h('div', { class: 'small' }, 'Podcast editor'), h('h1', {}, 'Get started')),
       h('div', { class: 'cards' },
-        h('button', { class: 'bigcard', onclick: () => newProject() }, icon('newVideo', 34), 'New project'),
+        h('button', { class: 'bigcard', onclick: () => newSingleProject() }, icon('newVideo', 34), 'New project'),
         h('button', { class: 'bigcard', disabled: !last, onclick: () => last && openProject(last) }, icon('resume', 34), 'Continue')),
       list.length
         ? h('div', { class: 'recent' },

@@ -37,6 +37,8 @@ export interface ExportRequest {
   texts?: unknown[];
   /** Baked background music / effects track (file uri), at timeline time. */
   bgmUri?: string;
+  /** Overlay videos on top (see OverlayClip). */
+  overlays?: { uri: string; startMs: number; lenMs: number; durationMs: number; cx: number; cy: number; scale: number; volume: number }[];
   /** Enhanced Audio: `voice` runs on the audio-source mic, `master` on the final mix (see fx.ts FxChain). */
   fx?: unknown;
   segments: {
@@ -61,6 +63,8 @@ export interface PickedVideo {
   bitrate?: number;
 }
 
+export interface GalleryVideo { id: number; name: string; durationMs: number; albumId: string; album: string }
+
 export type NativeEvent = 'audioProgress' | 'denoiseProgress' | 'exportProgress' | 'proxyProgress' | 'copyProgress' | 'thumb' | 'ytProgress';
 
 export interface EditorrNativePlugin {
@@ -69,7 +73,13 @@ export interface EditorrNativePlugin {
    * With multiple = true the user may pick two videos at once (extra ones are ignored).
    * Emits 'copyProgress' {index, count, percent} while copying.
    */
-  pickVideos(opts: { multiple: boolean }): Promise<{ videos: PickedVideo[]; ignored: number }>;
+  pickVideos(opts: { multiple: boolean; max?: number }): Promise<{ videos: PickedVideo[]; ignored: number }>;
+  /** In-app gallery: every video on the phone (newest first). Asks for the media permission; rejects 'PERMISSION_DENIED'. */
+  listVideos(): Promise<{ items: GalleryVideo[] }>;
+  /** Small jpeg of one gallery video (cached). */
+  videoThumb(opts: { id: number }): Promise<{ path: string }>;
+  /** Copy the chosen gallery videos (in this order) into the app. Emits 'copyProgress'. */
+  importVideos(opts: { ids: number[] }): Promise<{ videos: PickedVideo[]; ignored: number }>;
   /** Decodes the audio track to mono 16 kHz PCM16 (little endian) in a cache file. */
   extractAudio(opts: { path: string }): Promise<{ pcmPath: string; samples: number }>;
   /** Builds a denoised mono WAV at the source audio sample rate in app cache for export. */
@@ -143,6 +153,7 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     captions: exportCaptions(p.captions, p.captionStyle),
     ...(exportTexts(p.texts) ? { texts: exportTexts(p.texts) } : {}),
     ...(p.bgm?.path ? { bgmUri: 'file://' + p.bgm.path } : {}),
+    ...(p.overlays?.length ? { overlays: p.overlays.map((o) => ({ uri: o.uri, startMs: Math.round(o.startMs), lenMs: Math.round(o.lenMs), durationMs: Math.round(o.durationMs), cx: o.cx, cy: o.cy, scale: o.scale, volume: Math.max(0, Math.min(1, o.volume / 100)) })) } : {}),
     ...(fxForExport(p) ? { fx: fxForExport(p) } : {}),
     normalize: p.normalize,
     gain: effectiveGain(p, p.mainAudio),
