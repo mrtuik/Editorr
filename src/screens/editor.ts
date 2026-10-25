@@ -49,9 +49,9 @@ const MAIN_Y = RULER + GAP;
 const AUD_Y = MAIN_Y + LANE + GAP;
 // "voice-scan" icon (14x14 viewBox) for the Host / Constant audio-source button
 const VOICE_ICON = new Path2D('M2 1.625A.375.375 0 0 0 1.625 2v2a.625.625 0 1 1-1.25 0V2A1.625 1.625 0 0 1 2 .375h2a.625.625 0 1 1 0 1.25zm8-1.25a.625.625 0 1 0 0 1.25h2a.375.375 0 0 1 .375.375v2a.625.625 0 1 0 1.25 0V2A1.625 1.625 0 0 0 12 .375zM7 3.5a.75.75 0 0 1 .75.75v5.5a.75.75 0 0 1-1.5 0v-5.5A.75.75 0 0 1 7 3.5m-2.75 1a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5a.75.75 0 0 1 .75-.75m6.25.75a.75.75 0 0 0-1.5 0v3.5a.75.75 0 0 0 1.5 0zM13 9.375c.345 0 .625.28.625.625v2A1.625 1.625 0 0 1 12 13.625h-2a.625.625 0 1 1 0-1.25h2a.375.375 0 0 0 .375-.375v-2c0-.345.28-.625.625-.625M1.625 10a.625.625 0 1 0-1.25 0v2A1.625 1.625 0 0 0 2 13.625h2a.625.625 0 1 0 0-1.25H2A.375.375 0 0 1 1.625 12z');
-const SUB_M = 24;        // music row height (one line)
-const SUB_S = 18;        // sound-effect row height
-const SUB_T = 20;        // text row height
+const SUB_M = AUD;       // music row height: the same as the audio waveform row
+const SUB_S = AUD;       // sound-effect row height: the same
+const SUB_T = AUD;       // text row height: the same
 const TL_H = AUD_Y + AUD + GAP + SUB_M + 10;   // smallest timeline (only the Add music row)
 const CYAN = '#C6F277';
 const CROP_RATIOS: [CropRatio, string][] = [
@@ -1180,11 +1180,11 @@ export function editorScreen() {
       g.fillStyle = MUSIC_COLOR[it.kind]; g.fill();
       if (bgmPeaks) {
         g.fillStyle = 'rgba(255,255,255,0.35)';
-        const cy = y + SUB_M - 7;
+        const cy = y + SUB_M * 0.68;
         for (let x = Math.max(Math.floor(a) + 2, G); x < Math.min(a + w, W); x += 2) {
           const ms = msOf(x);
           const v = bgmPeaks[Math.round((ms / 1000) * 20)] ?? 0;
-          const bh = Math.max(1, Math.min(6, v * 9));
+          const bh = Math.max(1, Math.min(8, v * 11));
           g.fillRect(x, cy - bh, 1.4, bh * 2);
         }
       }
@@ -1192,7 +1192,7 @@ export function editorScreen() {
       g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_M); g.clip();
       g.fillStyle = '#ffffff'; g.font = '600 9px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
       const label = it.mood && it.mood in MOOD_LABEL ? `${MOOD_LABEL[it.mood as keyof typeof MOOD_LABEL]} · ${it.name}` : it.name;
-      g.fillText(label, Math.max(a, G) + 6, y + 8);
+      g.fillText(label, Math.max(a, G) + 6, y + 9);
       g.restore();
     });
     g.restore();
@@ -1204,7 +1204,17 @@ export function editorScreen() {
     R.sfx.forEach((it: MItem, n) => {
       const a = xOf(it.startMs), b = xOf(it.endMs);
       if (b < G || a > W) return;
-      pill(g, a, R.fx!.y + R.ps.line[n]! * (SUB_S + 3), Math.max(16, b - a), SUB_S, MUSIC_COLOR.sfx, it.name);
+      {
+        const y = R.fx!.y + R.ps.line[n]! * (SUB_S + 3), w = Math.max(30, b - a);
+        pill(g, a, y, w, SUB_S, MUSIC_COLOR.sfx, '');
+        g.save();
+        g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_S); g.clip();
+        const bx = a + 9, by = y + SUB_S / 2;
+        g.fillStyle = '#ffffff';
+        g.beginPath(); g.moveTo(bx + 3, by - 7); g.lineTo(bx - 3, by + 1); g.lineTo(bx + 0.5, by + 1); g.lineTo(bx - 1.5, by + 7); g.lineTo(bx + 4.5, by - 1.5); g.lineTo(bx + 1, by - 1.5); g.closePath(); g.fill();
+        if (w > 56) { g.font = '600 9px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(it.name, a + 18, by + 0.5); }
+        g.restore();
+      }
     });
     g.restore();
   }
@@ -1222,7 +1232,7 @@ export function editorScreen() {
         g.save();
         g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
         g.fillStyle = '#8b5fd6'; g.beginPath(); g.arc(a + 8, y + SUB_T / 2, 2.6, 0, 6.3); g.fill();
-        g.fillStyle = '#ffffff'; g.font = '600 10px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+        g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
         g.fillText(t.text, a + 15, y + SUB_T / 2 + 0.5);
         g.restore();
       }
@@ -1437,7 +1447,7 @@ export function editorScreen() {
     {
       const R = rowsNow;
       const badge = (y: number, h: number, glyph: 'note' | 'bolt' | 'text', on: boolean) => {
-        const sz = Math.min(24, h + 2), bx = xOf(0) - sz - 6, by = y + (h - sz) / 2;
+        const sz = 26, bx = xOf(0) - sz - 6, by = y + (h - sz) / 2;
         if (bx + sz < G || bx > W) return;
         g.save();
         g.beginPath(); g.rect(G, 0, W - G, H); g.clip();
