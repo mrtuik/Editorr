@@ -207,6 +207,7 @@ export const ICON = {
   toggle: '<rect x="3" y="7" width="18" height="10" rx="5"/><circle cx="8" cy="12" r="2.5" fill="currentColor"/>',
   helpInfo: '<circle cx="12" cy="12" r="9" fill="currentColor" fill-opacity=".18"/><path d="M12 11v5M12 8h.01" />',
   signOut: '<path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M14 8l4 4-4 4M18 12H9" />',
+  note: '<path d="M9 18V6l10-2v12" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="16.5" cy="16" r="2.5" />',
   bolt: '<path d="M13 3L5 13h6l-1 8 8-10h-6z" fill="currentColor" stroke="none"/>',
   switchSlider: '<g transform="scale(0.046875)" fill="currentColor" stroke="none"><path fill-rule="evenodd" d="M106.667 128h106.666V85.333H64v192h149.333v-42.667H106.667zM384 85.333H234.667v192H384zM405.333 384c0 35.347-28.652 64-64 64s-64-28.653-64-64s28.653-64 64-64s64 28.652 64 64m21.334 0a85.6 85.6 0 0 1-2.688 21.333h45.354v-42.667H423.98A85.6 85.6 0 0 1 426.667 384M128 405.333h130.688A85.6 85.6 0 0 1 256 384a85.6 85.6 0 0 1 2.688-21.334H128z"/></g>',
   sensLow: '<path d="M5 19v-4" /><path d="M12 19v-8M19 19V5" opacity=".25"/>',

@@ -158,6 +158,8 @@ export interface Project {
   /** Auto captions (words with times) and how they look. */
   captions?: import('./captions').CaptionData;
   captionStyle?: import('./captions').CaptionStyle;
+  /** Free text pieces placed on the video (Text > Add text). */
+  texts?: import('./captions').TextItem[];
   /** Baked background music + sound effects (one wav at timeline time) and the settings it was made with. */
   bgm?: { path: string; names: string[]; levelDb: number; duckDb: number; fadeMs: number; sfx: { name: string; startMs: number }[] };
   /** small jpeg data URL for Home */

@@ -1432,6 +1432,7 @@ public class EditorrNativePlugin extends Plugin {
             final String cleanAudioUri = call.getString("cleanAudioUri");
             final JSONObject captionsJson = call.getData().optJSONObject("captions");
             final String bgmUri = call.getString("bgmUri");
+            final JSONArray textsJson = call.getData().optJSONArray("texts");
             final float gain = (float) Math.max(0.0, Math.min(10.0, call.getDouble("gain", 1.0)));
             final List<Seg> segs = new ArrayList<>();
             JSArray arr = call.getArray("segments");
@@ -1451,13 +1452,13 @@ public class EditorrNativePlugin extends Plugin {
             final long durationMs = durationRaw;
             cancelProxyJobs();
             exportHandler().post(() ->
-                    startTransformer(call, hostUri, constUri, cleanAudioUri, captionsJson, bgmUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate));
+                    startTransformer(call, hostUri, constUri, cleanAudioUri, captionsJson, textsJson, bgmUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate));
         } catch (JSONException e) {
             call.reject("Bad export request: " + e.getMessage());
         }
     }
 
-    private void startTransformer(PluginCall call, String hostUri, String constUri, String cleanAudioUri, JSONObject captionsJson, String bgmUri, long offsetMs, long durationMs,
+    private void startTransformer(PluginCall call, String hostUri, String constUri, String cleanAudioUri, JSONObject captionsJson, JSONArray textsJson, String bgmUri, long offsetMs, long durationMs,
                                   int outW, int outH, boolean hostAudio, List<Seg> segs,
                                   CropSpec cropHost, CropSpec cropConst, boolean mirrorHost, boolean mirrorConst,
                                   float gain, int fps, int bitrate) {
@@ -1500,6 +1501,15 @@ public class EditorrNativePlugin extends Plugin {
             final long[] capRb = new long[ranges.size()];
             for (int i = 0; i < ranges.size(); i++) { capRa[i] = ranges.get(i).a; capRb[i] = ranges.get(i).b; }
             final CaptionOverlay captionOverlay = captionsJson == null ? null : CaptionOverlay.create(captionsJson, outW, outH, capRa, capRb);
+            // free text pieces (Text > Add text): one overlay each, drawn above the captions
+            final List<TextureOverlay> overlayList = new ArrayList<>();
+            if (captionOverlay != null) overlayList.add(captionOverlay);
+            for (int ti = 0; textsJson != null && ti < textsJson.length(); ti++) {
+                JSONObject tj = textsJson.optJSONObject(ti);
+                if (tj == null) continue;
+                CaptionOverlay to = CaptionOverlay.create(tj, outW, outH, capRa, capRb);
+                if (to != null) overlayList.add(to);
+            }
 
             List<EditedMediaItem> hostItems = new ArrayList<>();
             List<EditedMediaItem> constItems = new ArrayList<>();
@@ -1546,10 +1556,10 @@ public class EditorrNativePlugin extends Plugin {
                     .setVideoCompositorSettings(settings)
                     .setEffects(new Effects(
                             ImmutableList.<AudioProcessor>of(),
-                            captionOverlay == null
+                            overlayList.isEmpty()
                                     ? ImmutableList.<Effect>of(FrameDropEffect.createDefaultFrameDropEffect(fps))
                                     : ImmutableList.<Effect>of(
-                                            new OverlayEffect(ImmutableList.<TextureOverlay>of(captionOverlay)),
+                                            new OverlayEffect(ImmutableList.copyOf(overlayList)),
                                             FrameDropEffect.createDefaultFrameDropEffect(fps))))
                     .build();
 

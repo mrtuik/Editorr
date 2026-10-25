@@ -6,12 +6,13 @@ import { motionToActivity } from '../core/motion';
 import { cropForFace, FACE_SAMPLE_MS, faceBetween, lastReport, motionFromScan, pickTrack, scanFaces, speakerRuns, type FaceReport, type FaceScan } from '../core/faces';
 import { pickFace } from './facePick';
 import { askFaceOptions } from './faceOptions';
-import { openCaptionSheet, openTextSheet } from './captionSheet';
+import { openCaptionSheet } from './captionSheet';
+import { openTextItemsSheet } from './textSheet';
 import { openReactionSheet } from './reactionSheet';
 import { askAutoZoom } from './zoomSheet';
 import { openMusicSheet } from './musicSheet';
 import { BGM_RATE, decodeFile, decodeUrl, renderMix, toBase64, toWav } from '../core/bgm';
-import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, pageAt, type CapPage } from '../core/captions';
+import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, pageAt, type CapPage, textPage, textStyleOf } from '../core/captions';
 import { transcribe, type WhisperModel } from '../core/transcribe';
 import { addPunchZooms, addReactions, findPeaks, removeAllReactions, removeReaction } from '../core/autocut';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
@@ -1584,7 +1585,11 @@ export function editorScreen() {
     return b;
   }
   const sepEl = () => h('div', { class: 'sep' });
-  const backTool = () => h('button', { class: 'tool back', 'aria-label': 'Back', onclick: () => { selectedId = null; selClip = null; renderBar(); draw(); updateSelFrame(); tick(); } }, icon('back', 20));
+  /** Which sub-toolbar is open (CapCut style: tap Music or Text and the bar swaps to its own tools with a back chevron). */
+  let toolGroup: 'none' | 'music' | 'text' = 'none';
+  const openGroup = (g: 'music' | 'text') => { toolGroup = g; renderBar(); tick(); };
+  const groupBack = () => h('button', { class: 'tool back', 'aria-label': 'Back', onclick: () => { toolGroup = 'none'; renderBar(); tick(); } }, icon('back', 20));
+  const backTool = () => h('button', { class: 'tool back', 'aria-label': 'Back', onclick: () => { toolGroup = 'none'; selectedId = null; selClip = null; renderBar(); draw(); updateSelFrame(); tick(); } }, icon('back', 20));
   /** The segment the layout tools act on: the selected one, else the one under the playhead. */
   const target = (): Segment | undefined => selected() ?? segmentAt(p.segments, playMs);
 
@@ -1933,6 +1938,11 @@ export function editorScreen() {
     if (!w || !hh) return;
     if (capCanvas.width !== w || capCanvas.height !== hh) { capCanvas.width = w; capCanvas.height = hh; }
     g.clearRect(0, 0, w, hh);
+    for (const it of p.texts ?? []) {
+      if (playMs < it.s || playMs >= it.e) continue;
+      const pg = textPage(it);
+      if (pg.words.length) drawCaption(g, w, hh, pg, playMs, textStyleOf(it));
+    }
     if (!p.captions?.words.length) return;
     const st = p.captionStyle ?? DEFAULT_CAPTION_STYLE;
     const key = `${p.captions.words.length}|${JSON.stringify(st)}|${p.captions.words[0].w}|${p.captions.words[p.captions.words.length - 1].w}|${capVersion}`;
@@ -1976,6 +1986,14 @@ export function editorScreen() {
       generate: generateCaptions,
       changed: () => { capVersion++; drawCaptionsPreview(); scheduleSave(); },
       remove: () => { delete p.captions; capVersion++; drawCaptionsPreview(); scheduleSave(); },
+      seek: (ms) => seek(ms),
+    });
+  }
+
+  function openTexts() {
+    openTextItemsSheet({
+      p, playMs: () => playMs, durationMs: () => p.durationMs,
+      changed: () => { drawCaptionsPreview(); scheduleSave(); },
       seek: (ms) => seek(ms),
     });
   }
@@ -2094,7 +2112,9 @@ export function editorScreen() {
     } finally { endTask('music'); }
   }
 
-  function openMusic() {
+  function clearMusic() { stopBgm(); delete p.bgm; bgmBuffer = null; songFiles.length = 0; sfxFiles.length = 0; clipFiles.length = 0; scheduleSave(); toast('Music removed.'); }
+
+  function openMusic(start: 'home' | 'bgm' | 'music' | 'sfx' = 'home') {
     openMusicSheet({
       p, playMs: () => playMs, songs: songFiles, sfx: sfxFiles, clips: clipFiles,
       addSongs: async (files) => {
@@ -2118,9 +2138,9 @@ export function editorScreen() {
       removeSong: (i) => { songFiles.splice(i, 1); },
       removeSfx: (i) => { sfxFiles.splice(i, 1); },
       apply: makeMusic,
-      clear: () => { stopBgm(); delete p.bgm; bgmBuffer = null; songFiles.length = 0; sfxFiles.length = 0; clipFiles.length = 0; scheduleSave(); toast('Music removed.'); },
+      clear: clearMusic,
       preview: () => { if (playing) startCleanAudio(); },
-    }, app.settings, () => { void saveSettings(app.settings); });
+    }, app.settings, () => { void saveSettings(app.settings); }, start);
   }
 
   function doSwap() { edit(p.segments.map((s) => ({ ...s, main: (s.main === 'host' ? 'constant' : 'host') as Role }))); }
@@ -2144,17 +2164,27 @@ export function editorScreen() {
     const rows: Node[] = [];
     const hasClipSel = !!selClip;
     const hasSegSel = !!selected();
-    if (!hasClipSel && !hasSegSel) {
+    if (!hasClipSel && !hasSegSel && toolGroup === 'music') {
+      rows.push(groupBack(),
+        tool('wand', 'Auto BGM', () => openMusic('bgm')),
+        tool('note', 'Music', () => openMusic('music')),
+        tool('bolt', 'SFX', () => openMusic('sfx')),
+        ...(p.bgm ? [tool('trash', 'Remove', () => { clearMusic(); renderBar(); })] : []));
+    } else if (!hasClipSel && !hasSegSel && toolGroup === 'text') {
+      rows.push(groupBack(),
+        tool('text', 'Add text', openTexts),
+        tool('wand', 'Auto captions', openCaptions));
+    } else if (!hasClipSel && !hasSegSel) {
       // nothing selected: the main tools, like CapCut's first row
       rows.push(
         tool('sync', 'Sync', () => { selClip = 'constant'; selectedId = null; openPanel('sync'); updateSelFrame(); }),
         tool('switchSlider', 'Auto switch', () => doAutoSwitch(false)),
         tool('autoframe', 'Autoframe', doAutoframe),
         tool('face', 'Faces', doFaces),
-        tool('text', 'Text', () => openTextSheet(openCaptions)),
+        tool('text', 'Text', () => openGroup('text')),
         tool('reaction', 'Reaction', doReactionTool),
         tool('punch', 'Auto zoom', doAutoZoom),
-        tool('volume', 'Music', openMusic),
+        tool('note', 'Music', () => openGroup('music')),
         tool('silence', 'Silence', () => openPanel('silence')),
         tool('layout', 'Layout', () => openPanel('layout')),
         tool('user', 'On screen', () => openPanel('main')),

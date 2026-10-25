@@ -19,7 +19,7 @@ export interface CaptionCtx {
 
 const COLORS = ['#FFFFFF', '#FFD60A', '#FF453A', '#30D158', '#0A84FF', '#FF9F0A', '#BF5AF2', '#000000'];
 
-function swatches(label: string, value: string, onPick: (c: string) => void): HTMLElement {
+export function swatches(label: string, value: string, onPick: (c: string) => void): HTMLElement {
   const row = h('div', { class: 'cap-sw' });
   const render = (cur: string) => row.replaceChildren(...COLORS.map((c) =>
     h('button', { class: 'cap-dot' + (c.toLowerCase() === cur.toLowerCase() ? ' on' : ''), style: `background:${c}`, 'aria-label': c, onclick: () => { onPick(c); render(c); } })));
@@ -110,17 +110,4 @@ export function openCaptionSheet(ctx: CaptionCtx): void {
   }
 
   if (p.captions?.words.length) renderStyle(); else renderMake();
-}
-
-/** Text tool: the list of text things. Caption is auto; adding free text by hand comes later. */
-export function openTextSheet(onCaption: () => void): void {
-  const close = () => { sheet.classList.add('out'); setTimeout(() => box.remove(), 180); };
-  const sheet = h('div', { class: 'at-sheet', role: 'dialog' },
-    h('div', { class: 'at-handle' }),
-    h('div', { class: 'at-head' }, h('button', { class: 'at-back', 'aria-label': 'Close', onclick: close }, icon('back', 20)), h('div', { class: 'at-title' }, 'Text'), h('span', { class: 'at-head-gap' })),
-    h('div', { class: 'at-body' },
-      h('div', { class: 'at-tiles' },
-        h('button', { class: 'at-tile', onclick: () => { close(); onCaption(); } }, icon('text', 26), h('span', {}, 'Captions')))));
-  const box = h('div', { class: 'at-scrim', onclick: (e: Event) => { if (e.target === box) close(); } }, sheet);
-  document.body.append(box);
 }

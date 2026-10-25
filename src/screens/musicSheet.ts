@@ -42,17 +42,19 @@ function pick(multiple: boolean, onFiles: (f: File[]) => void) {
 }
 
 /** Music tool: Auto BGM (songs under the voice), Music (a song you search or pick, placed at the playhead) and SFX (short sounds at the playhead). */
-export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: () => void): void {
+export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: () => void, start: 'home' | 'bgm' | 'music' | 'sfx' = 'home'): void {
   const body = h('div', { class: 'at-body' });
   const foot = h('div', { class: 'at-foot' });
   const title = h('div', { class: 'at-title' }, 'Music');
-  const back = h('button', { class: 'at-back', 'aria-label': 'Back', onclick: () => (view === 'home' ? close() : home()) }, icon('back', 20));
+  const back = h('button', { class: 'at-back', 'aria-label': 'Back', onclick: () => (view === 'home' || start !== 'home' ? close() : home()) }, icon('back', 20));
   const close = () => { unmount(); sheet.classList.add('out'); setTimeout(() => box.remove(), 180); };
   const sheet = h('div', { class: 'at-sheet', role: 'dialog' }, h('div', { class: 'at-handle' }),
     h('div', { class: 'at-head' }, back, title, h('span', { class: 'at-head-gap' })), body, foot);
   const box = h('div', { class: 'at-scrim', onclick: (e: Event) => { if (e.target === box) close(); } }, sheet);
   document.body.append(box);
   let view: 'home' | 'bgm' | 'music' | 'sfx' = 'home';
+  /** After Apply / Remove: back to the three tiles, or close when the sheet was opened straight from the toolbar. */
+  const leave = () => { if (start === 'home') home(); else close(); };
   let ytOn = false;
   let unmountSearch: (() => void) | null = null;
   const unmount = () => { if (unmountSearch) { unmountSearch(); unmountSearch = null; } };
@@ -65,7 +67,7 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
     box.style.display = 'none';
     const ok = await ctx.apply({ levelDb: level(), duckDb: duck(), fadeMs: fade(), clipDb: clipDb(), clipDuck: clipDuck() });
     box.style.display = '';
-    if (ok) { ctx.preview(); home(); }
+    if (ok) { ctx.preview(); leave(); }
   }
 
   function home() {
@@ -77,7 +79,7 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
       h('button', { class: 'at-tile', onclick: sfx }, icon('bolt', 26), h('span', {}, 'SFX'))),
       ctx.p.bgm ? h('div', { class: 'at-hint' }, `Music is on this video (${ctx.p.bgm.names.length} item${ctx.p.bgm.names.length === 1 ? '' : 's'}).`)
         : h('div', { class: 'at-hint' }, 'Auto BGM: songs play under the whole video. Music: pick one song and place it at the playhead. SFX: short sounds. Then Apply.'),
-      ...(ctx.p.bgm ? [h('button', { class: 'btn at-go', style: 'margin-top:8px', onclick: () => { ctx.clear(); home(); } }, icon('trash', 20), 'Remove music')] : []));
+      ...(ctx.p.bgm ? [h('button', { class: 'btn at-go', style: 'margin-top:8px', onclick: () => { ctx.clear(); leave(); } }, icon('trash', 20), 'Remove music')] : []));
   }
 
   function list(items: { name: string; extra?: string }[], remove: (i: number) => void) {
@@ -104,7 +106,7 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
         slider('Fade in / out', 0, 4000, 250, fade(), (v) => `${(v / 1000).toFixed(2)} s`, (v) => { settings.musicFadeMs = v; persist(); }),
         h('span', {}));
       foot.replaceChildren(
-        ...(ctx.p.bgm ? [h('button', { class: 'btn at-go', style: 'margin-bottom:8px', onclick: () => { ctx.clear(); home(); } }, icon('trash', 20), 'Remove music')] : []),
+        ...(ctx.p.bgm ? [h('button', { class: 'btn at-go', style: 'margin-bottom:8px', onclick: () => { ctx.clear(); leave(); } }, icon('trash', 20), 'Remove music')] : []),
         applyBtn());
     } else if (view === 'music') {
       const placed = h('div', {});
@@ -128,7 +130,7 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
         host.append(h('div', { class: 'at-hint' }, 'YouTube search is not in this build. Pick songs from your phone, or build the app with the YouTube option (see README).'));
       }
       foot.replaceChildren(
-        ...(ctx.p.bgm ? [h('button', { class: 'btn at-go', style: 'margin-bottom:8px', onclick: () => { ctx.clear(); home(); } }, icon('trash', 20), 'Remove music')] : []),
+        ...(ctx.p.bgm ? [h('button', { class: 'btn at-go', style: 'margin-bottom:8px', onclick: () => { ctx.clear(); leave(); } }, icon('trash', 20), 'Remove music')] : []),
         applyBtn());
     } else if (view === 'sfx') {
       body.replaceChildren(
@@ -140,5 +142,5 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
   }
 
   void youtubeAvailable().then((v) => { ytOn = v && !!ctx.addSongFromPath && !!ctx.addClipFromPath; if (ytOn && (view === 'bgm' || view === 'music')) { unmount(); render(); } });
-  home();
+  if (start === 'bgm') bgm(); else if (start === 'music') music(); else if (start === 'sfx') sfx(); else home();
 }

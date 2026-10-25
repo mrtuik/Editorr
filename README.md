@@ -128,19 +128,15 @@ Settings page: waiting for the CapCut reference screenshot.
 - Settings page rebuilt in CapCut style: grouped rounded cards, option chips, storage bar with legend, action rows.
 - New Sync and Swap icons.
 
-## v16.8.0: optional YouTube songs (Music > Auto BGM > Add from YouTube)
+## v16.9.0: optional YouTube songs (Music > Auto BGM > Add from YouTube)
 
 Music sheet now has three tools (like CapCut's Audio menu): **Auto BGM** (songs under the whole video), **Music** (search YouTube or pick a song, it starts at the playhead, play once, can duck under the voice) and **SFX**. All three are mixed into one track by Apply.
 
 Search a song on YouTube, tap it, the audio is saved on the phone and added to Auto BGM like a song from the phone. Everything is inside Editorr (pure Java, no extra library, no Kotlin, no JDK 21).
 
-**Default build: OFF.** The button is hidden and `native/android/youtube/stub/YouTubeBridge.java` is used, so the build is the same as before.
+**Default build: ON.** Every build (push or Run workflow) includes it, and the APK name stays `Editorrr-vX.apk`, so updates install over the old one.
 
-**Turn it ON** (one of):
-- GitHub > Actions > Build > Run workflow > tick `youtube`.
-- Or set a repo variable `EDITORR_YOUTUBE` = `1` (Settings > Secrets and variables > Actions > Variables) so every build has it.
-
-The ON build makes `Editorrr-vX-yt.apk`. Locally: `EDITORR_YOUTUBE=1 VITE_YOUTUBE=1`, then `npx vite build` and `python3 scripts/patch-android.py`.
+**Turn it OFF** (build without YouTube, same as before): Run workflow and untick `youtube`, or set the repo variable `EDITORR_YOUTUBE` = `0`. Then `native/android/youtube/stub/YouTubeBridge.java` is used and the YouTube search is hidden. Locally: `EDITORR_YOUTUBE=1 VITE_YOUTUBE=1`, then `npx vite build` and `python3 scripts/patch-android.py`.
 
 Notes:
 - Search has "Creative Commons only" ON by default. Turn it off for all results (Bollywood / English songs can get a claim or be muted when posted).

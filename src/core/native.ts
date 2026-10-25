@@ -1,4 +1,4 @@
-import { exportCaptions } from './captions';
+import { exportCaptions, exportTexts } from './captions';
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { effectiveGain } from './gain';
@@ -32,6 +32,8 @@ export interface ExportRequest {
   gain: number;
   /** Burned-in captions: pages with words and the look (see captions.ts exportCaptions). */
   captions?: unknown;
+  /** Free text pieces: one caption-shaped block each (see captions.ts exportTexts). */
+  texts?: unknown[];
   /** Baked background music / effects track (file uri), at timeline time. */
   bgmUri?: string;
   segments: {
@@ -136,6 +138,7 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     noiseHost: p.noiseHost, noiseConst: p.noiseConst,
     mainAudio: p.mainAudio,
     captions: exportCaptions(p.captions, p.captionStyle),
+    ...(exportTexts(p.texts) ? { texts: exportTexts(p.texts) } : {}),
     ...(p.bgm?.path ? { bgmUri: 'file://' + p.bgm.path } : {}),
     normalize: p.normalize,
     gain: effectiveGain(p, p.mainAudio),

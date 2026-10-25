@@ -131,3 +131,36 @@ export function exportCaptions(c: CaptionData | undefined, st: CaptionStyle | un
     },
   };
 }
+
+// ---------------------------------------------------------------------- free text (Text > Add text)
+
+export type TextLook = 'classic' | 'bold' | 'box' | 'minimal';
+export const TEXT_LOOKS: TextLook[] = ['classic', 'bold', 'box', 'minimal'];
+/** A piece of text you type and place on the video. Same look engine as captions (preview and export match). */
+export interface TextItem { id: string; text: string; s: number; e: number; look: TextLook; size: number; y: number; color: string }
+
+export function textStyleOf(t: TextItem): CaptionStyle {
+  return { ...DEFAULT_CAPTION_STYLE, look: t.look, size: t.size, y: t.y, color: t.color, wordsPerLine: 99, upper: false, roman: false };
+}
+export function textPage(t: TextItem): CapPage {
+  const words = t.text.trim().split(/\s+/).filter(Boolean).map((w) => ({ t: w, s: t.s, e: t.e }));
+  return { s: t.s, e: t.e, from: 0, to: 0, words };
+}
+/** One caption-shaped block per text, so the native export draws each with its own look. */
+export function exportTexts(items: TextItem[] | undefined) {
+  const out: unknown[] = [];
+  for (const it of items ?? []) {
+    const pg = textPage(it);
+    if (!pg.words.length || it.e <= it.s) continue;
+    const look = lookOf(it.look);
+    out.push({
+      pages: [{ s: Math.round(it.s), e: Math.round(it.e), words: pg.words.map((x) => ({ t: x.t, s: Math.round(x.s), e: Math.round(x.e) })) }],
+      style: {
+        size: it.size, y: it.y, color: it.color, highlight: it.color,
+        weight: look.weight, stroke: look.stroke, strokeColor: look.strokeColor, shadow: look.shadow,
+        box: look.box ?? '', activeColor: false, activeScale: 1,
+      },
+    });
+  }
+  return out.length ? out : undefined;
+}

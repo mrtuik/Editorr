@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       youtube:
-        description: 'Include the YouTube music module (experimental). Same as setting repo variable EDITORR_YOUTUBE=1.'
+        description: 'Include the YouTube music module. ON by default; untick it to build without.'
         type: boolean
-        default: false
+        default: true
 
 jobs:
   build:
@@ -18,10 +18,10 @@ jobs:
     env:
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
       VERSION_CODE: ${{ github.run_number }}
-      VERSION_NAME: 16.8.0
-      # YouTube module: OFF by default. ON when you tick it in "Run workflow", or set the repo variable EDITORR_YOUTUBE to 1.
-      EDITORR_YOUTUBE: ${{ (github.event.inputs.youtube == 'true' || vars.EDITORR_YOUTUBE == '1') && '1' || '0' }}
-      VITE_YOUTUBE: ${{ (github.event.inputs.youtube == 'true' || vars.EDITORR_YOUTUBE == '1') && '1' || '0' }}
+      VERSION_NAME: 16.9.0
+      # YouTube module: ON in every build. Turn off by unticking it in "Run workflow", or set the repo variable EDITORR_YOUTUBE to 0.
+      EDITORR_YOUTUBE: ${{ (github.event.inputs.youtube != 'false' && vars.EDITORR_YOUTUBE != '0') && '1' || '0' }}
+      VITE_YOUTUBE: ${{ (github.event.inputs.youtube != 'false' && vars.EDITORR_YOUTUBE != '0') && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -115,8 +115,7 @@ jobs:
           APK=android/app/build/outputs/apk/release/app-release.apk
           "$ANDROID_HOME/build-tools/$BT/apksigner" verify --print-certs "$APK" | head -5
           "$ANDROID_HOME/build-tools/$BT/aapt" dump badging "$APK" | head -1
-          SUFFIX=""; if [ "$EDITORR_YOUTUBE" = "1" ]; then SUFFIX="-yt"; fi
-          cp "$APK" "Editorrr-v${VERSION_NAME}${SUFFIX}.apk"
+          cp "$APK" "Editorrr-v${VERSION_NAME}.apk"
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
