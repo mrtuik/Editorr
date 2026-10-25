@@ -127,3 +127,21 @@ Settings page: waiting for the CapCut reference screenshot.
 - No localStorage is used. The old localStorage data is moved to IndexedDB once and removed.
 - Settings page rebuilt in CapCut style: grouped rounded cards, option chips, storage bar with legend, action rows.
 - New Sync and Swap icons.
+
+## v16.7.0: optional YouTube songs (Music > Auto BGM > Add from YouTube)
+
+Search a song on YouTube, tap it, the audio is saved on the phone and added to Auto BGM like a song from the phone. Everything is inside Editorr (pure Java, no extra library, no Kotlin, no JDK 21).
+
+**Default build: OFF.** The button is hidden and `native/android/youtube/stub/YouTubeBridge.java` is used, so the build is the same as before.
+
+**Turn it ON** (one of):
+- GitHub > Actions > Build > Run workflow > tick `youtube`.
+- Or set a repo variable `EDITORR_YOUTUBE` = `1` (Settings > Secrets and variables > Actions > Variables) so every build has it.
+
+The ON build makes `Editorrr-vX-yt.apk`. Locally: `EDITORR_YOUTUBE=1 VITE_YOUTUBE=1`, then `npx vite build` and `python3 scripts/patch-android.py`.
+
+Notes:
+- Search has "Creative Commons only" ON by default. Turn it off for all results (Bollywood / English songs can get a claim or be muted when posted).
+- Downloaded audio is kept in the app music folder for 2 days, then removed. The baked music track stays with the project.
+- YouTube changes its app values often. If search works but download fails with "no audio", refresh the `CLIENT` / `*_VERSION` / `*_UA` constants at the top of `native/android/youtube/real/YouTubeBridge.java`.
+- Not compiled against Android and not run on a phone yet. The Java was only syntax and type checked with a stand-in for `org.json`.

@@ -115,6 +115,10 @@ export interface Settings {
   zoomHoldMs?: number;
   zoomOutMs?: number;
   zoomEase?: number[];
+  /** Music: level under the voice (dB), drop while talking (dB), fade in/out (ms). */
+  musicLevelDb?: number;
+  musicDuckDb?: number;
+  musicFadeMs?: number;
 }
 
 export interface Project {
@@ -151,6 +155,8 @@ export interface Project {
   /** Auto captions (words with times) and how they look. */
   captions?: import('./captions').CaptionData;
   captionStyle?: import('./captions').CaptionStyle;
+  /** Baked background music + sound effects (one wav at timeline time) and the settings it was made with. */
+  bgm?: { path: string; names: string[]; levelDb: number; duckDb: number; fadeMs: number; sfx: { name: string; startMs: number }[] };
   /** small jpeg data URL for Home */
   thumb?: string;
 }

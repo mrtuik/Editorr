@@ -32,12 +32,16 @@ export interface ExportRequest {
   gain: number;
   /** Burned-in captions: pages with words and the look (see captions.ts exportCaptions). */
   captions?: unknown;
+  /** Baked background music / effects track (file uri), at timeline time. */
+  bgmUri?: string;
   segments: {
     startMs: number; endMs: number; style: string; main: string; corner: string; size: string;
     /** Own crop of this clip (missing = use cropHost / cropConst above). */
     cropHost?: CropState; cropConst?: CropState;
   }[];
 }
+
+export interface YoutubeItem { id: string; title: string; channel: string; durationMs: number }
 
 export interface PickedVideo {
   path: string;
@@ -52,7 +56,7 @@ export interface PickedVideo {
   bitrate?: number;
 }
 
-export type NativeEvent = 'audioProgress' | 'denoiseProgress' | 'exportProgress' | 'proxyProgress' | 'copyProgress' | 'thumb';
+export type NativeEvent = 'audioProgress' | 'denoiseProgress' | 'exportProgress' | 'proxyProgress' | 'copyProgress' | 'thumb' | 'ytProgress';
 
 export interface EditorrNativePlugin {
   /**
@@ -73,7 +77,15 @@ export interface EditorrNativePlugin {
   makeThumbs(opts: { path: string; count: number; height: number }): Promise<{ files: string[] }>;
   /** Stop one running preview copy (its makeProxy promise rejects with "Cancelled"). */
   cancelProxy(opts: { path: string }): Promise<void>;
+  /** Save a chunk (base64) of a file in the app files folder; returns the full path. */
+  writeBytes(opts: { name: string; data: string; append?: boolean }): Promise<{ path: string }>;
   cancelExport(): Promise<void>;
+  /** Optional YouTube module: enabled only in builds made with the flag (see README). */
+  youtubeEnabled(): Promise<{ enabled: boolean }>;
+  youtubeSearch(opts: { query: string; ccOnly: boolean }): Promise<{ items: YoutubeItem[] }>;
+  /** Saves the audio of one video in the app music folder. Emits 'ytProgress' {id, percent}. */
+  youtubeDownload(opts: { id: string }): Promise<{ path: string; title: string; durationMs: number }>;
+  youtubeCancel(): Promise<void>;
   addListener(eventName: NativeEvent, cb: (e: any) => void): Promise<PluginListenerHandle>;
   freeSpaceMb(): Promise<{ mb: number }>;
   fileExists(opts: { path: string }): Promise<{ exists: boolean }>;
@@ -124,6 +136,7 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     noiseHost: p.noiseHost, noiseConst: p.noiseConst,
     mainAudio: p.mainAudio,
     captions: exportCaptions(p.captions, p.captionStyle),
+    ...(p.bgm?.path ? { bgmUri: 'file://' + p.bgm.path } : {}),
     normalize: p.normalize,
     gain: effectiveGain(p, p.mainAudio),
     // sorted; parts removed by silence cut are simply not in this list
@@ -132,4 +145,11 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
       ...(s.cropHost ? { cropHost: s.cropHost } : {}), ...(s.cropConst ? { cropConst: s.cropConst } : {}),
     })),
   };
+}
+
+/** The YouTube button shows only when this build has the module (web flag AND native module). */
+export const YOUTUBE_FLAG = import.meta.env.VITE_YOUTUBE === '1';
+export async function youtubeAvailable(): Promise<boolean> {
+  if (!YOUTUBE_FLAG || !isNative()) return false;
+  try { return (await EditorrNative.youtubeEnabled()).enabled; } catch { return false; }
 }

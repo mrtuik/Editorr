@@ -9,6 +9,8 @@ import { askFaceOptions } from './faceOptions';
 import { openCaptionSheet, openTextSheet } from './captionSheet';
 import { openReactionSheet } from './reactionSheet';
 import { askAutoZoom } from './zoomSheet';
+import { openMusicSheet } from './musicSheet';
+import { BGM_RATE, decodeFile, decodeUrl, renderMix, toBase64, toWav } from '../core/bgm';
 import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, pageAt, type CapPage } from '../core/captions';
 import { transcribe, type WhisperModel } from '../core/transcribe';
 import { addPunchZooms, addReactions, findPeaks, removeAllReactions, removeReaction } from '../core/autocut';
@@ -60,6 +62,11 @@ export function editorScreen() {
   const p = app.project;
   const hist = new History();
   let playMs = 0;
+  const songFiles: { name: string; buf: AudioBuffer }[] = [];
+  const sfxFiles: { name: string; buf: AudioBuffer; startMs: number }[] = [];
+  let bgmBuffer: AudioBuffer | null = null;
+  let bgmSource: AudioBufferSourceNode | null = null;
+  let bgmLoading = false;
   let capPages: CapPage[] = [];
   let capKey = '';
   let capVersion = 0;
@@ -845,6 +852,7 @@ export function editorScreen() {
   }
 
   function stopCleanAudio() {
+    stopBgm();
     const source = cleanSource;
     cleanSource = null;
     if (!source) return;
@@ -854,6 +862,7 @@ export function editorScreen() {
   }
   function startCleanAudio() {
     stopCleanAudio();
+    startBgm();
     if (!playing) return;
     const role = p.mainAudio;
     const raw = sourcePcm(role), pcm = cleanedPcm(role);
@@ -2010,6 +2019,101 @@ export function editorScreen() {
     toast(`Auto zoom added on ${peaks.length} loud moments. Undo to go back.`);
   }
 
+  // ======================================================================= Music (BGM + effects)
+
+  function stopBgm() {
+    const s = bgmSource;
+    bgmSource = null;
+    if (!s) return;
+    try { s.stop(); } catch { /* already ended */ }
+    try { s.disconnect(); } catch { /* already disconnected */ }
+  }
+  /** The baked music track plays from the playhead, in step with the video. */
+  function startBgm() {
+    if (!playing || !p.bgm) return;
+    if (!bgmBuffer) {
+      if (bgmLoading) return;
+      bgmLoading = true;
+      if (!ensureGraph() || !actx) { bgmLoading = false; return; }
+      const ctx = actx;
+      fetch(fileSrc(p.bgm.path)).then((r) => r.arrayBuffer()).then((ab) => ctx.decodeAudioData(ab))
+        .then((b) => { bgmBuffer = b; bgmLoading = false; if (playing) startBgm(); })
+        .catch(() => { bgmLoading = false; toast('Could not load the music track. Make it again in Music.'); });
+      return;
+    }
+    if (!ensureGraph() || !actx) return;
+    const offset = Math.max(0, playMs) / 1000;
+    const duration = Math.min(bgmBuffer.duration - offset, Math.max(0, p.durationMs - playMs) / 1000);
+    if (duration <= 0) return;
+    const src = actx.createBufferSource();
+    src.buffer = bgmBuffer;
+    src.connect(actx.destination);
+    bgmSource = src;
+    src.onended = () => { if (bgmSource === src) bgmSource = null; try { src.disconnect(); } catch { /* ok */ } };
+    if (actx.state === 'suspended') actx.resume().catch(() => {});
+    src.start(actx.currentTime, offset, duration);
+  }
+
+  /** Mixes the picked songs and effects under the voice and saves one wav. */
+  async function makeMusic(o: { levelDb: number; duckDb: number; fadeMs: number }): Promise<boolean> {
+    if (!ensureGraph() || !actx) { toast('Audio is not ready yet. Try again in a moment.'); return false; }
+    const role = p.mainAudio;
+    const voice = sourcePcm(role);
+    startTask('music', 'Making music track', 5, { modal: true });
+    const yieldUi = () => new Promise<void>((r) => setTimeout(r, 30));
+    try {
+      await yieldUi();
+      const mix = renderMix({
+        songs: songFiles.map((s) => s.buf), sfx: sfxFiles.map((s) => ({ buf: s.buf, startMs: s.startMs })),
+        durationMs: p.durationMs, voice, voiceShiftMs: role === 'host' ? 0 : p.offsetMs,
+        levelDb: o.levelDb, duckDb: o.duckDb, fadeMs: o.fadeMs,
+      });
+      updateTask('music', 'Saving music track', 30);
+      await yieldUi();
+      const wav = toWav(mix);
+      const name = `bgm_${p.id}.wav`;
+      const CH = 1_500_000;
+      let path = '';
+      for (let at = 0; at < wav.length; at += CH) {
+        const r = await EditorrNative.writeBytes({ name, data: toBase64(wav.subarray(at, at + CH)), append: at > 0 });
+        path = r.path;
+        updateTask('music', 'Saving music track', 30 + Math.round((at / wav.length) * 65));
+      }
+      const buf = actx.createBuffer(1, mix.length, BGM_RATE);
+      buf.getChannelData(0).set(mix);
+      bgmBuffer = buf;
+      p.bgm = { path, names: [...songFiles.map((s) => s.name), ...sfxFiles.map((s) => s.name)], levelDb: o.levelDb, duckDb: o.duckDb, fadeMs: o.fadeMs, sfx: sfxFiles.map((s) => ({ name: s.name, startMs: s.startMs })) };
+      scheduleSave();
+      toast('Music added. It plays under the voice and is in the export.');
+      return true;
+    } catch (error) {
+      toast(`Music failed: ${error instanceof Error ? error.message : 'unknown error'}`, 8000);
+      return false;
+    } finally { endTask('music'); }
+  }
+
+  function openMusic() {
+    openMusicSheet({
+      p, playMs: () => playMs, songs: songFiles, sfx: sfxFiles,
+      addSongs: async (files) => {
+        for (const f of files) {
+          try { songFiles.push({ name: f.name, buf: await decodeFile(f) }); } catch { toast(`Cannot read ${f.name}. Pick an mp3, m4a, wav or ogg file.`, 5000); }
+        }
+      },
+      addSongFromPath: async (path, title) => {
+        try { songFiles.push({ name: title, buf: await decodeUrl(fileSrc(path)) }); } catch { toast(`Cannot play the audio of ${title}.`, 5000); throw new Error('decode'); }
+      },
+      addSfx: async (file, startMs) => {
+        try { sfxFiles.push({ name: file.name, buf: await decodeFile(file), startMs }); } catch { toast(`Cannot read ${file.name}.`, 5000); }
+      },
+      removeSong: (i) => { songFiles.splice(i, 1); },
+      removeSfx: (i) => { sfxFiles.splice(i, 1); },
+      apply: makeMusic,
+      clear: () => { stopBgm(); delete p.bgm; bgmBuffer = null; songFiles.length = 0; sfxFiles.length = 0; scheduleSave(); toast('Music removed.'); },
+      preview: () => { if (playing) startCleanAudio(); },
+    }, app.settings, () => { void saveSettings(app.settings); });
+  }
+
   function doSwap() { edit(p.segments.map((s) => ({ ...s, main: (s.main === 'host' ? 'constant' : 'host') as Role }))); }
   function doSplit() { edit(splitAt(p.segments, playMs)); selectedId = segmentAt(p.segments, playMs)?.id ?? null; tick(); }
   function doMerge() { const s = selected(); if (s) { edit(mergeWithPrev(p.segments, s.id)); selectedId = null; afterEdit(); } else toast('Tap a segment in the bottom row first.'); }
@@ -2041,6 +2145,7 @@ export function editorScreen() {
         tool('text', 'Text', () => openTextSheet(openCaptions)),
         tool('reaction', 'Reaction', doReactionTool),
         tool('punch', 'Auto zoom', doAutoZoom),
+        tool('volume', 'Music', openMusic),
         tool('silence', 'Silence', () => openPanel('silence')),
         tool('layout', 'Layout', () => openPanel('layout')),
         tool('user', 'On screen', () => openPanel('main')),

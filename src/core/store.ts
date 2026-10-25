@@ -33,6 +33,9 @@ export const DEFAULT_SETTINGS: Settings = {
   zoomHoldMs: 1200,
   zoomOutMs: 300,
   zoomEase: [0.42, 0, 0.58, 1],
+  musicLevelDb: -20,
+  musicDuckDb: 12,
+  musicFadeMs: 1500,
 };
 
 // ---------------------------------------------------------------- IndexedDB

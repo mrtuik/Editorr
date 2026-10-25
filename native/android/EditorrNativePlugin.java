@@ -20,6 +20,7 @@ import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.util.Base64;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -1327,6 +1328,87 @@ public class EditorrNativePlugin extends Plugin {
                 && Math.abs(p.rotate - q.rotate) < 0.0005f && Math.abs(p.px - q.px) < 0.0005f && Math.abs(p.py - q.py) < 0.0005f && Math.abs(p.ps - q.ps) < 0.0005f && Math.abs(p.ratio - q.ratio) < 0.0005f && Math.abs(p.frameRatio - q.frameRatio) < 0.0005f;
     }
 
+    // ------------------------------------------------------------------ YouTube (optional module, see YouTubeBridge)
+
+    private final java.util.concurrent.ExecutorService ytPool = java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    /** True only in builds made with EDITORR_YOUTUBE=1. */
+    @PluginMethod
+    public void youtubeEnabled(PluginCall call) {
+        JSObject o = new JSObject();
+        o.put("enabled", YouTubeBridge.ENABLED);
+        call.resolve(o);
+    }
+
+    @PluginMethod
+    public void youtubeSearch(PluginCall call) {
+        final String q = call.getString("query");
+        final boolean cc = call.getBoolean("ccOnly", true);
+        if (q == null || q.trim().isEmpty()) { call.reject("Type a song name."); return; }
+        ytPool.execute(() -> {
+            try {
+                JSONArray items = YouTubeBridge.search(q.trim(), cc);
+                JSObject o = new JSObject();
+                o.put("items", items);
+                call.resolve(o);
+            } catch (Exception e) {
+                call.reject("YouTube search failed: " + (e.getMessage() != null ? e.getMessage() : "unknown error"));
+            }
+        });
+    }
+
+    /** Downloads the audio of one video into the app music folder. Emits 'ytProgress' {id, percent}. */
+    @PluginMethod
+    public void youtubeDownload(PluginCall call) {
+        final String id = call.getString("id");
+        if (id == null || id.isEmpty()) { call.reject("No video chosen."); return; }
+        final File dir = new File(getContext().getFilesDir(), "music");
+        ytPool.execute(() -> {
+            try {
+                JSONObject r = YouTubeBridge.download(id, dir, pct -> {
+                    JSObject ev = new JSObject();
+                    ev.put("id", id);
+                    ev.put("percent", pct);
+                    notifyListeners("ytProgress", ev);
+                });
+                JSObject o = new JSObject();
+                o.put("path", r.optString("path"));
+                o.put("title", r.optString("title"));
+                o.put("durationMs", r.optLong("durationMs", 0));
+                call.resolve(o);
+            } catch (Exception e) {
+                call.reject(e.getMessage() != null ? e.getMessage() : "Download failed.");
+            }
+        });
+    }
+
+    @PluginMethod
+    public void youtubeCancel(PluginCall call) {
+        YouTubeBridge.cancel();
+        call.resolve();
+    }
+
+    /** Saves a chunk of a file (base64) in the app files folder. Used for the baked music track. */
+    @PluginMethod
+    public void writeBytes(PluginCall call) {
+        try {
+            String name = call.getString("name");
+            String data = call.getString("data");
+            boolean append = call.getBoolean("append", false);
+            if (name == null || name.isEmpty() || name.contains("/") || name.contains("..") || data == null) { call.reject("Bad file name"); return; }
+            File dir = new File(getContext().getFilesDir(), "music");
+            if (!dir.exists()) dir.mkdirs();
+            File f = new File(dir, name);
+            byte[] bytes = Base64.decode(data, Base64.DEFAULT);
+            try (FileOutputStream os = new FileOutputStream(f, append)) { os.write(bytes); }
+            JSObject o = new JSObject();
+            o.put("path", f.getAbsolutePath());
+            call.resolve(o);
+        } catch (Exception e) {
+            call.reject("Could not save the file: " + e.getMessage());
+        }
+    }
+
     @PluginMethod
     public void exportProject(PluginCall call) {
         try {
@@ -1349,6 +1431,7 @@ public class EditorrNativePlugin extends Plugin {
             final boolean hostAudio = "host".equals(call.getString("mainAudio", "host"));
             final String cleanAudioUri = call.getString("cleanAudioUri");
             final JSONObject captionsJson = call.getData().optJSONObject("captions");
+            final String bgmUri = call.getString("bgmUri");
             final float gain = (float) Math.max(0.0, Math.min(10.0, call.getDouble("gain", 1.0)));
             final List<Seg> segs = new ArrayList<>();
             JSArray arr = call.getArray("segments");
@@ -1448,9 +1531,17 @@ public class EditorrNativePlugin extends Plugin {
             };
 
             // Frame rate: drop frames to the chosen rate (never invents frames, so it also lowers the work per second).
-            ImmutableList<EditedMediaItemSequence> sequences = cleanAudioSeq == null
-                    ? ImmutableList.of(hostSeq, constSeq)
-                    : ImmutableList.of(hostSeq, constSeq, cleanAudioSeq);
+            // background music / sound effects: one baked track at timeline time, cut per kept part like the clean audio
+            List<EditedMediaItem> bgmItems = new ArrayList<>();
+            if (bgmUri != null && !bgmUri.isEmpty()) {
+                for (Range r : ranges) bgmItems.add(audioItem(bgmUri, r.a, r.b - r.a, 1f));
+            }
+            List<EditedMediaItemSequence> seqList = new ArrayList<>();
+            seqList.add(hostSeq);
+            seqList.add(constSeq);
+            if (cleanAudioSeq != null) seqList.add(cleanAudioSeq);
+            if (!bgmItems.isEmpty()) seqList.add(new EditedMediaItemSequence.Builder(bgmItems.toArray(new EditedMediaItem[0])).build());
+            ImmutableList<EditedMediaItemSequence> sequences = ImmutableList.copyOf(seqList);
             Composition composition = new Composition.Builder(sequences)
                     .setVideoCompositorSettings(settings)
                     .setEffects(new Effects(

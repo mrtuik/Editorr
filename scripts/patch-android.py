@@ -3,6 +3,7 @@
 
 Run after `npx cap add android`. Safe to run more than once.
 """
+import os
 import pathlib
 import re
 import shutil
@@ -20,6 +21,11 @@ pkg_dir = ANDROID / "app/src/main/java/com/tuik/editorr"
 pkg_dir.mkdir(parents=True, exist_ok=True)
 for f in ("EditorrNativePlugin.java", "MainActivity.java"):
     shutil.copy(ROOT / "native/android" / f, pkg_dir / f)
+
+# 1b. Optional YouTube module. EDITORR_YOUTUBE=1 -> real code; anything else -> empty stub (default build stays as safe as before).
+yt_on = os.environ.get("EDITORR_YOUTUBE") == "1"
+shutil.copy(ROOT / "native/android/youtube" / ("real" if yt_on else "stub") / "YouTubeBridge.java", pkg_dir / "YouTubeBridge.java")
+print("YouTube module:", "ON" if yt_on else "off (stub)")
 
 # 2. minSdk 26
 vars_gradle = ANDROID / "variables.gradle"
@@ -58,6 +64,7 @@ if "media3-transformer" not in txt:
 manifest = ANDROID / "app/src/main/AndroidManifest.xml"
 txt = manifest.read_text()
 perms = [
+    '<uses-permission android:name="android.permission.INTERNET" />',
     '<uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />',
     '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
     '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />',
