@@ -1707,7 +1707,7 @@ public class EditorrNativePlugin extends Plugin {
     /** Enhanced Audio settings from JS (src/core/fx.ts FxChain). null = off. */
     private static final class FxCfg {
         boolean hpfOn; double hpfF;
-        final double[] mud = new double[3], pres = new double[3], crisp = new double[3]; // f, gain dB, q
+        final double[] chest = new double[3], mud = new double[3], pres = new double[3], crisp = new double[3]; // f, gain dB, q
         double airF, airG;
         boolean compOn; double thr, ratio, attack, release, makeup;
         boolean deOn; double deAmount, deF;
@@ -1718,6 +1718,7 @@ public class EditorrNativePlugin extends Plugin {
             FxCfg c = new FxCfg();
             JSONObject hp = o.optJSONObject("hpf");
             c.hpfOn = hp != null && hp.optBoolean("on", false); c.hpfF = hp == null ? 80 : hp.optDouble("f", 80);
+            band(o.optJSONObject("chest"), c.chest, 150, 1.0);
             band(o.optJSONObject("mud"), c.mud, 320, 1.4);
             band(o.optJSONObject("presence"), c.pres, 2800, 1.0);
             band(o.optJSONObject("crisp"), c.crisp, 5500, 1.2);
@@ -1741,7 +1742,7 @@ public class EditorrNativePlugin extends Plugin {
     }
 
     /**
-     * Enhanced Audio for 16-bit or float PCM: low-cut -> 3 peaking bands -> air shelf -> de-esser -> compressor -> output gain -> limiter.
+     * Enhanced Audio for 16-bit or float PCM: low-cut -> 4 peaking bands (chest, mud, presence, crisp) -> air shelf -> de-esser -> compressor -> output gain -> limiter.
      * Same maths as the preview: biquads from the Web Audio spec (src/core/fx.ts coef) and the dynamics in src/core/fxWorklet.ts.
      * Keep the three in step.
      */
@@ -1784,6 +1785,7 @@ public class EditorrNativePlugin extends Plugin {
             double sr = in.sampleRate;
             List<double[]> ks = new ArrayList<>();
             if (c.hpfOn) ks.add(coef(0, sr, c.hpfF, 0, 0.7071));
+            if (c.chest[1] != 0) ks.add(coef(1, sr, c.chest[0], c.chest[1], c.chest[2]));
             if (c.mud[1] != 0) ks.add(coef(1, sr, c.mud[0], c.mud[1], c.mud[2]));
             if (c.pres[1] != 0) ks.add(coef(1, sr, c.pres[0], c.pres[1], c.pres[2]));
             if (c.crisp[1] != 0) ks.add(coef(1, sr, c.crisp[0], c.crisp[1], c.crisp[2]));

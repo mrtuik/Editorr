@@ -2357,6 +2357,8 @@ export function editorScreen() {
       p,
       changed: () => { applyVolume(); scheduleSave(); },
       setBypass: (on) => { fxBypass = on; applyFx(); },
+      getNoise: (role) => noiseStrength(role),
+      setNoise: (role, v) => { void applyNoiseReduction(role, v); },
     });
   }
 

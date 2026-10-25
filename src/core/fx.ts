@@ -1,5 +1,5 @@
 /**
- * Enhanced Audio: 5-band parametric EQ + de-esser + compressor + limiter.
+ * Enhanced Audio: 6-band parametric EQ + de-esser + compressor + limiter (+ a linked noise-reduction strength).
  *
  * ONE definition of the sound, used three times so preview and export match:
  *  - preview: Web Audio BiquadFilterNodes (EQ) + an AudioWorklet (dynamics), see fxGraph.ts
@@ -17,14 +17,18 @@ export interface FxChain {
   on: boolean;
   /** Band 1: low-cut (high-pass, 12 dB/oct). */
   hpf: { on: boolean; f: number };
-  /** Band 2: warmth / mud (peaking). */
+  /** Band 2: chest / body, the radio-voice low end (peaking, 60-300 Hz). */
+  chest: FxBand;
+  /** Band 3: warmth / boxiness (peaking, 150-900 Hz). */
   mud: FxBand;
-  /** Band 3: presence / speech (peaking). */
+  /** Band 4: presence / speech (peaking). */
   presence: FxBand;
-  /** Band 4: crispness (peaking). */
+  /** Band 5: crispness (peaking). */
   crisp: FxBand;
-  /** Band 5: air (high-shelf). */
+  /** Band 6: air (high-shelf). */
   air: { f: number; g: number };
+  /** Noise reduction 0..100 that a preset asks for. It drives the Denoise tool of the mic; it is not part of the EQ or dynamics maths. */
+  noise?: number;
   /** Compressor: threshold dB, ratio x:1, attack ms, release ms, makeup dB. */
   comp: { on: boolean; thr: number; ratio: number; attack: number; release: number; makeup: number };
   /** De-esser: amount 0..100 (how hard sharp S / SH is pulled down), centre frequency Hz. */
@@ -38,7 +42,7 @@ export interface FxState { host: FxChain; constant: FxChain; master: FxChain }
 
 /** Slider / drag limits, shared by the UI. */
 export const FX_RANGE = {
-  hpf: { f: [50, 120] }, mud: { f: [150, 500], g: [-12, 12], q: [0.3, 4] },
+  hpf: { f: [50, 120] }, chest: { f: [60, 300], g: [-12, 12], q: [0.3, 4] }, mud: { f: [150, 900], g: [-12, 12], q: [0.3, 4] },
   presence: { f: [1000, 4000], g: [-12, 12], q: [0.3, 4] }, crisp: { f: [4000, 8000], g: [-12, 12], q: [0.3, 4] },
   air: { f: [8000, 16000], g: [-12, 12] },
 } as const;
@@ -50,6 +54,7 @@ export function defaultChain(): FxChain {
   return {
     on: false,
     hpf: { on: false, f: 80 },
+    chest: { f: 150, g: 0, q: 1 },
     mud: { f: 320, g: 0, q: 1.4 },
     presence: { f: 2800, g: 0, q: 1 },
     crisp: { f: 5500, g: 0, q: 1.2 },
@@ -77,7 +82,17 @@ function build(name: string, a: P): FxChain {
   return c;
 }
 
+/** The seven-effect Premiere Pro voice chain (Gavin Herman): two EQs, de-esser, de-noise, compressor, amplify, hard limiter. */
+function gavinRadioVoice(): FxChain {
+  const c = build('Gavin Radio Voice', [80, [800, -7, 1.4], [3500, 2, 1], [6000, 0, 1.2], [10000, -3], [-20, 3.5, 10, 100, 4], 40]);
+  c.hpf.on = false;                       // his chain has no low-cut
+  c.chest = { f: 150, g: 3, q: 1 };       // EQ 2: chest resonance (100-200 Hz)
+  c.noise = 10;                           // light de-noise
+  return c;
+}
+
 export const BUILT_IN: { name: string; hint: string; chain: FxChain }[] = [
+  { name: 'Gavin Radio Voice', hint: 'Premiere Pro chain: boxiness cut, chest + presence, de-ess, light denoise, punchy compressor, -1 dB limiter', chain: gavinRadioVoice() },
   { name: 'Cinematic Studio', hint: 'Deep and crisp, like a film voice-over', chain: build('Cinematic Studio', [80, [320, -3.5, 1.4], [2800, 2.5, 1], [5000, 1.5, 1.2], [10000, 3], [-18, 3, 10, 120, 2], 30]) },
   { name: 'Warm Podcast', hint: 'Warm low end, gentle levelling', chain: build('Warm Podcast', [70, [180, 2, 0.8], [2500, 1, 0.9], [5500, 0.5, 1], [9000, 1], [-20, 2.5, 15, 150, 1], 20]) },
   { name: 'Crisp & Clear', hint: 'Sharp dialogue, great for phone mics', chain: build('Crisp & Clear', [100, [300, -4, 1.4], [3200, 3.5, 1.1], [6000, 2.5, 1.2], [12000, 3], [-22, 3.5, 5, 90, 3], 45]) },
@@ -104,7 +119,8 @@ export function mergeChain(src: Partial<FxChain> | undefined): FxChain {
   if (!src) return d;
   return {
     on: !!src.on, preset: src.preset,
-    hpf: { ...d.hpf, ...src.hpf }, mud: { ...d.mud, ...src.mud }, presence: { ...d.presence, ...src.presence },
+    noise: typeof src.noise === 'number' ? src.noise : undefined,
+    hpf: { ...d.hpf, ...src.hpf }, chest: { ...d.chest, ...src.chest }, mud: { ...d.mud, ...src.mud }, presence: { ...d.presence, ...src.presence },
     crisp: { ...d.crisp, ...src.crisp }, air: { ...d.air, ...src.air }, comp: { ...d.comp, ...src.comp },
     deess: { ...d.deess, ...src.deess }, out: { ...d.out, ...src.out },
   };
@@ -121,7 +137,7 @@ export const fxActive = (p: Project): boolean => !!p.fx && (p.fx.host?.on || p.f
 
 /** Same sound? (ignores the on switch and the label) */
 export function sameSound(a: FxChain, b: FxChain): boolean {
-  const strip = (c: FxChain) => { const x = cloneChain(c) as Partial<FxChain>; delete x.on; delete x.preset; return JSON.stringify(x); };
+  const strip = (c: FxChain) => { const x = cloneChain(c) as Partial<FxChain>; delete x.on; delete x.preset; delete x.noise; return JSON.stringify(x); };
   return strip(a) === strip(b);
 }
 
@@ -151,6 +167,7 @@ export function coef(kind: StageKind, sr: number, f: number, gDb: number, q: num
 export function eqStages(c: FxChain): { kind: StageKind; f: number; g: number; q: number }[] {
   const s: { kind: StageKind; f: number; g: number; q: number }[] = [];
   if (c.hpf.on) s.push({ kind: 'highpass', f: c.hpf.f, g: 0, q: Math.SQRT1_2 });
+  if (c.chest.g !== 0) s.push({ kind: 'peaking', ...c.chest });
   if (c.mud.g !== 0) s.push({ kind: 'peaking', ...c.mud });
   if (c.presence.g !== 0) s.push({ kind: 'peaking', ...c.presence });
   if (c.crisp.g !== 0) s.push({ kind: 'peaking', ...c.crisp });
@@ -204,7 +221,7 @@ const n = (v: number, d = 2) => String(Math.round(v * 10 ** d) / 10 ** d);
 export function fxToFfmpeg(c: FxChain): string {
   const f: string[] = [];
   if (c.hpf.on) f.push(`highpass=f=${n(c.hpf.f, 0)}:poles=2`);
-  for (const b of [c.mud, c.presence, c.crisp]) if (b.g !== 0) f.push(`equalizer=f=${n(b.f, 0)}:t=q:w=${n(b.q)}:g=${n(b.g, 1)}`);
+  for (const b of [c.chest, c.mud, c.presence, c.crisp]) if (b.g !== 0) f.push(`equalizer=f=${n(b.f, 0)}:t=q:w=${n(b.q)}:g=${n(b.g, 1)}`);
   if (c.air.g !== 0) f.push(`highshelf=f=${n(c.air.f, 0)}:g=${n(c.air.g, 1)}`);
   if (c.deess.on && c.deess.amount > 0) f.push(`deesser=i=${n(c.deess.amount / 100)}`);
   if (c.comp.on) f.push(`acompressor=threshold=${n(Math.pow(10, c.comp.thr / 20), 4)}:ratio=${n(c.comp.ratio)}:attack=${n(c.comp.attack, 0)}:release=${n(c.comp.release, 0)}:makeup=${n(Math.pow(10, c.comp.makeup / 20), 3)}`);

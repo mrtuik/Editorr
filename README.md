@@ -172,7 +172,9 @@ Notes:
 Editor > **Enhanced** (bottom bar) or Audio > *Enhanced Audio*. A see-through bottom sheet, so the video keeps playing while you tweak.
 
 - Targets: **Host**, **Guest** (the Constant video) and **Master** (voice + music). Only the mic that is the audio source is heard / exported.
-- 5-band parametric EQ on a 20 Hz - 20 kHz graph: low-cut, warmth/mud, presence, crispness, air. Drag the dots, fine-tune with Frequency / Gain / Q sliders.
+- 6-band parametric EQ on a 20 Hz - 20 kHz graph: low-cut, chest/body (60-300 Hz), boxiness (150-900 Hz), presence, crispness, air. Drag the dots, fine-tune with Frequency / Gain / Q sliders.
+- De-noise slider inside Enhanced Audio (Host / Guest): the same value as the Denoise tool. Presets can set it.
+- **Gavin Radio Voice** preset: the Premiere Pro chain (boxiness cut at 800 Hz, chest boost at 150 Hz, presence, air -3 dB, de-ess, light de-noise, compressor, -1 dB limiter).
 - De-esser, vocal compressor, output gain and a brickwall limiter (default ceiling -1 dBFS).
 - Presets: Cinematic Studio, Warm Podcast, Crisp & Clear, Radio Broadcast, Clean & Intimate, plus your own (Save as preset, Overwrite, Rename, Delete, Reset). Your presets live in the phone's local storage.
 - **A/B** = hear the original while you edit. Preview only; the export always has the effect.

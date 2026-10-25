@@ -14,7 +14,7 @@ export async function loadFxWorklet(ctx: BaseAudioContext): Promise<boolean> {
 /**
  * One Enhanced Audio chain in the preview:
  *   input -> dry ------------------------------------------> output   (original sound)
- *   input -> highpass -> mud -> presence -> crisp -> air -> [de-esser, compressor, gain, limiter] -> wet -> output
+ *   input -> highpass -> chest -> mud -> presence -> crisp -> air -> [de-esser, compressor, gain, limiter] -> wet -> output
  * Switching between the two (A/B, or the effect off) is a short fade, so there are no clicks.
  */
 export class FxNode {
@@ -23,6 +23,7 @@ export class FxNode {
   private dry: GainNode;
   private wet: GainNode;
   private hp: BiquadFilterNode;
+  private chest: BiquadFilterNode;
   private mud: BiquadFilterNode;
   private pres: BiquadFilterNode;
   private crisp: BiquadFilterNode;
@@ -39,11 +40,11 @@ export class FxNode {
     this.wet.gain.value = 0;
     const bq = (type: BiquadFilterType) => { const f = ctx.createBiquadFilter(); f.type = type; return f; };
     this.hp = bq('highpass'); this.hp.Q.value = HPF_Q_DB;
-    this.mud = bq('peaking'); this.pres = bq('peaking'); this.crisp = bq('peaking'); this.air = bq('highshelf');
+    this.chest = bq('peaking'); this.mud = bq('peaking'); this.pres = bq('peaking'); this.crisp = bq('peaking'); this.air = bq('highshelf');
     this.dynIn = ctx.createGain(); this.dynOut = ctx.createGain();
     this.input.connect(this.dry); this.dry.connect(this.output);
     this.input.connect(this.hp);
-    this.hp.connect(this.mud); this.mud.connect(this.pres); this.pres.connect(this.crisp); this.crisp.connect(this.air); this.air.connect(this.dynIn);
+    this.hp.connect(this.chest); this.chest.connect(this.mud); this.mud.connect(this.pres); this.pres.connect(this.crisp); this.crisp.connect(this.air); this.air.connect(this.dynIn);
     this.dynIn.connect(this.dynOut); // until the worklet is ready
     this.dynOut.connect(this.wet); this.wet.connect(this.output);
   }
@@ -79,7 +80,7 @@ export class FxNode {
     const peak = (n: BiquadFilterNode, b: { f: number; g: number; q: number }) => {
       n.frequency.setTargetAtTime(b.f, t, ramp); n.gain.setTargetAtTime(b.g, t, ramp); n.Q.setTargetAtTime(b.q, t, ramp);
     };
-    peak(this.mud, chain.mud); peak(this.pres, chain.presence); peak(this.crisp, chain.crisp);
+    peak(this.chest, chain.chest); peak(this.mud, chain.mud); peak(this.pres, chain.presence); peak(this.crisp, chain.crisp);
     this.air.frequency.setTargetAtTime(chain.air.f, t, ramp); this.air.gain.setTargetAtTime(chain.air.g, t, ramp);
     const d = dynCfg(chain);
     if (this.dyn) this.dyn.port.postMessage(d);

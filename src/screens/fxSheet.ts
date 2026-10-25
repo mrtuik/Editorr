@@ -11,15 +11,20 @@ export interface FxCtx {
   changed: () => void;
   /** Hear the original (A/B). Preview only. */
   setBypass: (on: boolean) => void;
+  /** Noise reduction of a mic (the same value as the Denoise tool), 0..100. */
+  getNoise: (role: 'host' | 'constant') => number;
+  /** Set it (runs the denoise job, same as the Denoise tool). */
+  setNoise: (role: 'host' | 'constant', strength: number) => void;
 }
 
-type BandKey = 'hpf' | 'mud' | 'presence' | 'crisp' | 'air';
+type BandKey = 'hpf' | 'chest' | 'mud' | 'presence' | 'crisp' | 'air';
 const BANDS: { key: BandKey; label: string; short: string; color: string }[] = [
   { key: 'hpf', label: 'Low-cut', short: '1', color: '#64D2FF' },
-  { key: 'mud', label: 'Warmth / mud', short: '2', color: '#FF9F0A' },
-  { key: 'presence', label: 'Presence', short: '3', color: '#C6F277' },
-  { key: 'crisp', label: 'Crispness', short: '4', color: '#BF5AF2' },
-  { key: 'air', label: 'Air', short: '5', color: '#FF6B8A' },
+  { key: 'chest', label: 'Chest / body', short: '2', color: '#FFD60A' },
+  { key: 'mud', label: 'Boxiness', short: '3', color: '#FF9F0A' },
+  { key: 'presence', label: 'Presence', short: '4', color: '#C6F277' },
+  { key: 'crisp', label: 'Crispness', short: '5', color: '#BF5AF2' },
+  { key: 'air', label: 'Air', short: '6', color: '#FF6B8A' },
 ];
 
 // graph geometry: 20 Hz .. 20 kHz on a log axis, +-15 dB
@@ -44,7 +49,7 @@ function head(title: string, on: boolean, toggle?: (v: boolean) => void): HTMLEl
     toggle ? h('button', { class: 'chip fx-sw' + (on ? ' on' : ''), onclick: () => toggle(!on) }, on ? 'On' : 'Off') : h('span', {}));
 }
 
-/** Enhanced Audio studio: pick Host / Guest / Master, a preset, shape the 5-band EQ on the graph, then dynamics. */
+/** Enhanced Audio studio: pick Host / Guest / Master, a preset, shape the 6-band EQ on the graph, then dynamics. */
 export function openFxSheet(ctx: FxCtx): void {
   const { p } = ctx;
   const state = getFx(p);
@@ -88,6 +93,7 @@ export function openFxSheet(ctx: FxCtx): void {
   function applyPreset(src: FxChain, name: string) {
     const c = cloneChain(src); c.on = true; c.preset = name;
     state[target] = c; touch(); renderAll();
+    if (c.noise != null && target !== 'master') ctx.setNoise(target, c.noise);
   }
   function renderTop() {
     const c = chain();
@@ -276,6 +282,15 @@ export function openFxSheet(ctx: FxCtx): void {
           slider('Release', 20, 500, 5, c.comp.release, (v) => `${v} ms`, (v) => { c.comp.release = v; on(); touch(); }),
           slider('Make-up gain', 0, 12, 0.5, c.comp.makeup, (v) => `+${v} dB`, (v) => { c.comp.makeup = v; on(); touch(); }),
         ] : [])),
+      ...(target === 'master' ? [] : [h('div', { class: 'at-sec' }, h('div', { class: 'fx-sec-title' }, 'De-noise'),
+        h('div', { class: 'at-hint' }, 'Reduces fan and room hiss. Same as the Denoise tool. Light (5-15%) keeps the voice natural.'),
+        (() => {
+          const role = target as 'host' | 'constant';
+          const el = slider('Strength', 0, 100, 1, ctx.getNoise(role), (v) => `${v}%`, () => {});
+          const inp = el.querySelector('input') as HTMLInputElement;
+          inp.addEventListener('change', () => { chain().noise = Number(inp.value); ctx.setNoise(role, Number(inp.value)); ctx.changed(); });
+          return el;
+        })())]),
       h('div', { class: 'at-sec' }, head('De-esser', c.deess.on, (v) => { c.deess.on = v; on(); touch(); renderDyn(); }),
         h('div', { class: 'at-hint' }, 'Softens sharp "s" and "sh" sounds.'),
         ...(c.deess.on ? [
