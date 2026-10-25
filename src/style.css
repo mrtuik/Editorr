@@ -1066,69 +1066,77 @@ input.xs-range::-webkit-slider-runnable-track { background: linear-gradient(90de
 .cap-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 6; }
 .zg-cv { width: 100%; height: auto; border-radius: 14px; touch-action: none; display: block; margin-bottom: 10px; }
 
-/* ---------- LoveMusic look for ALL bottom sheets: flat black, pill buttons and chips, lime accent ---------- */
+/* ---------- LoveMusic look for ALL bottom sheets: flat black, white pill action, grey pills. Lime only as a tiny accent. ---------- */
 :is(.at-sheet, .panel, .project-sheet, .xs-sheet, .menu .sheet) {
   background: #121212; -webkit-backdrop-filter: none; backdrop-filter: none; border-top: 0;
-  border-radius: 22px 22px 0 0; box-shadow: 0 -8px 30px rgba(0,0,0,.55);
+  border-radius: 24px 24px 0 0; box-shadow: 0 -12px 40px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.06);
 }
 .at-scrim:not(.clear) { background: rgba(0,0,0,.72); }
 .xs-backdrop, .menu { background: rgba(0,0,0,.72); }
-.at-handle, .panel-drag-handle, .project-sheet-drag-handle { background: #4a4a4a; }
-.at-sheet .at-back { background: #242424; border: 0; }
-.at-sheet .at-title { font-weight: 700; letter-spacing: -.1px; }
-.at-sheet .at-hint, .lm .lm-hint, .panel .pinfo { color: #b3b3b3; }
-.at-sheet .at-label-row b, .panel .pval, .xs-val { color: var(--accent, #C6F277); }
+.at-handle, .panel-drag-handle, .project-sheet-drag-handle { width: 40px; height: 4px; border-radius: 2px; background: #4a4a4a; }
+.at-sheet .at-head { padding: 6px 16px 10px; }
+.at-sheet .at-back { width: 40px; height: 40px; background: #242424; border: 0; }
+.at-sheet .at-title { font-size: 18px; font-weight: 700; letter-spacing: -.2px; }
+.at-sheet .at-body { padding: 2px 16px 10px; }
+.at-sheet .at-hint, .lm .lm-hint, .panel .pinfo { color: #9a9a9a; line-height: 1.4; }
+.at-sheet .at-label { font-size: 15px; font-weight: 600; }
+.at-sheet .at-label-row b, .panel .pval { color: #fff; font-weight: 600; }
+.at-sheet .at-sec { margin-top: 20px; }
+/* the only lime: slider fill + thumb, progress, small ticks */
 .at-sheet .at-range, .panel input[type=range] { accent-color: var(--accent, #C6F277); }
 
-/* buttons: grey pill, one lime pill for the main action */
-:is(.at-sheet, .panel, .project-sheet, .xs-sheet, .menu .sheet) .btn { border: 0; background: #242424; color: #fff; border-radius: 999px; font-weight: 600; }
+/* buttons: grey pill, white pill for the main action */
+:is(.at-sheet, .panel, .project-sheet, .xs-sheet, .menu .sheet) .btn { border: 0; background: #242424; color: #fff; border-radius: 999px; font-weight: 600; min-height: 50px; }
 :is(.at-sheet, .panel, .project-sheet, .xs-sheet, .menu .sheet) .btn.primary,
-.xs-go { background: var(--accent, #C6F277); color: var(--on-accent, #000); border-radius: 999px; }
+.xs-go { background: #ffffff; color: #000000; border-radius: 999px; }
 :is(.at-sheet, .panel, .project-sheet, .xs-sheet, .menu .sheet) .btn.danger { color: #ff6b6b; }
 :is(.at-sheet, .panel, .project-sheet, .xs-sheet, .menu .sheet) .btn:disabled { background: #1a1a1a; color: #6a6a6a; }
-.at-sheet .at-go, .panel .btn.primary, .xs-go { border-radius: 999px; }
+.at-sheet .at-go { min-height: 54px; border-radius: 999px; }
+.panel .btn.primary, .xs-go { border-radius: 999px; }
+.at-sheet .at-foot { padding: 10px 16px 16px; }
 
-/* pills: tiles, chips, tile-like toggles */
+/* pills: tiles, chips. Selected = white with black text */
 .at-sheet .at-tiles { gap: 8px; }
-.at-sheet .at-tile { flex-direction: row; gap: 6px; min-height: 46px; border: 0; border-radius: 999px; background: #242424; color: #fff; font-weight: 600; padding: 0 8px; }
-.at-sheet .at-tile.on { background: var(--accent, #C6F277); color: #000; }
+.at-sheet .at-tile { flex-direction: row; gap: 6px; min-height: 48px; border: 0; border-radius: 999px; background: #242424; color: #fff; font-weight: 600; padding: 0 8px; }
+.at-sheet .at-tile.on { background: #ffffff; color: #000000; }
 :is(.panel, .at-sheet) .chip, :is(.panel, .at-sheet) .reschip { border-radius: 999px; background: #242424; border: 0; color: #fff; font-weight: 600; }
-:is(.panel, .at-sheet) .chip.on { background: var(--accent, #C6F277); color: #000; border: 0; }
+:is(.panel, .at-sheet) .chip.on { background: #ffffff; color: #000; border: 0; }
 .panel .cap-time, .panel .cap-input { border-radius: 999px; border: 0; background: #242424; }
 .panel .cap-input { padding: 0 14px; }
-.at-sheet .rx-go { border: 0; background: #1a1a1a; border-radius: 12px; }
+.at-sheet .rx-go { border: 0; background: #1a1a1a; border-radius: 14px; }
 .at-sheet .rx-del, .at-sheet .cap-time { border-radius: 50%; background: #242424; }
 .at-sheet .cap-input { border: 0; background: #242424; border-radius: 999px; padding: 0 14px; }
 
 /* project menu rows, long-press menu rows, export sheet */
-.project-sheet-item { border-radius: 12px; }
+.project-sheet-item { border-radius: 14px; }
 .project-sheet-item:active { background: #1f1f1f; }
 .project-sheet-cancel-item { background: #242424; border-radius: 999px; }
 .project-sheet-thumb { border-radius: 12px; }
 .menu .sheet .btn { justify-content: flex-start; padding: 0 20px; }
 .xs-close { background: #242424; }
 .xs-tab { border-bottom-color: var(--accent, #C6F277); }
+.xs-val { color: #fff; }
 .xs-range::-webkit-slider-runnable-track { background: linear-gradient(90deg, var(--accent, #C6F277) var(--fill), #333 var(--fill)); }
 .xs-size { border-top-color: #242424; }
 .pfoot { border-top-color: #242424; }
-.pfoot .pcheck { color: var(--accent, #C6F277); }
+.pfoot .pcheck { color: #fff; }
 
 /* YouTube search rows (inside the Music / YouTube sheets) */
 .lm .lm-search { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
-.lm .lm-input { flex: 1; min-width: 0; height: 48px; border-radius: 999px; border: 0; background: #242424; color: #fff; font: inherit; font-size: 15px; padding: 0 18px; outline: none; }
+.lm .lm-input { flex: 1; min-width: 0; height: 50px; border-radius: 999px; border: 0; background: #242424; color: #fff; font: inherit; font-size: 15px; padding: 0 20px; outline: none; }
 .lm .lm-input::placeholder { color: #8a8a8a; }
-.lm .lm-go { flex: none; width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--accent, #C6F277); color: #000; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.lm .lm-go { flex: none; width: 50px; height: 50px; border-radius: 50%; border: 0; background: #ffffff; color: #000; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .lm .lm-go:active { opacity: .7; }
 .lm .lm-hint { font-size: 13px; margin: 10px 2px 8px; }
 .lm .lm-hint.err { color: #ff6b6b; }
 .lm .lm-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
-.lm .lm-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; border-radius: 12px; background: #1a1a1a; color: #fff; font: inherit; padding: 10px 10px 10px 14px; cursor: pointer; }
+.lm .lm-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; border-radius: 14px; background: #1a1a1a; color: #fff; font: inherit; padding: 10px 10px 10px 16px; cursor: pointer; }
 .lm .lm-row:active { background: #242424; }
 .lm .lm-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .lm .lm-txt b { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lm .lm-txt span { font-size: 12px; color: #b3b3b3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lm .lm-row.busy .lm-txt span, .lm .lm-pct { color: var(--accent, #C6F277); }
+.lm .lm-txt span { font-size: 12px; color: #9a9a9a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lm .lm-end { flex: none; width: 38px; height: 38px; border-radius: 50%; background: #242424; display: inline-flex; align-items: center; justify-content: center; }
 .lm .lm-plus { font-size: 22px; line-height: 1; font-weight: 400; }
-.lm .lm-pct { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.lm .lm-row.done .lm-end { background: var(--accent, #C6F277); color: #000; }
+.lm .lm-pct { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent, #C6F277); }
+.lm .lm-row.busy .lm-txt span { color: var(--accent, #C6F277); }
+.lm .lm-row.done .lm-end { color: var(--accent, #C6F277); }

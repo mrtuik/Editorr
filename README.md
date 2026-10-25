@@ -128,9 +128,9 @@ Settings page: waiting for the CapCut reference screenshot.
 - Settings page rebuilt in CapCut style: grouped rounded cards, option chips, storage bar with legend, action rows.
 - New Sync and Swap icons.
 
-## v16.9.2: LoveMusic look on every bottom sheet, lime accent
+## v16.9.3: one sheet design everywhere, lime only as a tiny accent
 
-All bottom sheets now share one look (end of `src/style.css`): flat black `#121212`, 22px top corners, grey pill buttons, ONE lime pill for the main action, pill chips (selected = lime with black text), lime slider values and progress. Covers: auto edit options, captions, text, zoom, reaction, face options / face pick, the CapCut tool panels, project menu, long-press menu and export settings. The in-progress task sheet keeps its own CapCut design.
+All bottom sheets share one look (end of `src/style.css`): flat black `#121212`, 24px top corners, grey pill buttons, ONE white pill for the main action, pill chips (selected = white with black text), rounded rows. Lime is only a tiny accent: slider fill and thumb, download progress, the added tick, the export tab underline. Covers: auto edit options, captions, text, zoom, reaction, face options / face pick, the CapCut tool panels, project menu, long-press menu, export settings, Music and YouTube. The in-progress task sheet keeps its own CapCut design.
 
 ## v16.9.1: YouTube always on, LoveMusic look
 
