@@ -31,9 +31,9 @@ public final class YouTubeBridge {
     // ---- values that may need a refresh when YouTube changes ----
     private static final String WEB_VERSION = "2.20250925.01.00";
     private static final String WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
-    private static final String[] CLIENTS = { "ANDROID_VR", "IOS" };
-    private static final String VR_VERSION = "1.60.19";
-    private static final String VR_UA = "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
+    // Tried in this order until one gives a direct audio link: "ANDROID_VR:<version>" or "IOS".
+    private static final String[] CLIENTS = { "ANDROID_VR:1.65.10", "ANDROID_VR:1.60.19", "IOS" };
+    private static final String IOS_NAME = "IOS";
     private static final String IOS_VERSION = "20.10.4";
     private static final String IOS_UA = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
     // -------------------------------------------------------------
@@ -132,12 +132,13 @@ public final class YouTubeBridge {
         String title = "";
         long durationMs = 0;
         String lastError = "no direct audio link";
-        String ua = VR_UA;
-        for (String name : CLIENTS) {
+        String ua = IOS_UA;
+        for (String spec : CLIENTS) {
             try {
-                boolean vr = "ANDROID_VR".equals(name);
-                ua = vr ? VR_UA : IOS_UA;
-                JSONObject res = post("player", playerBody(name, videoId), ua, vr ? "28" : "5", vr ? VR_VERSION : IOS_VERSION);
+                boolean vr = spec.startsWith("ANDROID_VR");
+                String ver = vr ? spec.substring(spec.indexOf(':') + 1) : IOS_VERSION;
+                ua = vr ? vrUa(ver) : IOS_UA;
+                JSONObject res = post("player", playerBody(vr ? "ANDROID_VR" : IOS_NAME, ver, videoId), ua, vr ? "28" : "5", ver);
                 JSONObject ps = res.optJSONObject("playabilityStatus");
                 String status = ps != null ? ps.optString("status", "") : "";
                 if (!"OK".equals(status)) {
@@ -175,6 +176,13 @@ public final class YouTubeBridge {
                 long before = pos;
                 try {
                     int code = c.getResponseCode();
+                    if (code == 403 || code == 416) {
+                        // Some links refuse the Range header; the same piece asked as a link parameter is accepted.
+                        c.disconnect();
+                        c = open(pick.url + (pick.url.contains("?") ? "&" : "?") + "range=" + pos + "-" + end, ua);
+                        c.setRequestMethod("GET");
+                        code = c.getResponseCode();
+                    }
                     if (code != 206 && code != 200) throw new IOException("YouTube refused the download (" + code + ").");
                     if (code == 200 && pos > 0) throw new IOException("YouTube ignored the range request.");
                     try (InputStream in = c.getInputStream()) {
@@ -206,20 +214,24 @@ public final class YouTubeBridge {
         return r;
     }
 
-    private static JSONObject playerBody(String clientName, String videoId) throws Exception {
+    private static String vrUa(String ver) {
+        return "com.google.android.apps.youtube.vr.oculus/" + ver + " (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
+    }
+
+    private static JSONObject playerBody(String clientName, String version, String videoId) throws Exception {
         JSONObject client = new JSONObject();
         client.put("clientName", clientName);
         client.put("hl", "en");
         client.put("gl", "US");
         if ("ANDROID_VR".equals(clientName)) {
-            client.put("clientVersion", VR_VERSION);
+            client.put("clientVersion", version);
             client.put("deviceMake", "Oculus");
             client.put("deviceModel", "Quest 3");
             client.put("osName", "Android");
             client.put("osVersion", "12L");
             client.put("androidSdkVersion", 32);
         } else {
-            client.put("clientVersion", IOS_VERSION);
+            client.put("clientVersion", version);
             client.put("deviceMake", "Apple");
             client.put("deviceModel", "iPhone16,2");
             client.put("osName", "iPhone");

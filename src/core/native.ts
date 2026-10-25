@@ -150,8 +150,8 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
   };
 }
 
-/** The YouTube button shows only when this build has the module (web flag AND native module). */
-export const YOUTUBE_FLAG = import.meta.env.VITE_YOUTUBE === '1';
+/** YouTube is part of every build. This only says whether the native module is really there (false in the browser). */
+export const YOUTUBE_FLAG = import.meta.env.VITE_YOUTUBE !== '0';
 export async function youtubeAvailable(): Promise<boolean> {
   if (!YOUTUBE_FLAG || !isNative()) return false;
   try { return (await EditorrNative.youtubeEnabled()).enabled; } catch { return false; }

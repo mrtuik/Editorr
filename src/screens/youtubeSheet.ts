@@ -1,47 +1,45 @@
 import { h, icon, toast, fmtTime } from '../ui';
-import { EditorrNative, type YoutubeItem } from '../core/native';
+import { EditorrNative, youtubeAvailable, type YoutubeItem } from '../core/native';
 
 /**
- * Optional YouTube module: search a song, tap it, the audio is saved on the phone and handed to onAdded.
- * Creative Commons filter is ON by default (safest for Instagram / YouTube posts).
+ * YouTube songs: search, tap a song, the audio is saved on the phone and handed to onAdded.
+ * Always on, nothing to tick. Search shows ALL results (no Creative Commons filter).
  * mountYoutubeSearch puts the search box and results inside any container (used by Music > Music).
  * Returns a cleanup function (call it when the container goes away).
  */
 export function mountYoutubeSearch(host: HTMLElement, onAdded: (path: string, title: string) => Promise<void>, hintText?: string): () => void {
-  let ccOnly = true;
   let busyId: string | null = null;
   let items: YoutubeItem[] = [];
   const done = new Set<string>();
   let status = '';
   let progress = 0;
 
-  const input = h('input', { type: 'text', placeholder: 'Search YouTube: song name or artist', 'aria-label': 'Search YouTube', enterkeyhint: 'search' }) as HTMLInputElement;
-  const goBtn = h('button', { class: 'btn primary', style: 'min-width:48px;min-height:48px', 'aria-label': 'Search', onclick: () => void search() }, icon('search', 20));
-  const ccBtn = h('button', { class: 'at-tile', style: 'min-height:44px;flex-direction:row;gap:8px;margin-top:8px', onclick: () => { ccOnly = !ccOnly; drawCc(); } });
-  const list = h('div', { class: 'rx-list', style: 'max-height:none;margin-top:10px' });
-  const hint = h('div', { class: 'at-hint' });
-  host.append(h('div', { style: 'display:flex;gap:8px' }, input, goBtn), ccBtn, hint, list);
+  const input = h('input', { type: 'text', class: 'lm-input', placeholder: 'Search songs on YouTube', 'aria-label': 'Search YouTube', enterkeyhint: 'search', autocomplete: 'off' }) as HTMLInputElement;
+  const goBtn = h('button', { class: 'lm-go', 'aria-label': 'Search', onclick: () => void search() }, icon('search', 20));
+  const list = h('div', { class: 'lm-list' });
+  const hint = h('div', { class: 'lm-hint' });
+  host.append(h('div', { class: 'lm-search' }, input, goBtn), hint, list);
 
   let handle: { remove: () => Promise<void> } | null = null;
   let alive = true;
   void EditorrNative.addListener('ytProgress', (e: { id: string; percent: number }) => {
     if (e.id !== busyId) return;
     progress = e.percent; drawList();
-  }).then((hd: { remove: () => Promise<void> }) => { if (alive) handle = hd; else void hd.remove(); });
+  }).then((hd: { remove: () => Promise<void> }) => { if (alive) handle = hd; else void hd.remove(); }).catch(() => { /* browser build: no native events */ });
 
-  function drawCc() {
-    ccBtn.classList.toggle('on', ccOnly);
-    ccBtn.replaceChildren(icon('check', 18), h('span', {}, ccOnly ? 'Creative Commons only (safer for posting)' : 'All results (may get claims or be muted)'));
-  }
   function drawHint() {
-    hint.textContent = status || hintText || 'Bollywood and English songs can get a copyright claim or be muted on Instagram / YouTube. YouTube Audio Library and Creative Commons songs are safe.';
+    hint.textContent = status || hintText || 'Tap a song to add it. Popular songs can get a copyright claim when you post.';
+    hint.classList.toggle('err', /fail|refus|answered|no audio|not included|only in the android/i.test(status));
   }
   function drawList() {
     list.replaceChildren(...items.map((it) => {
       const isBusy = busyId === it.id;
-      const sub = isBusy ? `Downloading ${progress}%` : done.has(it.id) ? 'Added' : `${it.channel}  ·  ${fmtTime(it.durationMs)}`;
-      return h('div', { class: 'rx-row' },
-        h('button', { class: 'rx-go', onclick: () => void pickItem(it) }, h('b', {}, it.title), h('span', {}, sub)));
+      const isDone = done.has(it.id);
+      const sub = isBusy ? `Downloading ${progress}%` : isDone ? 'Added' : `${it.channel}  ·  ${fmtTime(it.durationMs)}`;
+      const end = isDone ? icon('check', 18) : isBusy ? h('span', { class: 'lm-pct' }, `${progress}%`) : h('span', { class: 'lm-plus' }, '+');
+      return h('button', { class: `lm-row${isBusy ? ' busy' : ''}${isDone ? ' done' : ''}`, onclick: () => void pickItem(it) },
+        h('div', { class: 'lm-txt' }, h('b', {}, it.title), h('span', {}, sub)),
+        h('div', { class: 'lm-end' }, end));
     }));
   }
 
@@ -50,9 +48,10 @@ export function mountYoutubeSearch(host: HTMLElement, onAdded: (path: string, ti
     if (!q || busyId) return;
     status = 'Searching...'; drawHint(); items = []; drawList();
     try {
-      const r = await EditorrNative.youtubeSearch({ query: q, ccOnly });
+      if (!(await youtubeAvailable())) throw new Error('YouTube works only in the Android app.');
+      const r = await EditorrNative.youtubeSearch({ query: q, ccOnly: false });
       items = r.items;
-      status = items.length ? '' : ccOnly ? 'Nothing found. Try another name, or turn off Creative Commons only.' : 'Nothing found. Try another name.';
+      status = items.length ? '' : 'Nothing found. Try another name.';
     } catch (error) {
       status = error instanceof Error ? error.message : 'YouTube search failed.';
     }
@@ -74,7 +73,7 @@ export function mountYoutubeSearch(host: HTMLElement, onAdded: (path: string, ti
   }
 
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); void search(); } });
-  drawCc(); drawHint();
+  drawHint();
 
   return () => {
     alive = false;
@@ -91,10 +90,12 @@ export function openYoutubeSheet(onAdded: (path: string, title: string) => Promi
     sheet.classList.add('out');
     setTimeout(() => box.remove(), 180);
   };
-  const sheet = h('div', { class: 'at-sheet', role: 'dialog' }, h('div', { class: 'at-handle' }),
+  const sheet = h('div', { class: 'at-sheet lm', role: 'dialog' }, h('div', { class: 'at-handle' }),
     h('div', { class: 'at-head' }, h('button', { class: 'at-back', 'aria-label': 'Back', onclick: close }, icon('back', 20)),
       h('div', { class: 'at-title' }, 'YouTube'), h('span', { class: 'at-head-gap' })), body);
   const box = h('div', { class: 'at-scrim', style: 'z-index:140', onclick: (e: Event) => { if (e.target === box) close(); } }, sheet);
   document.body.append(box);
   const cleanup = mountYoutubeSearch(body, onAdded);
+  const first = body.querySelector('input') as HTMLInputElement | null;
+  if (first) setTimeout(() => first.focus(), 250);
 }

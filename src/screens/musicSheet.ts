@@ -1,6 +1,5 @@
 import type { Project } from '../core/types';
 import { h, icon, fmtClock } from '../ui';
-import { youtubeAvailable } from '../core/native';
 import { mountYoutubeSearch, openYoutubeSheet } from './youtubeSheet';
 
 export interface MusicCtx {
@@ -48,14 +47,13 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
   const title = h('div', { class: 'at-title' }, 'Music');
   const back = h('button', { class: 'at-back', 'aria-label': 'Back', onclick: () => (view === 'home' || start !== 'home' ? close() : home()) }, icon('back', 20));
   const close = () => { unmount(); sheet.classList.add('out'); setTimeout(() => box.remove(), 180); };
-  const sheet = h('div', { class: 'at-sheet', role: 'dialog' }, h('div', { class: 'at-handle' }),
+  const sheet = h('div', { class: 'at-sheet lm', role: 'dialog' }, h('div', { class: 'at-handle' }),
     h('div', { class: 'at-head' }, back, title, h('span', { class: 'at-head-gap' })), body, foot);
   const box = h('div', { class: 'at-scrim', onclick: (e: Event) => { if (e.target === box) close(); } }, sheet);
   document.body.append(box);
   let view: 'home' | 'bgm' | 'music' | 'sfx' = 'home';
   /** After Apply / Remove: back to the three tiles, or close when the sheet was opened straight from the toolbar. */
   const leave = () => { if (start === 'home') home(); else close(); };
-  let ytOn = false;
   let unmountSearch: (() => void) | null = null;
   const unmount = () => { if (unmountSearch) { unmountSearch(); unmountSearch = null; } };
   const level = () => settings.musicLevelDb ?? -20, duck = () => settings.musicDuckDb ?? 12, fade = () => settings.musicFadeMs ?? 1500;
@@ -95,12 +93,13 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
   const applyBtn = () => h('button', { class: 'btn primary at-go', onclick: () => void doApply() }, icon('wand', 20), 'Apply');
 
   function render() {
+    unmount();
     if (view === 'bgm') {
       body.replaceChildren(
         h('div', { class: 'at-hint' }, 'Pick one or more songs. Several songs play one after another with a 2 s crossfade. One song loops and fades out at the end.'),
+        h('button', { class: 'btn', style: 'width:100%;min-height:46px;margin-top:4px', onclick: () => openYoutubeSheet(async (path, name) => { await ctx.addSongFromPath!(path, name); render(); }) }, icon('search', 18), 'Add from YouTube'),
         list(ctx.songs, ctx.removeSong),
         h('button', { class: 'btn', style: 'width:100%;min-height:46px;margin-top:8px', onclick: () => pick(true, async (f) => { await ctx.addSongs(f); render(); }) }, 'Add songs from phone'),
-        ...(ytOn ? [h('button', { class: 'btn', style: 'width:100%;min-height:46px;margin-top:8px', onclick: () => openYoutubeSheet(async (path, name) => { await ctx.addSongFromPath!(path, name); render(); }) }, icon('search', 18), 'Add from YouTube')] : []),
         slider('Music level', -30, -10, 1, level(), (v) => `${v} dB`, (v) => { settings.musicLevelDb = v; persist(); }),
         slider('Drop while talking', 0, 24, 1, duck(), (v) => `${v} dB`, (v) => { settings.musicDuckDb = v; persist(); }),
         slider('Fade in / out', 0, 4000, 250, fade(), (v) => `${(v / 1000).toFixed(2)} s`, (v) => { settings.musicFadeMs = v; persist(); }),
@@ -117,18 +116,14 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
       const host = h('div', { style: 'margin-top:6px' });
       body.replaceChildren(
         h('div', { class: 'at-hint' }, `The song starts where the playhead is now (${fmtClock(ctx.playMs())}). Add as many as you like, each at its own place. Then tap Apply.`),
+        h('div', { class: 'at-sec', style: 'margin-top:4px' }, h('div', { class: 'at-label' }, 'Search on YouTube'), host),
         placed,
         h('button', { class: 'btn', style: 'width:100%;min-height:46px;margin-top:8px', onclick: () => pick(false, async (f) => { await ctx.addClip(f[0], ctx.playMs()); render(); }) }, 'Add song from phone'),
         slider('Music level', -30, -6, 1, clipDb(), (v) => `${v} dB`, (v) => { settings.musicClipDb = v; persist(); }),
         h('button', { class: `at-tile${clipDuck() ? ' on' : ''}`, style: 'min-height:44px;flex-direction:row;gap:8px;margin-top:12px;width:100%', onclick: () => { settings.musicClipDuck = !clipDuck(); persist(); render(); } },
           icon('check', 18), h('span', {}, clipDuck() ? 'Gets quieter while someone talks' : 'Stays the same while someone talks')),
-        slider('Fade in / out', 0, 4000, 250, fade(), (v) => `${(v / 1000).toFixed(2)} s`, (v) => { settings.musicFadeMs = v; persist(); }),
-        h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Search on YouTube'), host));
-      if (ytOn) {
-        unmountSearch = mountYoutubeSearch(host, async (path, name) => { await ctx.addClipFromPath!(path, name, ctx.playMs()); redrawPlaced(); });
-      } else {
-        host.append(h('div', { class: 'at-hint' }, 'YouTube search is not in this build. Pick songs from your phone, or build the app with the YouTube option (see README).'));
-      }
+        slider('Fade in / out', 0, 4000, 250, fade(), (v) => `${(v / 1000).toFixed(2)} s`, (v) => { settings.musicFadeMs = v; persist(); }));
+      unmountSearch = mountYoutubeSearch(host, async (path, name) => { await ctx.addClipFromPath!(path, name, ctx.playMs()); redrawPlaced(); });
       foot.replaceChildren(
         ...(ctx.p.bgm ? [h('button', { class: 'btn at-go', style: 'margin-bottom:8px', onclick: () => { ctx.clear(); leave(); } }, icon('trash', 20), 'Remove music')] : []),
         applyBtn());
@@ -141,6 +136,5 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
     }
   }
 
-  void youtubeAvailable().then((v) => { ytOn = v && !!ctx.addSongFromPath && !!ctx.addClipFromPath; if (ytOn && (view === 'bgm' || view === 'music')) { unmount(); render(); } });
   if (start === 'bgm') bgm(); else if (start === 'music') music(); else if (start === 'sfx') sfx(); else home();
 }

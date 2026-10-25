@@ -22,8 +22,8 @@ pkg_dir.mkdir(parents=True, exist_ok=True)
 for f in ("EditorrNativePlugin.java", "MainActivity.java"):
     shutil.copy(ROOT / "native/android" / f, pkg_dir / f)
 
-# 1b. Optional YouTube module. EDITORR_YOUTUBE=1 -> real code; anything else -> empty stub (default build stays as safe as before).
-yt_on = os.environ.get("EDITORR_YOUTUBE") == "1"
+# 1b. Optional YouTube module. real code by default; only EDITORR_YOUTUBE=0 gives the empty stub.
+yt_on = os.environ.get("EDITORR_YOUTUBE", "1") != "0"
 shutil.copy(ROOT / "native/android/youtube" / ("real" if yt_on else "stub") / "YouTubeBridge.java", pkg_dir / "YouTubeBridge.java")
 print("YouTube module:", "ON" if yt_on else "off (stub)")
 

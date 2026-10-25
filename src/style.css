@@ -1065,3 +1065,40 @@ input.xs-range::-webkit-slider-runnable-track { background: linear-gradient(90de
 .rx-foot { display: flex; gap: 10px; } .rx-foot .at-go { flex: 1; }
 .cap-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 6; }
 .zg-cv { width: 100%; height: auto; border-radius: 14px; touch-action: none; display: block; margin-bottom: 10px; }
+
+/* ---------- LoveMusic look for the Music + YouTube sheets: flat black, white pill buttons, pink values ---------- */
+.at-scrim:has(.at-sheet.lm) { background: rgba(0,0,0,.72); }
+.at-sheet.lm { background: #121212; border-top: 0; border-radius: 22px 22px 0 0; }
+.at-sheet.lm .at-handle { background: #4a4a4a; }
+.at-sheet.lm .at-back { background: #242424; border: 0; }
+.at-sheet.lm .at-title { font-weight: 700; letter-spacing: -.1px; }
+.at-sheet.lm .at-hint, .lm .lm-hint { color: #b3b3b3; }
+.at-sheet.lm .at-label-row b { color: #ff4d8d; }
+.at-sheet.lm .at-range { accent-color: #ffffff; }
+.at-sheet.lm .btn { border: 0; background: #242424; color: #fff; border-radius: 999px; font-weight: 600; }
+.at-sheet.lm .btn.primary { background: #ffffff; color: #000000; }
+.at-sheet.lm .btn:disabled { background: #1a1a1a; color: #6a6a6a; }
+.at-sheet.lm .at-go { border-radius: 999px; }
+.at-sheet.lm .at-tiles { gap: 8px; }
+.at-sheet.lm .at-tile { flex-direction: row; gap: 6px; min-height: 46px; border: 0; border-radius: 999px; background: #242424; color: #fff; font-weight: 600; padding: 0 8px; }
+.at-sheet.lm .at-tile.on { background: #ffffff; color: #000000; }
+.at-sheet.lm .rx-go { border: 0; background: #1a1a1a; border-radius: 12px; }
+.at-sheet.lm .rx-del { border-radius: 50%; background: #242424; }
+.lm .lm-search { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.lm .lm-input { flex: 1; min-width: 0; height: 48px; border-radius: 999px; border: 0; background: #242424; color: #fff; font: inherit; font-size: 15px; padding: 0 18px; outline: none; }
+.lm .lm-input::placeholder { color: #8a8a8a; }
+.lm .lm-go { flex: none; width: 48px; height: 48px; border-radius: 50%; border: 0; background: #ffffff; color: #000; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.lm .lm-go:active { opacity: .7; }
+.lm .lm-hint { font-size: 13px; margin: 10px 2px 8px; }
+.lm .lm-hint.err { color: #ff6b6b; }
+.lm .lm-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+.lm .lm-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; border-radius: 12px; background: #1a1a1a; color: #fff; font: inherit; padding: 10px 10px 10px 14px; cursor: pointer; }
+.lm .lm-row:active { background: #242424; }
+.lm .lm-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.lm .lm-txt b { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lm .lm-txt span { font-size: 12px; color: #b3b3b3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lm .lm-row.busy .lm-txt span { color: #ff4d8d; }
+.lm .lm-end { flex: none; width: 38px; height: 38px; border-radius: 50%; background: #242424; display: inline-flex; align-items: center; justify-content: center; }
+.lm .lm-plus { font-size: 22px; line-height: 1; font-weight: 400; }
+.lm .lm-pct { font-size: 11px; font-weight: 700; color: #ff4d8d; font-variant-numeric: tabular-nums; }
+.lm .lm-row.done .lm-end { background: #ffffff; color: #000; }
