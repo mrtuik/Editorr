@@ -1141,9 +1141,9 @@ export function editorScreen() {
     const mus = items.filter((i) => i.kind !== 'sfx'), sfx = items.filter((i) => i.kind === 'sfx'), txt = p.texts ?? [];
     const pm = pack(mus.map((i) => [i.startMs, i.endMs])), ps = pack(sfx.map((i) => [i.startMs, i.endMs])), pt = pack(txt.map((t) => [t.s, t.e]));
     let y = AUD_Y + AUD + GAP;
+    const text = txt.length ? { y, h: pt.n * SUB_T + (pt.n - 1) * 3 } : null; if (text) y += text.h + GAP;
     const music = { y, h: pm.n * SUB_M + (pm.n - 1) * 3 }; y += music.h + GAP;
     const fx = sfx.length ? { y, h: ps.n * SUB_S + (ps.n - 1) * 3 } : null; if (fx) y += fx.h + GAP;
-    const text = txt.length ? { y, h: pt.n * SUB_T + (pt.n - 1) * 3 } : null; if (text) y += text.h + GAP;
     return { mus, sfx, txt, pm, ps, pt, music, fx, text, tlH: y + 10 };
   }
   let rowsNow = tlRows();
@@ -1214,7 +1214,17 @@ export function editorScreen() {
     R.txt.forEach((t, n) => {
       const a = xOf(t.s), b = xOf(t.e);
       if (b < G || a > W) return;
-      pill(g, a, R.text!.y + R.pt.line[n]! * (SUB_T + 3), Math.max(16, b - a), SUB_T, '#7a4fc4', t.text);
+      {
+        const y = R.text!.y + R.pt.line[n]! * (SUB_T + 3), w = Math.max(16, b - a);
+        rrect(g, a + 0.5, y + 0.5, w - 1, SUB_T - 1, 5); g.fillStyle = '#17131f'; g.fill();
+        g.strokeStyle = '#8b5fd6'; g.lineWidth = 1; g.stroke();
+        g.save();
+        g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
+        g.fillStyle = '#8b5fd6'; g.beginPath(); g.arc(a + 8, y + SUB_T / 2, 2.6, 0, 6.3); g.fill();
+        g.fillStyle = '#ffffff'; g.font = '600 10px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+        g.fillText(t.text, a + 15, y + SUB_T / 2 + 0.5);
+        g.restore();
+      }
     });
     g.restore();
   }
@@ -1252,7 +1262,7 @@ export function editorScreen() {
       g.fillStyle = color;
       const cy = AUD_Y + AUD / 2;
       const maxBh = (AUD - 6) / 2;
-      const vx1 = Math.max(bx1 + 34, G); // keep the waveform clear of the music badge
+      const vx1 = Math.max(bx1 + 2, G);
       const vx2 = Math.min(bx2, W);
       for (let x = Math.floor(vx1); x < vx2; x += 2) {
         const ms = msOf(x);
@@ -1422,42 +1432,31 @@ export function editorScreen() {
       g.fillText(p.mainAudio === 'host' ? 'Host' : 'Constant', G / 2 - 1, MAIN_Y + LANE - 12);
       g.restore();
     }
-    // left labels: Music, SFX and Text rows
+    // row badges: a small square icon just before the start of each row (slides with the timeline). No text labels in the left column.
     {
       const R = rowsNow;
-      const label = (y: number, h: number, text: string, on: boolean, glyph: 'note' | 'bolt' | 'text') => {
-        const cy = y + Math.min(h, SUB_M) / 2, col = on ? '#ffffff' : '#8a8a8a';
-        g.save();
-        g.strokeStyle = col; g.fillStyle = col; g.lineWidth = 1.5; g.lineCap = 'round'; g.lineJoin = 'round';
-        if (glyph === 'note') {
-          g.beginPath(); g.arc(G / 2 - 12, cy + 4, 2.6, 0, Math.PI * 2); g.stroke();
-          g.beginPath(); g.moveTo(G / 2 - 9.4, cy + 4); g.lineTo(G / 2 - 9.4, cy - 6); g.lineTo(G / 2 - 5, cy - 4); g.stroke();
-        } else if (glyph === 'bolt') {
-          g.beginPath(); g.moveTo(G / 2 - 9, cy - 6); g.lineTo(G / 2 - 13, cy + 1); g.lineTo(G / 2 - 10, cy + 1); g.lineTo(G / 2 - 11, cy + 6); g.lineTo(G / 2 - 7, cy - 1); g.lineTo(G / 2 - 10, cy - 1); g.closePath(); g.fill();
-        } else {
-          g.font = '700 12px Roboto, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('T', G / 2 - 10, cy);
-        }
-        g.font = '600 9px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-        g.fillText(text, G / 2 - 2, cy);
-        g.restore();
-      };
-      label(R.music.y, R.music.h, 'Music', R.mus.length > 0, 'note');
-      if (R.fx) label(R.fx.y, R.fx.h, 'SFX', true, 'bolt');
-      if (R.text) label(R.text.y, R.text.h, 'Text', true, 'text');
-    }
-    // music-note badge: sits at the start of the audio clip and slides with the timeline; the waveform starts after it
-    {
-      const tx = xOf(0) + 4, ty = AUD_Y + (AUD - 26) / 2, cx = tx + 13, cy = ty + 13;
-      if (tx + 26 > G && tx < W && tx + 26 < xOf(p.durationMs)) {
+      const badge = (y: number, h: number, glyph: 'note' | 'bolt' | 'text', on: boolean) => {
+        const sz = Math.min(24, h + 2), bx = xOf(0) - sz - 6, by = y + (h - sz) / 2;
+        if (bx + sz < G || bx > W) return;
         g.save();
         g.beginPath(); g.rect(G, 0, W - G, H); g.clip();
-        g.fillStyle = '#262626';
-        g.beginPath(); g.roundRect(tx, ty, 26, 26, 6); g.fill();
-        g.strokeStyle = '#8a8a8a'; g.lineWidth = 1.5; g.lineCap = 'round'; g.lineJoin = 'round';
-        g.beginPath(); g.arc(cx - 2.5, cy + 5, 3, 0, Math.PI * 2); g.stroke();
-        g.beginPath(); g.moveTo(cx + 0.5, cy + 5); g.lineTo(cx + 0.5, cy - 6); g.lineTo(cx + 5, cy - 3.5); g.stroke();
+        g.fillStyle = '#262626'; g.beginPath(); g.roundRect(bx, by, sz, sz, 6); g.fill();
+        const cx = bx + sz / 2, cy = by + sz / 2, k = sz / 26;
+        g.strokeStyle = on ? '#d0d0d0' : '#8a8a8a'; g.fillStyle = g.strokeStyle; g.lineWidth = 1.4; g.lineCap = 'round'; g.lineJoin = 'round';
+        if (glyph === 'note') {
+          g.beginPath(); g.arc(cx - 2.5 * k, cy + 5 * k, 3 * k, 0, Math.PI * 2); g.stroke();
+          g.beginPath(); g.moveTo(cx + 0.5 * k, cy + 5 * k); g.lineTo(cx + 0.5 * k, cy - 6 * k); g.lineTo(cx + 5 * k, cy - 3.5 * k); g.stroke();
+        } else if (glyph === 'bolt') {
+          g.beginPath(); g.moveTo(cx + 2 * k, cy - 6 * k); g.lineTo(cx - 4 * k, cy + 1 * k); g.lineTo(cx - 0.5 * k, cy + 1 * k); g.lineTo(cx - 2 * k, cy + 6 * k); g.lineTo(cx + 4 * k, cy - 1.5 * k); g.lineTo(cx + 0.5 * k, cy - 1.5 * k); g.closePath(); g.fill();
+        } else {
+          g.font = `700 ${Math.round(13 * k + 1)}px Roboto, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('T', cx, cy + 0.5);
+        }
         g.restore();
-      }
+      };
+      badge(AUD_Y, AUD, 'note', true);
+      if (R.text) badge(R.text.y, Math.min(R.text.h, SUB_T), 'text', true);
+      badge(R.music.y, Math.min(R.music.h, SUB_M), 'note', R.mus.length > 0);
+      if (R.fx) badge(R.fx.y, Math.min(R.fx.h, SUB_S), 'bolt', true);
     }
 
     // ---- playhead needle (fixed at the center, CapCut style with top triangle and cyan snap glow)
@@ -1520,9 +1519,9 @@ export function editorScreen() {
     if (y < MAIN_Y + LANE + GAP / 2) return 'main';
     if (y < AUD_Y + AUD + GAP / 2) return 'audio';
     const R = rowsNow;
+    if (R.text && y < R.text.y + R.text.h + GAP / 2) return 'text';
     if (y < R.music.y + R.music.h + GAP / 2) return 'music';
     if (R.fx && y < R.fx.y + R.fx.h + GAP / 2) return 'sfx';
-    if (R.text && y < R.text.y + R.text.h + GAP / 2) return 'text';
     return 'none';
   }
   function hitSegment(x: number): Segment | undefined {
