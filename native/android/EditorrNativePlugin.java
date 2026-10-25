@@ -1434,6 +1434,10 @@ public class EditorrNativePlugin extends Plugin {
             final String bgmUri = call.getString("bgmUri");
             final JSONArray textsJson = call.getData().optJSONArray("texts");
             final float gain = (float) Math.max(0.0, Math.min(10.0, call.getDouble("gain", 1.0)));
+            // Enhanced Audio: EQ + de-esser + compressor + limiter on the audio-source mic ("voice") and on the final mix ("master")
+            final JSONObject fxJson = call.getData().optJSONObject("fx");
+            final FxCfg voiceFx = FxCfg.from(fxJson == null ? null : fxJson.optJSONObject("voice"));
+            final FxCfg masterFx = FxCfg.from(fxJson == null ? null : fxJson.optJSONObject("master"));
             final List<Seg> segs = new ArrayList<>();
             JSArray arr = call.getArray("segments");
             for (int i = 0; arr != null && i < arr.length(); i++) {
@@ -1452,7 +1456,7 @@ public class EditorrNativePlugin extends Plugin {
             final long durationMs = durationRaw;
             cancelProxyJobs();
             exportHandler().post(() ->
-                    startTransformer(call, hostUri, constUri, cleanAudioUri, captionsJson, textsJson, bgmUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate));
+                    startTransformer(call, hostUri, constUri, cleanAudioUri, captionsJson, textsJson, bgmUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate, voiceFx, masterFx));
         } catch (JSONException e) {
             call.reject("Bad export request: " + e.getMessage());
         }
@@ -1461,7 +1465,7 @@ public class EditorrNativePlugin extends Plugin {
     private void startTransformer(PluginCall call, String hostUri, String constUri, String cleanAudioUri, JSONObject captionsJson, JSONArray textsJson, String bgmUri, long offsetMs, long durationMs,
                                   int outW, int outH, boolean hostAudio, List<Seg> segs,
                                   CropSpec cropHost, CropSpec cropConst, boolean mirrorHost, boolean mirrorConst,
-                                  float gain, int fps, int bitrate) {
+                                  float gain, int fps, int bitrate, FxCfg voiceFx, FxCfg masterFx) {
         try {
             // Timeline time = Host time. The Constant video is offsetMs ahead of it.
             final long hostStart = Math.max(0, -offsetMs);
@@ -1516,11 +1520,11 @@ public class EditorrNativePlugin extends Plugin {
             List<EditedMediaItem> cleanAudioItems = new ArrayList<>();
             for (Range r : ranges) {
                 boolean useCleanTrack = cleanAudioUri != null && !cleanAudioUri.isEmpty();
-                hostItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, useCleanTrack || !hostAudio, mirrorHost, r.cropHost, hostAudio ? gain : 1f));
-                constItems.add(item(constUri, r.a + offsetMs, r.b - r.a, outW, outH, useCleanTrack || hostAudio, mirrorConst, r.cropConst, hostAudio ? 1f : gain));
+                hostItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, useCleanTrack || !hostAudio, mirrorHost, r.cropHost, hostAudio ? gain : 1f, voiceFx));
+                constItems.add(item(constUri, r.a + offsetMs, r.b - r.a, outW, outH, useCleanTrack || hostAudio, mirrorConst, r.cropConst, hostAudio ? 1f : gain, voiceFx));
                 if (useCleanTrack) {
                     long audioStart = hostAudio ? r.a : r.a + offsetMs;
-                    cleanAudioItems.add(audioItem(cleanAudioUri, audioStart, r.b - r.a, gain));
+                    cleanAudioItems.add(audioItem(cleanAudioUri, audioStart, r.b - r.a, gain, voiceFx));
                 }
             }
 
@@ -1544,7 +1548,7 @@ public class EditorrNativePlugin extends Plugin {
             // background music / sound effects: one baked track at timeline time, cut per kept part like the clean audio
             List<EditedMediaItem> bgmItems = new ArrayList<>();
             if (bgmUri != null && !bgmUri.isEmpty()) {
-                for (Range r : ranges) bgmItems.add(audioItem(bgmUri, r.a, r.b - r.a, 1f));
+                for (Range r : ranges) bgmItems.add(audioItem(bgmUri, r.a, r.b - r.a, 1f, null));
             }
             List<EditedMediaItemSequence> seqList = new ArrayList<>();
             seqList.add(hostSeq);
@@ -1555,7 +1559,7 @@ public class EditorrNativePlugin extends Plugin {
             Composition composition = new Composition.Builder(sequences)
                     .setVideoCompositorSettings(settings)
                     .setEffects(new Effects(
-                            ImmutableList.<AudioProcessor>of(),
+                            masterFx == null ? ImmutableList.<AudioProcessor>of() : ImmutableList.<AudioProcessor>of(new FxProcessor(masterFx)),
                             overlayList.isEmpty()
                                     ? ImmutableList.<Effect>of(FrameDropEffect.createDefaultFrameDropEffect(fps))
                                     : ImmutableList.<Effect>of(
@@ -1617,7 +1621,7 @@ public class EditorrNativePlugin extends Plugin {
         }
     }
 
-    private EditedMediaItem item(String uri, long startMs, long totalMs, int w, int h, boolean removeAudio, boolean mirror, CropSpec crop, float gain) {
+    private EditedMediaItem item(String uri, long startMs, long totalMs, int w, int h, boolean removeAudio, boolean mirror, CropSpec crop, float gain, FxCfg fx) {
         MediaItem mi = new MediaItem.Builder()
                 .setUri(uri)
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
@@ -1656,12 +1660,12 @@ public class EditorrNativePlugin extends Plugin {
         return new EditedMediaItem.Builder(mi)
                 .setRemoveAudio(removeAudio)
                 .setEffects(new Effects(
-                        (removeAudio || Math.abs(gain - 1f) < 0.005f) ? ImmutableList.<AudioProcessor>of() : ImmutableList.<AudioProcessor>of(new GainProcessor(gain)),
+                        removeAudio ? ImmutableList.<AudioProcessor>of() : voiceProcessors(gain, fx),
                         video.build()))
                 .build();
     }
 
-    private EditedMediaItem audioItem(String uri, long startMs, long totalMs, float gain) {
+    private EditedMediaItem audioItem(String uri, long startMs, long totalMs, float gain, FxCfg fx) {
         MediaItem mi = new MediaItem.Builder()
                 .setUri(uri)
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
@@ -1671,7 +1675,7 @@ public class EditorrNativePlugin extends Plugin {
                 .build();
         return new EditedMediaItem.Builder(mi)
                 .setEffects(new Effects(
-                        Math.abs(gain - 1f) < 0.005f ? ImmutableList.<AudioProcessor>of() : ImmutableList.<AudioProcessor>of(new GainProcessor(gain)),
+                        voiceProcessors(gain, fx),
                         ImmutableList.<Effect>of()))
                 .build();
     }
@@ -1690,6 +1694,179 @@ public class EditorrNativePlugin extends Plugin {
         float c = (float) Math.abs(Math.cos(radians));
         float s = (float) Math.abs(Math.sin(radians));
         return Math.max(c + s / aspect, c + s * aspect);
+    }
+
+    /** Gain first (volume / normalize), then Enhanced Audio: the same order as the preview. */
+    private static ImmutableList<AudioProcessor> voiceProcessors(float gain, FxCfg fx) {
+        ImmutableList.Builder<AudioProcessor> b = new ImmutableList.Builder<>();
+        if (Math.abs(gain - 1f) >= 0.005f) b.add(new GainProcessor(gain));
+        if (fx != null) b.add(new FxProcessor(fx));
+        return b.build();
+    }
+
+    /** Enhanced Audio settings from JS (src/core/fx.ts FxChain). null = off. */
+    private static final class FxCfg {
+        boolean hpfOn; double hpfF;
+        final double[] mud = new double[3], pres = new double[3], crisp = new double[3]; // f, gain dB, q
+        double airF, airG;
+        boolean compOn; double thr, ratio, attack, release, makeup;
+        boolean deOn; double deAmount, deF;
+        double outGain, ceiling;
+
+        static FxCfg from(JSONObject o) {
+            if (o == null || !o.optBoolean("on", false)) return null;
+            FxCfg c = new FxCfg();
+            JSONObject hp = o.optJSONObject("hpf");
+            c.hpfOn = hp != null && hp.optBoolean("on", false); c.hpfF = hp == null ? 80 : hp.optDouble("f", 80);
+            band(o.optJSONObject("mud"), c.mud, 320, 1.4);
+            band(o.optJSONObject("presence"), c.pres, 2800, 1.0);
+            band(o.optJSONObject("crisp"), c.crisp, 5500, 1.2);
+            JSONObject air = o.optJSONObject("air");
+            c.airF = air == null ? 10000 : air.optDouble("f", 10000); c.airG = air == null ? 0 : air.optDouble("g", 0);
+            JSONObject cp = o.optJSONObject("comp");
+            c.compOn = cp != null && cp.optBoolean("on", false);
+            c.thr = cp == null ? -18 : cp.optDouble("thr", -18); c.ratio = cp == null ? 3 : Math.max(1, cp.optDouble("ratio", 3));
+            c.attack = cp == null ? 10 : cp.optDouble("attack", 10); c.release = cp == null ? 120 : cp.optDouble("release", 120);
+            c.makeup = cp == null ? 0 : cp.optDouble("makeup", 0);
+            JSONObject de = o.optJSONObject("deess");
+            c.deAmount = de == null ? 0 : de.optDouble("amount", 0); c.deF = de == null ? 6500 : de.optDouble("f", 6500);
+            c.deOn = de != null && de.optBoolean("on", false) && c.deAmount > 0;
+            JSONObject out = o.optJSONObject("out");
+            c.outGain = out == null ? 0 : out.optDouble("gain", 0); c.ceiling = out == null ? -1 : Math.min(0, out.optDouble("ceiling", -1));
+            return c;
+        }
+        private static void band(JSONObject b, double[] to, double f, double q) {
+            to[0] = b == null ? f : b.optDouble("f", f); to[1] = b == null ? 0 : b.optDouble("g", 0); to[2] = b == null ? q : b.optDouble("q", q);
+        }
+    }
+
+    /**
+     * Enhanced Audio for 16-bit or float PCM: low-cut -> 3 peaking bands -> air shelf -> de-esser -> compressor -> output gain -> limiter.
+     * Same maths as the preview: biquads from the Web Audio spec (src/core/fx.ts coef) and the dynamics in src/core/fxWorklet.ts.
+     * Keep the three in step.
+     */
+    private static final class FxProcessor extends BaseAudioProcessor {
+        private final FxCfg c;
+        private int ch;
+        private double[][] k;       // EQ stages: b0 b1 b2 a1 a2
+        private double[][] st;      // EQ state per stage: [channel * 4] x1 x2 y1 y2
+        private double[][] bp;      // de-esser band-pass state per channel
+        private double bb0, bb2, ba1, ba2, deThr, deAtt, deRel, att, rel, makeupLin, outLin, ceil, limRel;
+        private double grC, grD, lim = 1;
+        private double[] x, band, rest;
+
+        FxProcessor(FxCfg cfg) { this.c = cfg; }
+
+        private static double coefExp(double sr, double ms) { return Math.exp(-1.0 / (sr * Math.max(0.0001, ms / 1000.0))); }
+
+        /** kind: 0 high-pass, 1 peaking, 2 high-shelf (Web Audio / RBJ formulas). */
+        private static double[] coef(int kind, double sr, double f, double gDb, double q) {
+            double w0 = 2 * Math.PI * Math.min(f, sr * 0.49) / sr, cs = Math.cos(w0), sn = Math.sin(w0);
+            double b0, b1, b2, a0, a1, a2;
+            if (kind == 0) {
+                double al = sn / (2 * Math.sqrt(0.5));
+                b0 = (1 + cs) / 2; b1 = -(1 + cs); b2 = (1 + cs) / 2; a0 = 1 + al; a1 = -2 * cs; a2 = 1 - al;
+            } else if (kind == 1) {
+                double A = Math.pow(10, gDb / 40), al = sn / (2 * q);
+                b0 = 1 + al * A; b1 = -2 * cs; b2 = 1 - al * A; a0 = 1 + al / A; a1 = -2 * cs; a2 = 1 - al / A;
+            } else {
+                double A = Math.pow(10, gDb / 40), al = (sn / 2) * Math.sqrt(2), t = 2 * Math.sqrt(A) * al;
+                b0 = A * ((A + 1) + (A - 1) * cs + t); b1 = -2 * A * ((A - 1) + (A + 1) * cs); b2 = A * ((A + 1) + (A - 1) * cs - t);
+                a0 = (A + 1) - (A - 1) * cs + t; a1 = 2 * ((A - 1) - (A + 1) * cs); a2 = (A + 1) - (A - 1) * cs - t;
+            }
+            return new double[] { b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0 };
+        }
+
+        @Override
+        protected AudioProcessor.AudioFormat onConfigure(AudioProcessor.AudioFormat in) throws AudioProcessor.UnhandledAudioFormatException {
+            if (in.encoding != C.ENCODING_PCM_16BIT && in.encoding != C.ENCODING_PCM_FLOAT) throw new AudioProcessor.UnhandledAudioFormatException(in);
+            ch = Math.max(1, in.channelCount);
+            double sr = in.sampleRate;
+            List<double[]> ks = new ArrayList<>();
+            if (c.hpfOn) ks.add(coef(0, sr, c.hpfF, 0, 0.7071));
+            if (c.mud[1] != 0) ks.add(coef(1, sr, c.mud[0], c.mud[1], c.mud[2]));
+            if (c.pres[1] != 0) ks.add(coef(1, sr, c.pres[0], c.pres[1], c.pres[2]));
+            if (c.crisp[1] != 0) ks.add(coef(1, sr, c.crisp[0], c.crisp[1], c.crisp[2]));
+            if (c.airG != 0) ks.add(coef(2, sr, c.airF, c.airG, 1));
+            k = ks.toArray(new double[0][]);
+            st = new double[k.length][ch * 4];
+            bp = new double[ch][4];
+            // de-esser band-pass (0 dB peak, Q 1.2)
+            double w0 = 2 * Math.PI * Math.min(c.deF, sr * 0.49) / sr, cs = Math.cos(w0), al = Math.sin(w0) / (2 * 1.2), a0 = 1 + al;
+            bb0 = al / a0; bb2 = -al / a0; ba1 = -2 * cs / a0; ba2 = (1 - al) / a0;
+            deThr = -10 - c.deAmount * 0.35; deAtt = coefExp(sr, 1); deRel = coefExp(sr, 40);
+            att = coefExp(sr, c.attack); rel = coefExp(sr, c.release);
+            makeupLin = Math.pow(10, c.makeup / 20); outLin = Math.pow(10, c.outGain / 20);
+            ceil = Math.pow(10, c.ceiling / 20); limRel = coefExp(sr, 50);
+            grC = 0; grD = 0; lim = 1;
+            x = new double[ch]; band = new double[ch]; rest = new double[ch];
+            return in;
+        }
+
+        @Override
+        public void queueInput(ByteBuffer input) {
+            boolean pcm16 = inputAudioFormat.encoding == C.ENCODING_PCM_16BIT;
+            int frameBytes = (pcm16 ? 2 : 4) * ch;
+            int frames = input.remaining() / frameBytes;
+            if (frames == 0) return;
+            ByteBuffer out = replaceOutputBuffer(frames * frameBytes);
+            for (int f = 0; f < frames; f++) {
+                for (int i = 0; i < ch; i++) x[i] = pcm16 ? input.getShort() / 32768.0 : input.getFloat();
+                frame();
+                for (int i = 0; i < ch; i++) {
+                    if (pcm16) out.putShort((short) Math.round(Math.max(-1.0, Math.min(1.0, x[i])) * 32767.0));
+                    else out.putFloat((float) x[i]);
+                }
+            }
+            out.flip();
+        }
+
+        /** One sample of every channel, in x[]. */
+        private void frame() {
+            for (int s = 0; s < k.length; s++) {
+                double[] q = k[s], m = st[s];
+                for (int i = 0; i < ch; i++) {
+                    int o = i * 4;
+                    double in = x[i];
+                    double y = q[0] * in + q[1] * m[o] + q[2] * m[o + 1] - q[3] * m[o + 2] - q[4] * m[o + 3];
+                    m[o + 1] = m[o]; m[o] = in; m[o + 3] = m[o + 2]; m[o + 2] = y;
+                    x[i] = y;
+                }
+            }
+            if (c.deOn) {
+                double lv = 0;
+                for (int i = 0; i < ch; i++) {
+                    double[] s = bp[i];
+                    double y = bb0 * x[i] + bb2 * s[1] - ba1 * s[2] - ba2 * s[3];
+                    s[1] = s[0]; s[0] = x[i]; s[3] = s[2]; s[2] = y;
+                    band[i] = y; rest[i] = x[i] - y;
+                    double a = Math.abs(y); if (a > lv) lv = a;
+                }
+                double over = 20 * Math.log10(lv + 1e-9) - deThr;
+                double target = over > 0 ? over * (1 - 1.0 / 6.0) : 0;
+                grD = target > grD ? grD * deAtt + (1 - deAtt) * target : grD * deRel + (1 - deRel) * target;
+                double gd = Math.exp(-grD * 0.11512925464970229);
+                for (int i = 0; i < ch; i++) x[i] = rest[i] + band[i] * gd;
+            }
+            if (c.compOn) {
+                double lv = 0;
+                for (int i = 0; i < ch; i++) { double a = Math.abs(x[i]); if (a > lv) lv = a; }
+                double over = 20 * Math.log10(lv + 1e-9) - c.thr, target = 0, knee = 6;
+                if (2 * over > knee) target = over * (1 - 1 / c.ratio);
+                else if (2 * over > -knee) { double t = over + knee / 2; target = (1 - 1 / c.ratio) * t * t / (2 * knee); }
+                grC = target > grC ? grC * att + (1 - att) * target : grC * rel + (1 - rel) * target;
+                double g = Math.exp(-grC * 0.11512925464970229) * makeupLin;
+                for (int i = 0; i < ch; i++) x[i] *= g;
+            }
+            double pk = 0;
+            for (int i = 0; i < ch; i++) { x[i] *= outLin; double a = Math.abs(x[i]); if (a > pk) pk = a; }
+            double t = pk > ceil ? ceil / pk : 1;
+            lim = t < lim ? t : t + (lim - t) * limRel;
+            for (int i = 0; i < ch; i++) {
+                double v = x[i] * lim;
+                x[i] = v > ceil ? ceil : (v < -ceil ? -ceil : v);
+            }
+        }
     }
 
     /** Volume gain for 16-bit or float PCM, with a soft clip so a big boost (up to 10x) does not hard-distort. */

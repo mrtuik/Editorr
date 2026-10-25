@@ -2,6 +2,7 @@ import { exportCaptions, exportTexts } from './captions';
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { effectiveGain } from './gain';
+import { fxForExport } from './fx';
 import { outputSize, type CropState, type Project } from './types';
 
 export interface ExportRequest {
@@ -36,6 +37,8 @@ export interface ExportRequest {
   texts?: unknown[];
   /** Baked background music / effects track (file uri), at timeline time. */
   bgmUri?: string;
+  /** Enhanced Audio: `voice` runs on the audio-source mic, `master` on the final mix (see fx.ts FxChain). */
+  fx?: unknown;
   segments: {
     startMs: number; endMs: number; style: string; main: string; corner: string; size: string;
     /** Own crop of this clip (missing = use cropHost / cropConst above). */
@@ -140,6 +143,7 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     captions: exportCaptions(p.captions, p.captionStyle),
     ...(exportTexts(p.texts) ? { texts: exportTexts(p.texts) } : {}),
     ...(p.bgm?.path ? { bgmUri: 'file://' + p.bgm.path } : {}),
+    ...(fxForExport(p) ? { fx: fxForExport(p) } : {}),
     normalize: p.normalize,
     gain: effectiveGain(p, p.mainAudio),
     // sorted; parts removed by silence cut are simply not in this list

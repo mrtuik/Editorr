@@ -35,9 +35,9 @@ const rmsDb = (a: Float32Array, from = 0, to = a.length) => {
 
 export interface MixInput {
   songs: AudioBuffer[];
-  sfx: { buf: AudioBuffer; startMs: number }[];
+  sfx: { buf: AudioBuffer; startMs: number; gain?: number }[];
   /** Songs placed by hand (Music > Music): start at startMs, played once, level compared with the voice. */
-  clips?: { buf: AudioBuffer; startMs: number; levelDb: number; duck: boolean }[];
+  clips?: { buf: AudioBuffer; startMs: number; levelDb: number; duck: boolean; endMs?: number; loop?: boolean }[];
   durationMs: number;
   /** the voice (mono 16 kHz) and where its time 0 is on the timeline */
   voice?: Float32Array;
@@ -126,8 +126,9 @@ export function renderMix(i: MixInput): Float32Array {
   for (const c of i.clips ?? []) {
     const t = mono(c.buf);
     const at = Math.max(0, Math.round((c.startMs / 1000) * BGM_RATE));
-    const len = Math.min(t.length, N - at);
-    if (len <= 0) continue;
+    const want = c.endMs !== undefined ? Math.round(((c.endMs - c.startMs) / 1000) * BGM_RATE) : t.length;
+    const len = Math.min(c.loop ? Infinity : t.length, want, N - at);
+    if (len <= 0 || !isFinite(len)) continue;
     const g = Math.min(10, Math.pow(10, (voiceDb + c.levelDb - rmsDb(t)) / 20));
     const fade = Math.max(1, Math.min(Math.round((i.fadeMs / 1000) * BGM_RATE), Math.floor(len / 2)));
     for (let k = 0; k < len; k++) {
@@ -140,14 +141,14 @@ export function renderMix(i: MixInput): Float32Array {
       let w = g * d;
       if (k < fade) w *= k / fade;
       if (k > len - fade) w *= (len - k) / fade;
-      out[at + k] += t[k] * w;
+      out[at + k] += t[k % t.length] * w;
     }
   }
   // effects: peak 0.7 of full scale, not ducked
   for (const s of i.sfx) {
     const t = mono(s.buf);
     let peak = 1e-6; for (let k = 0; k < t.length; k++) peak = Math.max(peak, Math.abs(t[k]));
-    const g = 0.7 / peak;
+    const g = (0.7 / peak) * (s.gain ?? 1);
     const at = Math.round((s.startMs / 1000) * BGM_RATE);
     for (let k = 0; k < t.length && at + k < N; k++) if (at + k >= 0) out[at + k] += t[k] * g;
   }
@@ -172,4 +173,11 @@ export function toBase64(bytes: Uint8Array): string {
   let s = '';
   for (let k = 0; k < bytes.length; k += 0x8000) s += String.fromCharCode(...bytes.subarray(k, k + 0x8000));
   return btoa(s);
+}
+
+/** An AudioBuffer made from samples (mono, 44.1 kHz). */
+export function toBuffer(samples: Float32Array): AudioBuffer {
+  const b = new OfflineAudioContext(1, 1, BGM_RATE).createBuffer(1, samples.length, BGM_RATE);
+  b.getChannelData(0).set(samples);
+  return b;
 }

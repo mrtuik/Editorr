@@ -143,6 +143,7 @@ export function progressBar(): { el: HTMLElement; set: (pct: number) => void } {
 }
 
 export const ICON = {
+  eq: '<path d="M5 4v16M12 4v16M19 4v16" /><circle cx="5" cy="14" r="2.200" fill="#0c0c0d"/><circle cx="12" cy="8" r="2.200" fill="#0c0c0d"/><circle cx="19" cy="15" r="2.200" fill="#0c0c0d"/>',
   edit: '<path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />',
   duplicate: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />',
   back: '<path d="M15 5l-7 7 7 7" />',

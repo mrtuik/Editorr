@@ -128,6 +128,15 @@ Settings page: waiting for the CapCut reference screenshot.
 - Settings page rebuilt in CapCut style: grouped rounded cards, option chips, storage bar with legend, action rows.
 - New Sync and Swap icons.
 
+## v16.10.0: automatic Auto BGM, Auto SFX, music row on the timeline
+
+- **Auto BGM is automatic.** Music > Auto BGM > Generate: the app listens to the voice (loudness, speed, ups and downs) and the captions, cuts the video into parts by mood (calm, emotional, energetic, funny, serious), and picks a song for each part. Language chips: English / Hindi / Telugu. Each song can be played (first 25 s) before Apply. Songs come from YouTube; if YouTube fails for any reason, music made on the phone (`src/core/synth.ts`) is used instead, so Generate always gives a result. The red hint shows why YouTube was skipped.
+- **Search lives only in Music > Music** (top of the sheet).
+- **Auto SFX.** Music > SFX > Auto add effects: a whoosh where the layout changes, a soft pop where the camera moves to the other person. Effects are made on the phone. Effect volume slider.
+- **Music row on the timeline** (under the audio row): bars for Auto BGM parts (teal, with mood and song name and a waveform), hand-placed songs (blue) and effects (amber). Empty row shows "+ Add music". Tap the row to open Music.
+- Files: `src/core/mood.ts` (mood sections), `src/core/synth.ts` (made-here music and effects), `src/core/bgm.ts` (clips can now have an end time and loop), `src/screens/musicSheet.ts`, `src/screens/editor.ts`.
+- Not done yet: dragging or trimming the bars on the timeline; YouTube download still depends on the native YouTube code (see v16.9.1 notes).
+
 ## v16.9.3: one sheet design everywhere, lime only as a tiny accent
 
 All bottom sheets share one look (end of `src/style.css`): flat black `#121212`, 24px top corners, grey pill buttons, ONE white pill for the main action, pill chips (selected = white with black text), rounded rows. Lime is only a tiny accent: slider fill and thumb, download progress, the added tick, the export tab underline. Covers: auto edit options, captions, text, zoom, reaction, face options / face pick, the CapCut tool panels, project menu, long-press menu, export settings, Music and YouTube. The in-progress task sheet keeps its own CapCut design.
@@ -156,3 +165,19 @@ Notes:
 - Downloaded audio is kept in the app music folder for 2 days, then removed. The baked music track stays with the project.
 - YouTube changes its app values often. If search works but download fails with "no audio", refresh the `CLIENT` / `*_VERSION` / `*_UA` constants at the top of `native/android/youtube/real/YouTubeBridge.java`.
 - Not compiled against Android and not run on a phone yet. The Java was only syntax and type checked with a stand-in for `org.json`.
+
+
+## Enhanced Audio (v16.11)
+
+Editor > **Enhanced** (bottom bar) or Audio > *Enhanced Audio*. A see-through bottom sheet, so the video keeps playing while you tweak.
+
+- Targets: **Host**, **Guest** (the Constant video) and **Master** (voice + music). Only the mic that is the audio source is heard / exported.
+- 5-band parametric EQ on a 20 Hz - 20 kHz graph: low-cut, warmth/mud, presence, crispness, air. Drag the dots, fine-tune with Frequency / Gain / Q sliders.
+- De-esser, vocal compressor, output gain and a brickwall limiter (default ceiling -1 dBFS).
+- Presets: Cinematic Studio, Warm Podcast, Crisp & Clear, Radio Broadcast, Clean & Intimate, plus your own (Save as preset, Overwrite, Rename, Delete, Reset). Your presets live in the phone's local storage.
+- **A/B** = hear the original while you edit. Preview only; the export always has the effect.
+
+How preview and export stay the same: `src/core/fx.ts` (settings + biquad maths), `src/core/fxWorklet.ts` (de-esser/compressor/limiter in the preview), and `FxProcessor` in `native/android/EditorrNativePlugin.java` (the same maths in the Media3 export). Change all three together. `fxToFfmpeg()` in fx.ts prints the equivalent FFmpeg `-af` string for desktop use; the phone export does not run FFmpeg.
+
+### Audio tools (v16.11.1)
+Tap the audio row (or the Audio tool): the bottom bar shows the sound tools of the mic that is the audio source: Volume, Split, Denoise, Enhanced, Silence, Delete. Back returns to the main tools.

@@ -10,18 +10,23 @@ import { openCaptionSheet } from './captionSheet';
 import { openTextItemsSheet } from './textSheet';
 import { openReactionSheet } from './reactionSheet';
 import { askAutoZoom } from './zoomSheet';
-import { openMusicSheet } from './musicSheet';
-import { BGM_RATE, decodeFile, decodeUrl, renderMix, toBase64, toWav } from '../core/bgm';
+import { openMusicSheet, type AutoPlan } from './musicSheet';
+import { BGM_RATE, decodeFile, decodeUrl, renderMix, toBase64, toBuffer, toWav } from '../core/bgm';
+import { MOOD_LABEL, analyzeMood, moodQuery, type MusicLang } from '../core/mood';
+import { SFX_LABEL, synthLoop, synthSfx, type SfxKind } from '../core/synth';
 import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, pageAt, type CapPage, textPage, textStyleOf } from '../core/captions';
 import { transcribe, type WhisperModel } from '../core/transcribe';
 import { addPunchZooms, addReactions, findPeaks, removeAllReactions, removeReaction } from '../core/autocut';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
 import { detectSilence } from '../core/silence';
-import { EditorrNative, fileSrc, isNative, tick } from '../core/native';
+import { EditorrNative, fileSrc, isNative, tick, youtubeAvailable } from '../core/native';
 import { ensureAudio, nextPaint, runAutoSwitch, runSync } from '../core/pipeline';
 import { cancelProxy, ensureProxy, needsProxy } from '../core/proxy';
 import { makeStrip, type Strip } from '../core/thumbs';
 import { effectiveGain } from '../core/gain';
+import { fxActive, getFx, type FxTarget } from '../core/fx';
+import { FxNode, loadFxWorklet } from '../core/fxGraph';
+import { openFxSheet } from './fxSheet';
 import { openExportSheet, resChipText } from './exportSheet';
 import { endTask, minimizeAllDialogs, minimizeTask, onTasks, startTask, updateTask, type Task } from '../core/tasks';
 import {
@@ -31,7 +36,7 @@ import {
 import { Aspect, ASPECTS, aspectValue, Corner, CropRatio, CropState, LayoutStyle, NO_CROP, PopupSize, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
 import { confirmDialog, fmtClock, h, ICON, icon, iconButton, spinner, toast } from '../ui';
 
-type Panel = 'none' | 'ratio' | 'crop' | 'mask' | 'silence' | 'sync' | 'layout' | 'main' | 'audio';
+type Panel = 'none' | 'ratio' | 'crop' | 'mask' | 'silence' | 'sync' | 'layout' | 'main' | 'audio' | 'denoise';
 
 // ---- timeline geometry (CSS px) ----
 const G = 64;            // left column: audio-source button + lane icons
@@ -43,7 +48,9 @@ const MAIN_Y = RULER + GAP;
 const AUD_Y = MAIN_Y + LANE + GAP;
 // "voice-scan" icon (14x14 viewBox) for the Host / Constant audio-source button
 const VOICE_ICON = new Path2D('M2 1.625A.375.375 0 0 0 1.625 2v2a.625.625 0 1 1-1.25 0V2A1.625 1.625 0 0 1 2 .375h2a.625.625 0 1 1 0 1.25zm8-1.25a.625.625 0 1 0 0 1.25h2a.375.375 0 0 1 .375.375v2a.625.625 0 1 0 1.25 0V2A1.625 1.625 0 0 0 12 .375zM7 3.5a.75.75 0 0 1 .75.75v5.5a.75.75 0 0 1-1.5 0v-5.5A.75.75 0 0 1 7 3.5m-2.75 1a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5a.75.75 0 0 1 .75-.75m6.25.75a.75.75 0 0 0-1.5 0v3.5a.75.75 0 0 0 1.5 0zM13 9.375c.345 0 .625.28.625.625v2A1.625 1.625 0 0 1 12 13.625h-2a.625.625 0 1 1 0-1.25h2a.375.375 0 0 0 .375-.375v-2c0-.345.28-.625.625-.625M1.625 10a.625.625 0 1 0-1.25 0v2A1.625 1.625 0 0 0 2 13.625h2a.625.625 0 1 0 0-1.25H2A.375.375 0 0 1 1.625 12z');
-const TL_H = AUD_Y + AUD + 10;
+const MUS = 26;           // music row (Auto BGM, songs, effects)
+const MUS_Y = AUD_Y + AUD + GAP;
+const TL_H = MUS_Y + MUS + 10;
 const CYAN = '#C6F277';
 const CROP_RATIOS: [CropRatio, string][] = [
   ['custom', 'Custom'], ['9:16', '9:16'], ['16:9', '16:9'], ['1:1', '1:1'], ['4:3', '4:3'], ['2:3', '2:3'],
@@ -64,8 +71,10 @@ export function editorScreen() {
   const hist = new History();
   let playMs = 0;
   const songFiles: { name: string; buf: AudioBuffer }[] = [];
-  const sfxFiles: { name: string; buf: AudioBuffer; startMs: number }[] = [];
-  const clipFiles: { name: string; buf: AudioBuffer; startMs: number }[] = [];
+  const sfxFiles: { name: string; buf: AudioBuffer; startMs: number; auto?: boolean }[] = [];
+  const clipFiles: { name: string; buf: AudioBuffer; startMs: number; endMs?: number; loop?: boolean; kind?: 'bgm' | 'music'; mood?: string }[] = [];
+  let bgmPeaks: Float32Array | null = null;
+  let prevSrc: AudioBufferSourceNode | null = null;
   let bgmBuffer: AudioBuffer | null = null;
   let bgmSource: AudioBufferSourceNode | null = null;
   let bgmLoading = false;
@@ -798,6 +807,10 @@ export function editorScreen() {
   // ----- volume: Web Audio gain (HTML video.volume stops at 100 %) + soft limiter -----
   let actx: AudioContext | null = null;
   const gainNodes: Partial<Record<Role, GainNode>> = {};
+  const fxNodes: Partial<Record<FxTarget, FxNode>> = {};
+  let safetyLim: DynamicsCompressorNode | null = null;
+  /** A/B in the Enhanced Audio sheet: hear the original. Preview only, never exported. */
+  let fxBypass = false;
   const mediaSources = new WeakMap<HTMLVideoElement, MediaElementAudioSourceNode>();
   let cleanSource: AudioBufferSourceNode | null = null;
   const audioBuffers = new WeakMap<Float32Array, AudioBuffer>();
@@ -821,6 +834,11 @@ export function editorScreen() {
       const lim = ctx.createDynamicsCompressor();
       lim.threshold.value = -12; lim.knee.value = 6; lim.ratio.value = 4; lim.attack.value = 0.01; lim.release.value = 0.25;
       lim.connect(ctx.destination);
+      safetyLim = lim;
+      // Enhanced Audio: mic -> gain -> its own chain -> master chain -> safety limiter -> speakers (music joins at the master chain)
+      const master = new FxNode(ctx);
+      master.output.connect(lim);
+      fxNodes.master = master;
       (['host', 'constant'] as Role[]).forEach((r) => {
         const v = vid(r);
         const g = ctx.createGain();
@@ -830,18 +848,33 @@ export function editorScreen() {
           mediaSources.set(v, src);
         }
         try { src.connect(g); } catch { /* ignore if connected */ }
-        g.connect(lim);
+        const fx = new FxNode(ctx);
+        g.connect(fx.input); fx.output.connect(master.input);
+        fxNodes[r] = fx;
         gainNodes[r] = g;
       });
       actx = ctx;
+      void loadFxWorklet(ctx).then((ok) => { Object.values(fxNodes).forEach((n) => n?.attachDyn(ok)); });
+      applyFx();
       return true;
     } catch { return false; }
+  }
+  /** Push the Enhanced Audio settings to the preview chains. */
+  function applyFx() {
+    if (!actx) return;
+    const f = getFx(p);
+    (['host', 'constant', 'master'] as FxTarget[]).forEach((t) => fxNodes[t]?.update(f[t], fxBypass));
+    // the shared safety limiter would squash peaks the Enhanced Audio limiter already holds at its ceiling, so it only catches overs then
+    if (safetyLim) {
+      const on = fxActive(p) && !fxBypass;
+      safetyLim.threshold.value = on ? -0.5 : -12; safetyLim.knee.value = on ? 0 : 6; safetyLim.ratio.value = on ? 20 : 4;
+    }
   }
   /** Push the current volumes (and normalize) to the preview. Only builds the audio graph once a gain other than 100 % is needed. */
   function applyVolume() {
     const roles: Role[] = ['host', 'constant'];
     const denoiseOn = p.noiseHost > 0 || p.noiseConst > 0;
-    if (!actx && !denoiseOn && roles.every((r) => Math.abs(effectiveGain(p, r) - 1) < 0.01)) { updateVideoAudioMute(); return; }
+    if (!actx && !denoiseOn && !fxActive(p) && roles.every((r) => Math.abs(effectiveGain(p, r) - 1) < 0.01)) { updateVideoAudioMute(); return; }
     if (!ensureGraph()) {
       roles.forEach((r) => { vid(r).volume = Math.min(1, effectiveGain(p, r)); });
       hostV.muted = p.mainAudio !== 'host';
@@ -849,6 +882,7 @@ export function editorScreen() {
       return;
     }
     roles.forEach((r) => { if (gainNodes[r]) gainNodes[r]!.gain.value = effectiveGain(p, r); });
+    applyFx();
     updateVideoAudioMute();
     if (actx!.state === 'suspended') actx!.resume().catch(() => {});
   }
@@ -1087,6 +1121,63 @@ export function editorScreen() {
   }
 
   /** Single audio waveform row for the selected sound (p.mainAudio). Centered mirrored bars. */
+  const MUSIC_COLOR = { bgm: '#2b6f69', music: '#2b5f94', sfx: '#a8651f' } as const;
+  function drawMusicRow(g: CanvasRenderingContext2D) {
+    const items = p.bgm?.items ?? [];
+    const x0 = xOf(0), x1 = xOf(p.durationMs);
+    if (x1 < G || x0 > W) return;
+    g.save();
+    g.beginPath(); g.rect(G, MUS_Y - 1, W - G, MUS + 2); g.clip();
+    if (!items.length) {
+      rrect(g, x0, MUS_Y, Math.max(0, x1 - x0), MUS, 6);
+      g.fillStyle = '#0d0d0d'; g.fill();
+      g.strokeStyle = 'rgba(255,255,255,0.14)'; g.lineWidth = 1; g.stroke();
+      g.fillStyle = '#8a8a8a'; g.font = '600 10px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+      g.fillText('+  Add music', Math.max(x0, G) + 10, MUS_Y + MUS / 2);
+      g.restore();
+      return;
+    }
+    for (const it of items) {
+      const a = xOf(it.startMs), b = xOf(it.endMs);
+      if (b < G || a > W) continue;
+      const small = it.kind === 'sfx';
+      const w = Math.max(small ? 16 : 6, b - a), hh = small ? 14 : MUS, y = MUS_Y + (MUS - hh) / 2;
+      rrect(g, a, y, w, hh, small ? 5 : 6);
+      g.fillStyle = MUSIC_COLOR[it.kind]; g.fill();
+      if (!small && bgmPeaks) {
+        g.fillStyle = 'rgba(255,255,255,0.35)';
+        const cy = MUS_Y + MUS - 7;
+        for (let x = Math.max(Math.floor(a) + 2, G); x < Math.min(a + w, W); x += 2) {
+          const ms = msOf(x);
+          const v = bgmPeaks[Math.round((ms / 1000) * 20)] ?? 0;
+          const bh = Math.max(1, Math.min(6, v * 9));
+          g.fillRect(x, cy - bh, 1.4, bh * 2);
+        }
+      }
+      if (!small) {
+        g.save();
+        g.beginPath(); g.rect(Math.max(a, G), y, Math.min(a + w, W) - Math.max(a, G), hh); g.clip();
+        g.fillStyle = '#ffffff'; g.font = '600 9px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+        const label = it.mood && it.mood in MOOD_LABEL ? `${MOOD_LABEL[it.mood as keyof typeof MOOD_LABEL]} · ${it.name}` : it.name;
+        g.fillText(label, Math.max(a, G) + 6, MUS_Y + 8);
+        g.restore();
+      }
+    }
+    g.restore();
+  }
+
+  function computeBgmPeaks(b: AudioBuffer) {
+    const per = 20, n = Math.ceil(b.duration * per), d = b.getChannelData(0), win = Math.max(1, Math.floor(b.sampleRate / per));
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      let m = 0;
+      const a = i * win, e = Math.min(d.length, a + win);
+      for (let k = a; k < e; k += 8) { const v = Math.abs(d[k] ?? 0); if (v > m) m = v; }
+      out[i] = m;
+    }
+    bgmPeaks = out;
+  }
+
   function drawAudioRow(g: CanvasRenderingContext2D) {
     const bx1 = xOf(0), bx2 = xOf(p.durationMs);
     if (bx2 < G || bx1 > W) return;
@@ -1239,6 +1330,7 @@ export function editorScreen() {
     // ---- unified master video and audio rows (all clipped to 0 .. p.durationMs)
     drawMasterVideoTrack(g);
     drawAudioRow(g);
+    drawMusicRow(g);
 
     // silence found but not cut yet
     if (pendingCuts.length) {
@@ -1272,6 +1364,17 @@ export function editorScreen() {
       g.textAlign = 'center'; g.textBaseline = 'middle';
       g.fillStyle = col;
       g.fillText(p.mainAudio === 'host' ? 'Host' : 'Constant', G / 2 - 1, MAIN_Y + LANE - 12);
+      g.restore();
+    }
+    // left label of the music row
+    {
+      const cy = MUS_Y + MUS / 2, has = !!p.bgm?.items?.length;
+      g.save();
+      g.strokeStyle = has ? '#ffffff' : '#8a8a8a'; g.lineWidth = 1.5; g.lineCap = 'round'; g.lineJoin = 'round';
+      g.beginPath(); g.arc(G / 2 - 12, cy + 4, 2.6, 0, Math.PI * 2); g.stroke();
+      g.beginPath(); g.moveTo(G / 2 - 9.4, cy + 4); g.lineTo(G / 2 - 9.4, cy - 6); g.lineTo(G / 2 - 5, cy - 4); g.stroke();
+      g.font = '600 9px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillStyle = has ? '#ffffff' : '#8a8a8a';
+      g.fillText('Music', G / 2 - 2, cy);
       g.restore();
     }
     // music-note badge: sits at the start of the audio clip and slides with the timeline; the waveform starts after it
@@ -1343,11 +1446,12 @@ export function editorScreen() {
   let lastClientY = 0;
   const localX = (e: PointerEvent) => e.clientX - canvas.getBoundingClientRect().left;
   const localY = (e: PointerEvent) => e.clientY - canvas.getBoundingClientRect().top;
-  type Lane = 'ruler' | 'main' | 'audio' | 'none';
+  type Lane = 'ruler' | 'main' | 'audio' | 'music' | 'none';
   function laneAt(y: number): Lane {
     if (y < RULER) return 'ruler';
     if (y < MAIN_Y + LANE + GAP / 2) return 'main';
     if (y < AUD_Y + AUD + GAP / 2) return 'audio';
+    if (y < MUS_Y + MUS + GAP / 2) return 'music';
     return 'none';
   }
   function hitSegment(x: number): Segment | undefined {
@@ -1456,12 +1560,14 @@ export function editorScreen() {
 
   function onTap(x: number, y: number) {
     const lane = laneAt(y);
+    if (lane === 'music') { openMusic('home'); return; }
     if (x < G) {
       if (lane === 'audio') {
-        openPanel('audio');
+        openAudioGroup();
       } else if (lane === 'main') {
         setAudio(p.mainAudio === 'host' ? 'constant' : 'host');
-        if (panel === 'audio') renderPanel();
+        if (panel === 'audio' || panel === 'denoise') renderPanel();
+        if (toolGroup === 'audio') renderBar();
         toast(p.mainAudio === 'host' ? 'Audio: Host mic' : 'Audio: Constant mic', 1400);
       }
       return;
@@ -1482,7 +1588,7 @@ export function editorScreen() {
       return;
     }
     if (lane === 'audio') {
-      openPanel('audio');
+      openAudioGroup();
       return;
     }
     if (lane === 'ruler') {
@@ -1542,7 +1648,7 @@ export function editorScreen() {
     syncHost(true); syncConst(true);
     afterEdit();
     if (panel === 'crop') { drawCropCanvas(); positionCropFrame(); renderPanel(); }
-    if (panel === 'audio') renderPanel();
+    if (panel === 'audio' || panel === 'denoise') renderPanel();
   }
   function toggleMirror(role: Role) {
     hist.push(snap()); updateBtns();
@@ -1586,8 +1692,14 @@ export function editorScreen() {
   }
   const sepEl = () => h('div', { class: 'sep' });
   /** Which sub-toolbar is open (CapCut style: tap Music or Text and the bar swaps to its own tools with a back chevron). */
-  let toolGroup: 'none' | 'music' | 'text' = 'none';
-  const openGroup = (g: 'music' | 'text') => { toolGroup = g; renderBar(); tick(); };
+  let toolGroup: 'none' | 'music' | 'text' | 'audio' = 'none';
+  const openGroup = (g: 'music' | 'text' | 'audio') => { toolGroup = g; renderBar(); tick(); };
+  /** Tap on the audio row (or the Audio tool): the bar shows the sound tools of the mic that is the audio source. */
+  function openAudioGroup() {
+    if (panel !== 'none') closePanel();
+    selectedId = null; selClip = null; toolGroup = 'audio';
+    renderBar(); draw(); updateSelFrame(); tick();
+  }
   const groupBack = () => h('button', { class: 'tool back', 'aria-label': 'Back', onclick: () => { toolGroup = 'none'; renderBar(); tick(); } }, icon('back', 20));
   const backTool = () => h('button', { class: 'tool back', 'aria-label': 'Back', onclick: () => { toolGroup = 'none'; selectedId = null; selClip = null; renderBar(); draw(); updateSelFrame(); tick(); } }, icon('back', 20));
   /** The segment the layout tools act on: the selected one, else the one under the playhead. */
@@ -1643,7 +1755,7 @@ export function editorScreen() {
       denoiseRun++;
       cancelDenoiseJob();
       commitNoise(role, strength, options);
-      if (panel === 'audio') renderPanel();
+      if (panel === 'audio' || panel === 'denoise') renderPanel();
       return;
     }
 
@@ -1673,7 +1785,7 @@ export function editorScreen() {
       if (runId === denoiseRun) {
         denoiseCancel = null;
         endTask('denoise');
-        if (panel === 'audio') renderPanel();
+        if (panel === 'audio' || panel === 'denoise') renderPanel();
       }
     }
   }
@@ -2056,7 +2168,7 @@ export function editorScreen() {
       if (!ensureGraph() || !actx) { bgmLoading = false; return; }
       const ctx = actx;
       fetch(fileSrc(p.bgm.path)).then((r) => r.arrayBuffer()).then((ab) => ctx.decodeAudioData(ab))
-        .then((b) => { bgmBuffer = b; bgmLoading = false; if (playing) startBgm(); })
+        .then((b) => { bgmBuffer = b; computeBgmPeaks(b); draw(); bgmLoading = false; if (playing) startBgm(); })
         .catch(() => { bgmLoading = false; toast('Could not load the music track. Make it again in Music.'); });
       return;
     }
@@ -2066,7 +2178,7 @@ export function editorScreen() {
     if (duration <= 0) return;
     const src = actx.createBufferSource();
     src.buffer = bgmBuffer;
-    src.connect(actx.destination);
+    src.connect(fxNodes.master?.input ?? actx.destination);
     bgmSource = src;
     src.onended = () => { if (bgmSource === src) bgmSource = null; try { src.disconnect(); } catch { /* ok */ } };
     if (actx.state === 'suspended') actx.resume().catch(() => {});
@@ -2083,8 +2195,9 @@ export function editorScreen() {
     try {
       await yieldUi();
       const mix = renderMix({
-        songs: songFiles.map((s) => s.buf), sfx: sfxFiles.map((s) => ({ buf: s.buf, startMs: s.startMs })),
-        clips: clipFiles.map((c) => ({ buf: c.buf, startMs: c.startMs, levelDb: o.clipDb, duck: o.clipDuck })),
+        songs: songFiles.map((s) => s.buf),
+        sfx: sfxFiles.map((s) => ({ buf: s.buf, startMs: s.startMs, gain: s.auto ? (app.settings.sfxLevel ?? 55) / 100 : 1 })),
+        clips: clipFiles.map((c) => ({ buf: c.buf, startMs: c.startMs, endMs: c.endMs, loop: c.loop, levelDb: c.kind === 'bgm' ? o.levelDb : o.clipDb, duck: c.kind === 'bgm' ? true : o.clipDuck })),
         durationMs: p.durationMs, voice, voiceShiftMs: role === 'host' ? 0 : p.offsetMs,
         levelDb: o.levelDb, duckDb: o.duckDb, fadeMs: o.fadeMs,
       });
@@ -2102,8 +2215,15 @@ export function editorScreen() {
       const buf = actx.createBuffer(1, mix.length, BGM_RATE);
       buf.getChannelData(0).set(mix);
       bgmBuffer = buf;
-      p.bgm = { path, names: [...songFiles.map((s) => s.name), ...clipFiles.map((c) => c.name), ...sfxFiles.map((s) => s.name)], levelDb: o.levelDb, duckDb: o.duckDb, fadeMs: o.fadeMs, sfx: sfxFiles.map((s) => ({ name: s.name, startMs: s.startMs })) };
+      computeBgmPeaks(buf);
+      const items = [
+        ...(songFiles.length ? [{ name: songFiles.map((s) => s.name).join(' + '), startMs: 0, endMs: p.durationMs, kind: 'bgm' as const }] : []),
+        ...clipFiles.map((c) => ({ name: c.name, startMs: c.startMs, endMs: Math.min(p.durationMs, c.endMs ?? c.startMs + Math.round(c.buf.duration * 1000)), kind: (c.kind ?? 'music') as 'bgm' | 'music', mood: c.mood })),
+        ...sfxFiles.map((s) => ({ name: s.name, startMs: s.startMs, endMs: s.startMs + Math.min(2000, Math.round(s.buf.duration * 1000)), kind: 'sfx' as const })),
+      ];
+      p.bgm = { items, path, names: [...songFiles.map((s) => s.name), ...clipFiles.map((c) => c.name), ...sfxFiles.map((s) => s.name)], levelDb: o.levelDb, duckDb: o.duckDb, fadeMs: o.fadeMs, sfx: sfxFiles.map((s) => ({ name: s.name, startMs: s.startMs })) };
       scheduleSave();
+      draw();
       toast('Music added. It plays under the voice and is in the export.');
       return true;
     } catch (error) {
@@ -2112,11 +2232,99 @@ export function editorScreen() {
     } finally { endTask('music'); }
   }
 
-  function clearMusic() { stopBgm(); delete p.bgm; bgmBuffer = null; songFiles.length = 0; sfxFiles.length = 0; clipFiles.length = 0; scheduleSave(); toast('Music removed.'); }
+  function clearMusic() { stopBgm(); stopPreview(); delete p.bgm; bgmBuffer = null; bgmPeaks = null; draw(); songFiles.length = 0; sfxFiles.length = 0; clipFiles.length = 0; scheduleSave(); toast('Music removed.'); }
+
+  function stopPreview() {
+    const s = prevSrc;
+    prevSrc = null;
+    if (!s) return;
+    try { s.stop(); } catch { /* already ended */ }
+    try { s.disconnect(); } catch { /* already disconnected */ }
+  }
+  /** Plays the first seconds of the n-th Auto BGM song so it can be heard before Apply. */
+  function previewAuto(n: number): boolean {
+    const c = clipFiles.filter((x) => x.kind === 'bgm')[n];
+    if (!c || !ensureGraph() || !actx) return false;
+    stopPreview();
+    const src = actx.createBufferSource();
+    src.buffer = c.buf;
+    const gain = actx.createGain();
+    gain.gain.value = 0.6;
+    src.connect(gain); gain.connect(actx.destination);
+    prevSrc = src;
+    src.onended = () => { if (prevSrc === src) prevSrc = null; try { src.disconnect(); gain.disconnect(); } catch { /* ok */ } };
+    if (actx.state === 'suspended') actx.resume().catch(() => {});
+    src.start(actx.currentTime, 0, 25);
+    return true;
+  }
+
+  /** Auto BGM: find the mood of each part of the video, get a song for it (YouTube, else made on the phone). */
+  async function autoBgm(o: { lang: MusicLang; status: (s: string) => void }): Promise<AutoPlan | null> {
+    if (p.durationMs < 3000) { toast('The video is too short for music.'); return null; }
+    stopPreview();
+    const role = p.mainAudio;
+    o.status('Listening to your video...');
+    await new Promise<void>((r) => setTimeout(r, 30));
+    const sections = analyzeMood(sourcePcm(role), role === 'host' ? 0 : p.offsetMs, p.durationMs, p.captions?.words);
+    for (let i = clipFiles.length - 1; i >= 0; i--) if (clipFiles[i]!.kind === 'bgm') clipFiles.splice(i, 1);
+    const plan: AutoPlan = [];
+    const used = new Set<string>();
+    let ytOk = await youtubeAvailable();
+    let why = ytOk ? '' : 'YouTube works only in the Android app.';
+    for (let i = 0; i < sections.length; i++) {
+      const s = sections[i]!;
+      const label = `${i + 1}/${sections.length} ${MOOD_LABEL[s.mood]}`;
+      let done = false;
+      if (ytOk) {
+        try {
+          o.status(`${label}: searching YouTube...`);
+          const r = await EditorrNative.youtubeSearch({ query: moodQuery(s.mood, o.lang), ccOnly: false });
+          const pick = r.items.find((it: { id: string; durationMs: number }) => !used.has(it.id) && it.durationMs >= 60_000 && it.durationMs <= 8 * 60_000);
+          if (!pick) throw new Error('No suitable song found.');
+          o.status(`${label}: downloading ${pick.title.slice(0, 30)}...`);
+          const d = await EditorrNative.youtubeDownload({ id: pick.id });
+          const buf = await decodeUrl(fileSrc(d.path));
+          used.add(pick.id);
+          const title = d.title || pick.title;
+          clipFiles.push({ name: title, buf, startMs: s.startMs, endMs: s.endMs, loop: buf.duration * 1000 < s.endMs - s.startMs, kind: 'bgm', mood: s.mood });
+          plan.push({ ...s, title, source: 'youtube' });
+          done = true;
+        } catch (error) {
+          why = error instanceof Error ? error.message : String(error);
+          if (!/no suitable/i.test(why)) ytOk = false;
+        }
+      }
+      if (!done) {
+        o.status(`${label}: making music on the phone...`);
+        await new Promise<void>((r) => setTimeout(r, 30));
+        const title = `${MOOD_LABEL[s.mood]} music (made here)`;
+        clipFiles.push({ name: title, buf: toBuffer(synthLoop(s.mood, 3 + i)), startMs: s.startMs, endMs: s.endMs, loop: true, kind: 'bgm', mood: s.mood });
+        plan.push({ ...s, title, source: 'built-in', note: why });
+      }
+    }
+    return plan;
+  }
+
+  /** Auto SFX: a whoosh where the layout changes, a soft pop where the camera moves to the other person. */
+  function autoSfx(): number {
+    for (let i = sfxFiles.length - 1; i >= 0; i--) if (sfxFiles[i]!.auto) sfxFiles.splice(i, 1);
+    const cache = new Map<SfxKind, AudioBuffer>();
+    const get = (k: SfxKind) => { let b = cache.get(k); if (!b) { b = toBuffer(synthSfx(k)); cache.set(k, b); } return b; };
+    let last = -1e9, n = 0;
+    for (let i = 1; i < p.segments.length && n < 40; i++) {
+      const a = p.segments[i - 1]!, b = p.segments[i]!;
+      const kind: SfxKind | null = a.style !== b.style ? 'whoosh' : a.main !== b.main ? 'pop' : null;
+      if (!kind || b.startMs - last < 2500) continue;
+      sfxFiles.push({ name: SFX_LABEL[kind], buf: get(kind), startMs: Math.max(0, b.startMs - (kind === 'whoosh' ? 200 : 0)), auto: true });
+      last = b.startMs; n++;
+    }
+    return n;
+  }
 
   function openMusic(start: 'home' | 'bgm' | 'music' | 'sfx' = 'home') {
     openMusicSheet({
       p, playMs: () => playMs, songs: songFiles, sfx: sfxFiles, clips: clipFiles,
+      autoBgm, autoSfx, previewAuto, stopPreview,
       addSongs: async (files) => {
         for (const f of files) {
           try { songFiles.push({ name: f.name, buf: await decodeFile(f) }); } catch { toast(`Cannot read ${f.name}. Pick an mp3, m4a, wav or ogg file.`, 5000); }
@@ -2141,6 +2349,25 @@ export function editorScreen() {
       clear: clearMusic,
       preview: () => { if (playing) startCleanAudio(); },
     }, app.settings, () => { void saveSettings(app.settings); }, start);
+  }
+
+  /** Enhanced Audio studio (EQ, de-esser, compressor, limiter, presets). The sheet stays see-through so the video can keep playing. */
+  function openFx() {
+    openFxSheet({
+      p,
+      changed: () => { applyVolume(); scheduleSave(); },
+      setBypass: (on) => { fxBypass = on; applyFx(); },
+    });
+  }
+
+  /** Audio > Split: cut the timeline at the playhead (the sound follows the video parts) and stay in the Audio tools. */
+  function doSplitAudio() { edit(splitAt(p.segments, playMs)); selectedId = null; renderBar(); draw(); tick(); }
+  /** Audio > Delete: take the sound of the mic that is the audio source out (volume 0 %). Volume brings it back. */
+  async function doDeleteAudio() {
+    const host = p.mainAudio === 'host';
+    if (!(await confirmDialog(`Delete ${host ? 'Host' : 'Constant'} audio?`, 'The sound of this mic is removed (volume 0%). Set the volume again in Volume to bring it back.', 'Delete'))) return;
+    if (host) p.volumeHost = 0; else p.volumeConst = 0;
+    applyVolume(); scheduleSave(); draw(); toast(`${host ? 'Host' : 'Constant'} audio removed. Volume brings it back.`);
   }
 
   function doSwap() { edit(p.segments.map((s) => ({ ...s, main: (s.main === 'host' ? 'constant' : 'host') as Role }))); }
@@ -2170,6 +2397,14 @@ export function editorScreen() {
         tool('note', 'Music', () => openMusic('music')),
         tool('bolt', 'SFX', () => openMusic('sfx')),
         ...(p.bgm ? [tool('trash', 'Remove', () => { clearMusic(); renderBar(); })] : []));
+    } else if (!hasClipSel && !hasSegSel && toolGroup === 'audio') {
+      rows.push(groupBack(),
+        tool('volume', 'Volume', () => openPanel('audio')),
+        tool('scissors', 'Split', doSplitAudio),
+        tool('wand', 'Denoise', () => openPanel('denoise')),
+        tool('eq', 'Enhanced', openFx),
+        tool('silence', 'Silence', () => openPanel('silence')),
+        tool('trash', 'Delete', () => void doDeleteAudio()));
     } else if (!hasClipSel && !hasSegSel && toolGroup === 'text') {
       rows.push(groupBack(),
         tool('text', 'Add text', openTexts),
@@ -2188,7 +2423,7 @@ export function editorScreen() {
         tool('silence', 'Silence', () => openPanel('silence')),
         tool('layout', 'Layout', () => openPanel('layout')),
         tool('user', 'On screen', () => openPanel('main')),
-        tool('volume', 'Audio', () => openPanel('audio')),
+        tool('volume', 'Audio', openAudioGroup),
         tool('crop', 'Crop', () => openPanel('crop')),
         tool('mask', 'Mask', () => openPanel('mask')),
         tool('mirror', 'Mirror', toggleMirrorForScreen),
@@ -2203,7 +2438,7 @@ export function editorScreen() {
         tool('crop', 'Crop', () => { cropRole = selClip!; openPanel('crop'); }),
         tool('mask', 'Mask', () => { const r = selClip!; openPanel('mask'); cropRole = r; renderPanel(); }),
         tool('mirror', 'Mirror', () => { if (selClip) toggleMirror(selClip); }),
-        tool('volume', 'Audio', () => openPanel('audio')));
+        tool('volume', 'Audio', openAudioGroup));
       if (selClip === 'constant') rows.push(tool('sync', 'Sync', () => openPanel('sync')));
     } else {
       // a segment is selected: the bar swaps to segment tools with a back chevron (CapCut)
@@ -2211,7 +2446,7 @@ export function editorScreen() {
         tool('scissors', 'Split', doSplit),
         tool('layout', 'Layout', () => openPanel('layout')),
         tool('user', 'On screen', () => openPanel('main')),
-        tool('volume', 'Audio', () => openPanel('audio')),
+        tool('volume', 'Audio', openAudioGroup),
         tool('crop', 'Crop', () => openPanel('crop')),
         tool('mask', 'Mask', () => openPanel('mask')),
         tool('mirror', 'Mirror', toggleMirrorForScreen),
@@ -2404,14 +2639,16 @@ export function editorScreen() {
       const vol = p[vkey];
       const setVol = (v: number) => { p[vkey] = v; applyVolume(); scheduleSave(); };
       const vs = slider('Master volume', 0, 1000, 5, vol, (v) => `${Math.round(v)}%`, setVol);
-      setPanel('Audio Settings',
+      setPanel('Volume',
         h('div', { style: 'margin:0 0 6px;font-size:12px;color:#8a8a8a;font-weight:500;text-transform:uppercase;letter-spacing:0.5px' }, 'Volume & Gain'),
         vs.row,
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Quick boost'),
           chipRow<number>([[100, '100%'], [200, '200%'], [400, '400%'], [700, '700%'], [1000, '1000%']], vol, (v) => { setVol(v); renderPanel(); })),
         h('div', { class: 'prow' }, h('div', { class: 'plabel' }, 'Normalize'),
-          chipRow<string>([['off', 'Off'], ['on', 'On']], p.normalize ? 'on' : 'off', (v) => { p.normalize = v === 'on'; applyVolume(); scheduleSave(); renderPanel(); })),
-        h('div', { style: 'margin:14px 0 6px;font-size:12px;color:#8a8a8a;font-weight:500;text-transform:uppercase;letter-spacing:0.5px' }, 'Noise Reduction'),
+          chipRow<string>([['off', 'Off'], ['on', 'On']], p.normalize ? 'on' : 'off', (v) => { p.normalize = v === 'on'; applyVolume(); scheduleSave(); renderPanel(); })));
+    } else if (panel === 'denoise') {
+      setPanel('Denoise',
+        h('div', { style: 'margin:0 0 6px;font-size:12px;color:#8a8a8a;font-weight:500;text-transform:uppercase;letter-spacing:0.5px' }, 'Noise Reduction'),
         noiseControl('host'),
         noiseControl('constant'));
     } else if (panel === 'crop') {

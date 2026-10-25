@@ -122,6 +122,9 @@ export interface Settings {
   /** Music > Music (by hand): level compared with the voice (dB) and whether it drops while someone talks. */
   musicClipDb?: number;
   musicClipDuck?: boolean;
+  /** Music: language of Auto BGM songs, and how loud Auto SFX effects are (percent). */
+  musicLang?: 'en' | 'hi' | 'te';
+  sfxLevel?: number;
 }
 
 export interface Project {
@@ -161,7 +164,9 @@ export interface Project {
   /** Free text pieces placed on the video (Text > Add text). */
   texts?: import('./captions').TextItem[];
   /** Baked background music + sound effects (one wav at timeline time) and the settings it was made with. */
-  bgm?: { path: string; names: string[]; levelDb: number; duckDb: number; fadeMs: number; sfx: { name: string; startMs: number }[] };
+  bgm?: { path: string; names: string[]; levelDb: number; duckDb: number; fadeMs: number; sfx: { name: string; startMs: number }[]; items?: { name: string; startMs: number; endMs: number; kind: 'bgm' | 'music' | 'sfx'; mood?: string }[] };
+  /** Enhanced Audio: EQ, de-esser, compressor and limiter for the Host mic, the Guest (Constant) mic and the whole mix. */
+  fx?: import('./fx').FxState;
   /** small jpeg data URL for Home */
   thumb?: string;
 }
