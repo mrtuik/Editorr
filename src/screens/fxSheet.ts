@@ -86,6 +86,9 @@ export function openFxSheet(ctx: FxCtx): void {
   let band: BandKey = 'presence';
   let custom = loadCustom();
   let bypass = false;
+  /** Only one tool is open at a time (like the editor's bottom bar). */
+  type FxTool = 'presets' | 'eq' | 'noise' | 'comp' | 'deess' | 'out';
+  let tool: FxTool = 'presets';
   const chain = () => state[target];
 
   const close = () => { ctx.setBypass(false); sheet.classList.add('out'); setTimeout(() => box.remove(), 180); };
@@ -99,15 +102,17 @@ export function openFxSheet(ctx: FxCtx): void {
   const bandRow = h('div', { class: 'fz-bands' });
   const ctrl = h('div', {});
   const dyn = h('div', {});
-  const body = h('div', { class: 'at-body fz-body' }, seg, top,
-    h('div', { class: 'fz-card fz-graph' }, cv, bandRow, ctrl), dyn);
+  const graph = h('div', { class: 'fz-card fz-graph' }, cv, bandRow, ctrl);
+  const mainBox = h('div', {});
+  const toolBar = h('div', { class: 'fz-toolbar', role: 'tablist' });
+  const body = h('div', { class: 'at-body fz-body' }, mainBox, top, graph, dyn);
   const sheet = h('div', { class: 'at-sheet fx fz', role: 'dialog' },
     h('div', { class: 'at-handle' }),
     h('div', { class: 'at-head' },
       h('button', { class: 'at-back', 'aria-label': 'Close', onclick: close }, icon('back', 20)),
       h('div', { class: 'fz-titles' }, h('div', { class: 'at-title' }, 'Enhanced Audio'), subtitle),
       abBtn),
-    body);
+    seg, body, toolBar);
   const box = h('div', { class: 'at-scrim clear', onclick: (e: Event) => { if (e.target === box) close(); } }, sheet);
   document.body.append(box);
 
@@ -155,7 +160,8 @@ export function openFxSheet(ctx: FxCtx): void {
         h('button', { class: 'fz-link', onclick: () => void rename() }, 'Rename'),
         h('button', { class: 'fz-link danger', onclick: () => void remove() }, 'Delete'));
     }
-    top.replaceChildren(mainCard,
+    mainBox.replaceChildren(mainCard);
+    top.replaceChildren(
       h('div', { class: 'fz-sec-head' }, h('span', {}, 'Presets'),
         h('button', { class: 'fz-link', onclick: () => resetToDefault() }, icon('undo', 14), 'Reset')),
       tiles,
@@ -332,9 +338,9 @@ export function openFxSheet(ctx: FxCtx): void {
         inp.addEventListener('change', () => { chain().noise = Number(inp.value); ctx.setNoise(role, Number(inp.value)); ctx.changed(); });
         return el;
       })());
-    dyn.replaceChildren(
-      ...(noiseCard ? [noiseCard] : []),
-      card('Compressor', 'Loud words come down, quiet words come up, so the voice stays even.',
+    const cards: Record<string, HTMLElement | null> = {
+      noise: noiseCard,
+      comp: card('Compressor', 'Loud words come down, quiet words come up, so the voice stays even.',
         switchEl(c.comp.on, (v) => { c.comp.on = v; on(); touch(); renderDyn(); }, 'Compressor on or off'),
         ...(c.comp.on ? [
           slider('Threshold', -50, 0, 1, c.comp.thr, (v) => `${v} dB`, (v) => { c.comp.thr = v; on(); touch(); }),
@@ -343,18 +349,38 @@ export function openFxSheet(ctx: FxCtx): void {
           slider('Release', 20, 500, 5, c.comp.release, (v) => `${v} ms`, (v) => { c.comp.release = v; on(); touch(); }),
           slider('Make-up gain', 0, 12, 0.5, c.comp.makeup, (v) => `+${v} dB`, (v) => { c.comp.makeup = v; on(); touch(); }),
         ] : [])),
-      card('De-esser', 'Softens sharp "s" and "sh" sounds.',
+      deess: card('De-esser', 'Softens sharp "s" and "sh" sounds.',
         switchEl(c.deess.on, (v) => { c.deess.on = v; on(); touch(); renderDyn(); }, 'De-esser on or off'),
         ...(c.deess.on ? [
           slider('Amount', 0, 100, 1, c.deess.amount, (v) => `${v}%`, (v) => { c.deess.amount = v; on(); touch(); }),
           slider('Frequency', 4000, 9000, 100, c.deess.f, fmtHz, (v) => { c.deess.f = v; on(); touch(); }),
         ] : [])),
-      card('Output & limiter', 'The limiter holds the sound under the ceiling so it never cracks or distorts.', undefined,
+      out: card('Output & limiter', 'The limiter holds the sound under the ceiling so it never cracks or distorts.', undefined,
         slider('Output gain', -12, 12, 0.5, c.out.gain, fmtDb, (v) => { c.out.gain = v; on(); touch(); }),
         slider('Limiter ceiling', -6, 0, 0.5, c.out.ceiling, (v) => `${v} dBFS`, (v) => { c.out.ceiling = v; on(); touch(); })),
+    };
+    const pick = cards[tool];
+    dyn.replaceChildren(...(pick ? [pick] : []),
       h('div', { class: 'fz-foot' }, 'Preview and export use the same settings. A/B only changes what you hear now; the export always has the effect on.'));
   }
 
-  function renderAll() { renderSeg(); renderTop(); renderBands(); renderCtrl(); renderDyn(); draw(); }
+  /** Bottom tool bar: one tap opens one tool, nothing else. */
+  function renderTools() {
+    const list: [FxTool, string, Parameters<typeof icon>[0]][] = [
+      ['presets', 'Presets', 'wand'], ['eq', 'EQ', 'eq'],
+      ...(target === 'master' ? [] : [['noise', 'De-noise', 'silence'] as [FxTool, string, Parameters<typeof icon>[0]]]),
+      ['comp', 'Compressor', 'volume'], ['deess', 'De-esser', 'lips'], ['out', 'Limiter', 'check'],
+    ];
+    if (!list.some(([k]) => k === tool)) tool = 'presets';
+    toolBar.replaceChildren(...list.map(([k, l, ic]) => h('button', {
+      class: 'fz-tool' + (tool === k ? ' on' : ''), role: 'tab', 'aria-selected': String(tool === k), 'aria-label': l,
+      onclick: () => { tool = k; renderAll(); },
+    }, icon(ic, 22), h('span', {}, l))));
+    top.style.display = tool === 'presets' ? '' : 'none';
+    graph.style.display = tool === 'eq' ? '' : 'none';
+    dyn.style.display = tool === 'presets' || tool === 'eq' ? 'none' : '';
+    body.scrollTop = 0;
+  }
+  function renderAll() { renderSeg(); renderTop(); renderBands(); renderCtrl(); renderDyn(); renderTools(); draw(); }
   renderAll();
 }

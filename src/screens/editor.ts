@@ -3219,26 +3219,38 @@ export function editorScreen() {
 
   offTasks = onTasks((list: Task[]) => {
     lastTasks = list;
-    // 1) small centered card for the first modal task that is not minimized
+    // 1) small centered card for the first modal task that is not minimized.
+    //    Built once per task and then only updated in place: rebuilding it on every % restarted the fade-in, so it looked ghosted and cut.
     const dlg = list.find((t) => t.modal && !t.minimized);
     if (dlg) {
       const pct = dlg.pct ?? 0;
-      const ring = h('div', { class: 'td-ring2' + (pct > 0 ? '' : ' indet'), style: `--p:${pct}` }, h('span', {}, pct > 0 ? `${pct}%` : ''));
-      dialogEl.replaceChildren(h('div', { class: 'taskdialog', role: 'dialog', 'aria-label': dlg.label },
-        h('div', { class: 'td-tile' }, ring),
-        h('div', { class: 'td-title' }, dlg.label),
-        h('div', { class: 'td-sub' }, 'This can take a moment. You can keep editing.'),
-        h('button', { class: 'td-min', onclick: () => minimizeTask(dlg.id) }, 'Minimize'),
-        dlg.cancel ? h('button', {
-          class: 'td-cancel',
-          onclick: async () => {
-            const stop = dlg.cancel!;
-            if (await confirmDialog('Stop this task?', `${dlg.label} will be cancelled.`, 'Stop task')) stop();
-          },
-        }, 'Cancel task') : null));
+      let card = dialogEl.querySelector('.taskdialog') as HTMLElement | null;
+      if (!card || card.dataset.id !== dlg.id || card.dataset.cancel !== String(!!dlg.cancel)) {
+        const ring = h('div', { class: 'td-ring2', style: '--p:0' }, h('span', {}, ''));
+        card = h('div', { class: 'taskdialog', role: 'dialog', 'aria-label': dlg.label },
+          h('div', { class: 'td-tile' }, ring),
+          h('div', { class: 'td-title' }, dlg.label),
+          h('div', { class: 'td-sub' }, 'This can take a moment. You can keep editing.'),
+          h('button', { class: 'td-min', onclick: () => minimizeTask(dlg.id) }, 'Minimize'),
+          dlg.cancel ? h('button', {
+            class: 'td-cancel',
+            onclick: async () => {
+              const stop = dlg.cancel!;
+              if (await confirmDialog('Stop this task?', `${dlg.label} will be cancelled.`, 'Stop task')) stop();
+            },
+          }, 'Cancel task') : null);
+        card.dataset.id = dlg.id; card.dataset.cancel = String(!!dlg.cancel);
+        dialogEl.replaceChildren(card);
+      }
+      const ringEl = card.querySelector('.td-ring2') as HTMLElement;
+      ringEl.classList.toggle('indet', !(pct > 0));
+      ringEl.style.setProperty('--p', String(pct));
+      (ringEl.querySelector('span') as HTMLElement).textContent = pct > 0 ? `${pct}%` : '';
+      (card.querySelector('.td-title') as HTMLElement).textContent = dlg.label;
+      card.setAttribute('aria-label', dlg.label);
     } else dialogEl.replaceChildren();
 
-    // 2) ONE small capsule at the left, just above the tools, for every task without an open dialog
+    // 2) ONE small capsule at the left, just above the tools, for every task without an open dialog (updated in place, no re-animation)
     const activeTasks = list.filter((t) => !t.modal || t.minimized);
     if (!activeTasks.length) {
       pillsEl.replaceChildren();
@@ -3248,19 +3260,27 @@ export function editorScreen() {
       const one = activeTasks.length === 1;
       const pct = one && first.pct !== undefined && first.pct > 0 ? first.pct : 0;
       const label = one ? first.label : `${activeTasks.length} tasks running`;
-      const pillBtn = h('button', {
-        class: 'pill tap',
-        'aria-label': `${activeTasks.length} running: ${label}`,
-        onclick: (ev: MouseEvent) => {
-          ev.stopPropagation();
-          if (taskSheetEl) closeListSheet();
-          else openListSheet();
-        },
-      }, h('span', { class: 'pill-ring' + (pct > 0 ? '' : ' indet'), style: `--p:${pct}` }),
-        h('span', { class: 'pill-text' }, label),
-        pct > 0 ? h('span', { class: 'pill-pct' }, `${pct}%`) : null,
-        one ? null : h('span', { class: 'pill-count' }, String(activeTasks.length)));
-      pillsEl.replaceChildren(pillBtn);
+      let pillBtn = pillsEl.querySelector('.pill.tap') as HTMLElement | null;
+      if (!pillBtn) {
+        pillBtn = h('button', {
+          class: 'pill tap',
+          onclick: (ev: MouseEvent) => {
+            ev.stopPropagation();
+            if (taskSheetEl) closeListSheet();
+            else openListSheet();
+          },
+        }, h('span', { class: 'pill-ring indet' }), h('span', { class: 'pill-text' }), h('span', { class: 'pill-pct' }), h('span', { class: 'pill-count' }));
+        pillsEl.replaceChildren(pillBtn);
+      }
+      pillBtn.setAttribute('aria-label', `${activeTasks.length} running: ${label}`);
+      const ringEl = pillBtn.querySelector('.pill-ring') as HTMLElement;
+      ringEl.classList.toggle('indet', !(pct > 0));
+      ringEl.style.setProperty('--p', String(pct));
+      (pillBtn.querySelector('.pill-text') as HTMLElement).textContent = label;
+      const pctEl = pillBtn.querySelector('.pill-pct') as HTMLElement;
+      pctEl.textContent = pct > 0 ? `${pct}%` : ''; pctEl.style.display = pct > 0 ? '' : 'none';
+      const cntEl = pillBtn.querySelector('.pill-count') as HTMLElement;
+      cntEl.textContent = String(activeTasks.length); cntEl.style.display = one ? 'none' : '';
     }
     renderListSheet();
     if (!destroyed) updatePlayState();

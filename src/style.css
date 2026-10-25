@@ -1258,3 +1258,20 @@ input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-webkit-s
 .pills .pill.tap .pill-text { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1; }
 .pills .pill.tap .pill-pct { flex: none; display: block; color: #a1a1a6; font-variant-numeric: tabular-nums; line-height: 1; }
 .pills .pill.tap .pill-count { position: static; flex: none; min-width: 18px; width: auto; height: 18px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; background: var(--accent, #C6F277); color: #10140a; font-size: 11px; font-weight: 700; line-height: 1; }
+
+/* Enhanced Audio: bottom tool bar (one tool open at a time) */
+.at-sheet.fz .fz-seg { margin: 0 14px 6px; flex: none; }
+.fz-toolbar { display: flex; flex: none; overflow-x: auto; scrollbar-width: none; padding: 6px 4px calc(6px + var(--safe-bottom, 0px)); background: #101012; border-top: 1px solid rgba(255,255,255,.07); }
+.fz-toolbar::-webkit-scrollbar { display: none; }
+.fz-tool { flex: 1 0 auto; min-width: 66px; height: 54px; padding: 0 4px; border: 0; border-radius: 12px; background: transparent; color: #a1a1a6; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font: inherit; }
+.fz-tool span { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.fz-tool.on { color: var(--accent, #C6F277); background: rgba(198,242,119,.1); }
+.at-sheet.fz .fz-body { flex: 1; min-height: 0; }
+
+/* Tasks: always fully visible and never clipped (the dialog also shows above the Enhanced Audio sheet) */
+.taskdialog-wrap { z-index: 140; padding: 16px; box-sizing: border-box; }
+.taskdialog { max-width: calc(100% - 8px); max-height: calc(100% - 32px); overflow: hidden; box-sizing: border-box; background: #1c1c1e; opacity: 1; }
+.taskdialog .td-title, .taskdialog .td-sub { max-width: 100%; overflow-wrap: anywhere; }
+.pills .pill.tap { animation: none; max-width: calc(100% - 24px); }
+.pills .pill.tap .pill-text { min-width: 0; }
+.task-sheet { z-index: 150; }
