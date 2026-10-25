@@ -174,6 +174,7 @@ Editor > **Enhanced** (bottom bar) or Audio > *Enhanced Audio*. A see-through bo
 - Targets: **Host**, **Guest** (the Constant video) and **Master** (voice + music). Only the mic that is the audio source is heard / exported.
 - 6-band parametric EQ on a 20 Hz - 20 kHz graph: low-cut, chest/body (60-300 Hz), boxiness (150-900 Hz), presence, crispness, air. Drag the dots, fine-tune with Frequency / Gain / Q sliders.
 - De-noise slider inside Enhanced Audio (Host / Guest): the same value as the Denoise tool. Presets can set it.
+- v16.11.3 redesign: real on/off switches, square preset tiles with a mini EQ curve, no Host/Guest tabs (the audio-source mic is used; a small Voice / Whole mix switch stays), new Enhanced tool icon, slider tracks fixed everywhere (the `--fill` colour variable in :root broke the gradient; sliders now use `--rf`), centered small task card and a small capsule above the tools for minimized tasks.
 - **Gavin Radio Voice** preset: the Premiere Pro chain (boxiness cut at 800 Hz, chest boost at 150 Hz, presence, air -3 dB, de-ess, light de-noise, compressor, -1 dB limiter).
 - De-esser, vocal compressor, output gain and a brickwall limiter (default ceiling -1 dBFS).
 - Presets: Cinematic Studio, Warm Podcast, Crisp & Clear, Radio Broadcast, Clean & Intimate, plus your own (Save as preset, Overwrite, Rename, Delete, Reset). Your presets live in the phone's local storage.

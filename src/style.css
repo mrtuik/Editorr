@@ -1158,3 +1158,103 @@ input.xs-range::-webkit-slider-runnable-track { background: linear-gradient(90de
 .fx-sec-title { font-size: 16px; font-weight: 600; color: #fff; }
 .fx-sw { min-height: 32px; padding: 0 14px; }
 .fx-sl { margin-top: 10px; }
+
+/* =====================================================================================================
+   v16.11.3 redesign: slider tracks, switches, Enhanced Audio studio, centered task card, task capsule
+   ===================================================================================================== */
+
+/* ---- slider tracks: --rf is painted by installRangeFill() (the old --fill is a colour in :root and broke the gradient) ---- */
+input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 9999px;
+  background: linear-gradient(90deg, var(--accent, #C6F277) var(--rf, 0%), rgba(255,255,255,.2) var(--rf, 0%));
+}
+input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-webkit-slider-thumb { width: 22px; height: 22px; margin-top: -9px; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.5); }
+
+.screen.editor { position: relative; }
+
+/* ---- Enhanced Audio studio ---- */
+.at-scrim.clear .at-sheet.fz { max-height: 64vh; background: #141416; border-top: 1px solid rgba(255,255,255,.07); border-radius: 28px 28px 0 0; box-shadow: 0 -14px 44px rgba(0,0,0,.6); }
+.at-sheet.fz .at-head { padding: 4px 14px 8px; gap: 12px; }
+.at-sheet.fz .at-back { width: 38px; height: 38px; background: #232326; }
+.fz-titles { flex: 1; min-width: 0; text-align: center; }
+.fz-titles .at-title { font-size: 17px; line-height: 1.2; }
+.fz-sub { margin-top: 2px; font-size: 12px; color: #8e8e93; }
+.fz-ab { flex: none; height: 38px; min-width: 76px; padding: 0 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,.1); background: #232326; color: #fff; font: inherit; font-size: 13px; font-weight: 600; }
+.fz-ab.on { background: rgba(255,159,10,.16); border-color: #FF9F0A; color: #FF9F0A; }
+.at-sheet .fz-body { padding: 2px 14px 20px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+.fz-seg { display: flex; padding: 3px; margin: 2px 0 12px; border-radius: 14px; background: #1d1d20; }
+.fz-seg-b { flex: 1; height: 34px; border: 0; border-radius: 11px; background: transparent; color: #a1a1a6; font: inherit; font-size: 13px; font-weight: 600; }
+.fz-seg-b.on { background: #fff; color: #000; }
+
+.fz-card { margin-top: 12px; padding: 14px 14px 12px; border-radius: 20px; background: #1d1d20; border: 1px solid rgba(255,255,255,.05); }
+.fz-main { margin-top: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.fz-main-text { min-width: 0; }
+.fz-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.fz-card-title { font-size: 15px; font-weight: 600; color: #fff; }
+.fz-hint { margin-top: 3px; font-size: 12.5px; line-height: 1.4; color: #8e8e93; }
+.fz-card > .fz-hint { margin-bottom: 4px; }
+
+/* real on/off switch */
+.fz-switch { flex: none; position: relative; width: 50px; height: 30px; padding: 0; border: 0; border-radius: 15px; background: #3a3a3e; transition: background .18s; }
+.fz-switch i { position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,.35); transition: transform .2s cubic-bezier(.3,.7,.3,1); }
+.fz-switch.on { background: var(--accent, #C6F277); }
+.fz-switch.on i { transform: translateX(20px); }
+
+/* square preset tiles */
+.fz-sec-head { display: flex; align-items: center; justify-content: space-between; margin: 18px 2px 8px; font-size: 12.5px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: #8e8e93; }
+.fz-link { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 6px; border: 0; background: transparent; color: #c7c7cc; font: inherit; font-size: 13px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.fz-link.danger { color: #ff6b6b; }
+.fz-tiles { display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 6px; scroll-snap-type: x proximity; scrollbar-width: none; }
+.fz-tiles::-webkit-scrollbar { display: none; }
+.fz-tile { flex: none; width: 92px; height: 92px; scroll-snap-align: start; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 14px 6px 9px; border-radius: 20px; border: 1.5px solid transparent; background: #1d1d20; color: #c7c7cc; font: inherit; }
+.fz-tile.on { border-color: var(--accent, #C6F277); background: rgba(198,242,119,.1); color: var(--accent, #C6F277); }
+.fz-tile-name { max-width: 100%; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 11px; font-weight: 600; line-height: 1.2; text-align: center; color: #fff; }
+.fz-tile.on .fz-tile-name { color: var(--accent, #C6F277); }
+.fz-tile.add { justify-content: center; gap: 6px; border: 1.5px dashed #3c3c40; background: transparent; color: #a1a1a6; }
+.fz-tile.add .fz-tile-name { color: #a1a1a6; }
+.fz-curve { width: 100%; height: 32px; }
+.fz-curve .z { stroke: rgba(255,255,255,.14); stroke-width: .6; }
+.fz-curve .c { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.fz-acts { display: flex; gap: 4px; margin-top: 2px; }
+
+/* EQ graph card */
+.fz-graph { padding: 10px; }
+.fz-graph .fx-cv { border-radius: 14px; background: #121214; }
+.fz-bands { display: flex; flex-wrap: nowrap; gap: 8px; margin-top: 10px; overflow-x: auto; scrollbar-width: none; }
+.fz-bands::-webkit-scrollbar { display: none; }
+.fz-band { flex: none; height: 34px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; background: #2a2a2d; color: #fff; font: inherit; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.fz-band.on { background: #fff; color: #000; }
+.fz-band-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+
+/* sliders inside the studio */
+.fz-sl { margin-top: 12px; }
+.fz-sl-row { display: flex; align-items: baseline; justify-content: space-between; font-size: 14px; color: #e5e5ea; }
+.fz-sl-row b { color: #fff; font-weight: 600; font-variant-numeric: tabular-nums; }
+.fz-sl input[type=range] { display: block; width: 100%; height: 30px; margin: 2px 0 0; }
+.fz-foot { margin: 16px 8px 0; font-size: 12px; line-height: 1.4; text-align: center; color: #6e6e73; }
+
+/* ---- centered task card (small, like the reference sign-in card) ---- */
+.taskdialog-wrap { position: absolute; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.taskdialog { pointer-events: auto; position: relative; width: min(72vw, 248px); padding: 22px 18px 14px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 0; text-align: center; background: #1c1c1e; -webkit-backdrop-filter: none; backdrop-filter: none; border: 1px solid rgba(255,255,255,.07); border-radius: 28px; box-shadow: 0 24px 60px rgba(0,0,0,.65); animation: tdin .2s cubic-bezier(.2,.8,.2,1); }
+@keyframes tdin { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes tdspin { to { transform: rotate(360deg); } }
+.td-tile { width: 60px; height: 60px; margin-bottom: 14px; display: flex; align-items: center; justify-content: center; border-radius: 18px; background: #2a2a2d; }
+.td-ring2 { position: relative; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: conic-gradient(var(--accent, #C6F277) calc(var(--p, 0) * 1%), rgba(255,255,255,.16) 0); }
+.td-ring2::before { content: ''; position: absolute; inset: 4px; border-radius: 50%; background: #2a2a2d; }
+.td-ring2 span { position: relative; font-size: 10.5px; font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; }
+.td-ring2.indet { background: conic-gradient(var(--accent, #C6F277) 0 25%, rgba(255,255,255,.16) 0); animation: tdspin 1s linear infinite; }
+.taskdialog .td-title { font-size: 16px; font-weight: 600; color: #fff; }
+.td-sub { margin-top: 4px; font-size: 12.5px; line-height: 1.4; color: #8e8e93; }
+.taskdialog .td-min { align-self: stretch; margin-top: 16px; height: 42px; padding: 0; border: 0; border-radius: 999px; background: #fff; color: #000; font: inherit; font-size: 14px; font-weight: 600; }
+.td-cancel { margin-top: 4px; height: 34px; padding: 0 12px; border: 0; background: transparent; color: #8e8e93; font: inherit; font-size: 12.5px; }
+
+/* ---- minimized task: small capsule at the left, just above the tools ---- */
+.pills { position: relative; flex: none; height: 0; left: auto; right: auto; bottom: auto; max-width: none; display: block; z-index: 6; pointer-events: none; }
+.pills .pill.tap { position: absolute; left: 12px; bottom: 8px; width: auto; min-width: 0; max-width: calc(100vw - 24px); height: 30px; padding: 0 12px 0 9px; display: inline-flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 8px; border-radius: 999px; background: rgba(28,28,30,.96); -webkit-backdrop-filter: none; backdrop-filter: none; border: 1px solid rgba(255,255,255,.1); box-shadow: 0 4px 14px rgba(0,0,0,.45); color: #fff; font: inherit; font-size: 12.5px; font-weight: 600; pointer-events: auto; animation: pillin .18s ease-out; }
+@keyframes pillin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.pills .pill.tap .pill-ring { flex: none; display: block; width: 16px; height: 16px; border-radius: 50%; background: conic-gradient(var(--accent, #C6F277) calc(var(--p, 0) * 1%), rgba(255,255,255,.2) 0); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px)); mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px)); }
+.pills .pill.tap .pill-ring.indet { background: conic-gradient(var(--accent, #C6F277) 0 25%, rgba(255,255,255,.2) 0); animation: tdspin .9s linear infinite; }
+.pills .pill.tap .pill-text { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1; }
+.pills .pill.tap .pill-pct { flex: none; display: block; color: #a1a1a6; font-variant-numeric: tabular-nums; line-height: 1; }
+.pills .pill.tap .pill-count { position: static; flex: none; min-width: 18px; width: auto; height: 18px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; background: var(--accent, #C6F277); color: #10140a; font-size: 11px; font-weight: 700; line-height: 1; }

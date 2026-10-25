@@ -1,9 +1,9 @@
 import {
-  BUILT_IN, FX_RANGE, FX_TARGETS, cloneChain, defaultChain, eqResponse, getFx, loadCustom, mergeChain, saveCustom, sameSound,
+  BUILT_IN, FX_RANGE, cloneChain, defaultChain, eqResponse, getFx, loadCustom, mergeChain, saveCustom, sameSound,
   type FxChain, type FxTarget,
 } from '../core/fx';
 import type { Project } from '../core/types';
-import { confirmDialog, h, icon, promptDialog, toast } from '../ui';
+import { confirmDialog, h, icon, paintRange, promptDialog, toast } from '../ui';
 
 export interface FxCtx {
   p: Project;
@@ -37,42 +37,76 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 const fmtHz = (f: number) => (f >= 1000 ? `${(f / 1000).toFixed(f >= 10000 ? 1 : 2).replace(/\.?0+$/, '')} kHz` : `${Math.round(f)} Hz`);
 const fmtDb = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`;
 
+/** A real on/off switch (iOS style). */
+function switchEl(on: boolean, toggle: (v: boolean) => void, label: string): HTMLElement {
+  return h('button', { class: 'fz-switch' + (on ? ' on' : ''), role: 'switch', 'aria-checked': String(on), 'aria-label': label, onclick: () => toggle(!on) }, h('i', {}));
+}
+
 function slider(label: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, onInput: (v: number) => void): HTMLElement {
   const val = h('b', {}, fmt(value));
   const r = h('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(value), class: 'at-range', 'aria-label': label }) as HTMLInputElement;
-  r.addEventListener('input', () => { const v = Number(r.value); val.textContent = fmt(v); onInput(v); });
-  return h('div', { class: 'at-sec fx-sl' }, h('div', { class: 'at-label-row' }, h('div', { class: 'at-label' }, label), val), r);
+  paintRange(r);
+  r.addEventListener('input', () => { const v = Number(r.value); val.textContent = fmt(v); paintRange(r); onInput(v); });
+  return h('div', { class: 'fz-sl' }, h('div', { class: 'fz-sl-row' }, h('span', {}, label), val), r);
 }
 
-function head(title: string, on: boolean, toggle?: (v: boolean) => void): HTMLElement {
-  return h('div', { class: 'at-label-row fx-head' }, h('div', { class: 'fx-sec-title' }, title),
-    toggle ? h('button', { class: 'chip fx-sw' + (on ? ' on' : ''), onclick: () => toggle(!on) }, on ? 'On' : 'Off') : h('span', {}));
+/** Section card with a title, an optional switch and a one-line hint. */
+function card(title: string, hint?: string, sw?: HTMLElement, ...rows: (HTMLElement | null)[]): HTMLElement {
+  return h('div', { class: 'fz-card' },
+    h('div', { class: 'fz-card-head' }, h('div', { class: 'fz-card-title' }, title), sw ?? h('span', {})),
+    hint ? h('div', { class: 'fz-hint' }, hint) : null,
+    ...rows);
 }
 
-/** Enhanced Audio studio: pick Host / Guest / Master, a preset, shape the 6-band EQ on the graph, then dynamics. */
+/** Scroll a horizontal row so the item is in the middle. Only moves the row itself, never the sheet. */
+function centerIn(row: HTMLElement, item: HTMLElement | null): void {
+  if (!item) return;
+  const dx = item.getBoundingClientRect().left - row.getBoundingClientRect().left;
+  row.scrollLeft += dx - (row.clientWidth - item.offsetWidth) / 2;
+}
+
+/** Small EQ curve drawn on a preset tile. */
+function curve(src: FxChain): SVGElement {
+  const NS = 'http://www.w3.org/2000/svg', N = 32, W = 64, H = 32, mid = H / 2, sc = (H / 2 - 3) / 9;
+  const freqs = Array.from({ length: N + 1 }, (_, i) => 40 * Math.pow(400, i / N));
+  const pts = eqResponse(src, freqs).map((db, i) => `${((i / N) * W).toFixed(1)},${(mid - clamp(db, -9, 9) * sc).toFixed(1)}`);
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('class', 'fz-curve'); svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = `<line x1="0" y1="${mid}" x2="${W}" y2="${mid}" class="z"/><path d="M${pts.join(' L')}" class="c"/>`;
+  return svg;
+}
+
+/** Enhanced Audio studio: a preset, the 6-band EQ on the graph, then noise, compressor, de-esser and limiter. The mic is the audio source already chosen in the editor. */
 export function openFxSheet(ctx: FxCtx): void {
   const { p } = ctx;
   const state = getFx(p);
-  let target: FxTarget = p.mainAudio === 'constant' ? 'constant' : 'host';
+  const voiceRole: 'host' | 'constant' = p.mainAudio === 'constant' ? 'constant' : 'host';
+  let scope: 'voice' | 'master' = 'voice';
+  let target: FxTarget = voiceRole;
   let band: BandKey = 'presence';
   let custom = loadCustom();
   let bypass = false;
   const chain = () => state[target];
 
   const close = () => { ctx.setBypass(false); sheet.classList.add('out'); setTimeout(() => box.remove(), 180); };
-  const abBtn = h('button', { class: 'chip fx-ab', 'aria-label': 'Hear the original', onclick: () => { bypass = !bypass; ctx.setBypass(bypass); paintAb(); } }, 'A/B');
+  const abBtn = h('button', { class: 'fz-ab', 'aria-label': 'Hear the original', onclick: () => { bypass = !bypass; ctx.setBypass(bypass); paintAb(); } }, 'A/B');
   const paintAb = () => { abBtn.classList.toggle('on', bypass); abBtn.textContent = bypass ? 'Original' : 'A/B'; };
 
-  const tabs = h('div', { class: 'schips fx-tabs' });
+  const subtitle = h('div', { class: 'fz-sub' });
+  const seg = h('div', { class: 'fz-seg' });
   const top = h('div', {});
   const cv = h('canvas', { class: 'fx-cv', width: String(W), height: String(H) }) as HTMLCanvasElement;
-  const bandRow = h('div', { class: 'schips fx-bands' });
+  const bandRow = h('div', { class: 'fz-bands' });
   const ctrl = h('div', {});
   const dyn = h('div', {});
-  const body = h('div', { class: 'at-body' }, tabs, top, h('div', { class: 'at-sec' }, cv), bandRow, ctrl, dyn);
-  const sheet = h('div', { class: 'at-sheet fx', role: 'dialog' },
+  const body = h('div', { class: 'at-body fz-body' }, seg, top,
+    h('div', { class: 'fz-card fz-graph' }, cv, bandRow, ctrl), dyn);
+  const sheet = h('div', { class: 'at-sheet fx fz', role: 'dialog' },
     h('div', { class: 'at-handle' }),
-    h('div', { class: 'at-head' }, h('button', { class: 'at-back', 'aria-label': 'Close', onclick: close }, icon('back', 20)), h('div', { class: 'at-title' }, 'Enhanced Audio'), abBtn),
+    h('div', { class: 'at-head' },
+      h('button', { class: 'at-back', 'aria-label': 'Close', onclick: close }, icon('back', 20)),
+      h('div', { class: 'fz-titles' }, h('div', { class: 'at-title' }, 'Enhanced Audio'), subtitle),
+      abBtn),
     body);
   const box = h('div', { class: 'at-scrim clear', onclick: (e: Event) => { if (e.target === box) close(); } }, sheet);
   document.body.append(box);
@@ -80,15 +114,16 @@ export function openFxSheet(ctx: FxCtx): void {
   /** Something changed: the preview, the save and the graph. */
   const touch = () => { ctx.changed(); draw(); };
 
-  // ------------------------------------------------------------ target tabs
-  function renderTabs() {
-    tabs.replaceChildren(...FX_TARGETS.map(([t, l]) => h('button', {
-      class: 'chip' + (t === target ? ' on' : ''),
-      onclick: () => { target = t; renderAll(); },
-    }, l + (state[t].on ? ' •' : ''))));
+  // ------------------------------------------------------------ scope: the voice (already chosen in the editor) or the whole mix
+  function renderSeg() {
+    subtitle.textContent = scope === 'master' ? 'Whole mix: voice and music' : `${voiceRole === 'host' ? 'Host' : 'Guest'} voice`;
+    seg.replaceChildren(...([['voice', 'Voice'], ['master', 'Whole mix']] as ['voice' | 'master', string][]).map(([k, l]) => h('button', {
+      class: 'fz-seg-b' + (scope === k ? ' on' : ''),
+      onclick: () => { scope = k; target = k === 'master' ? 'master' : voiceRole; renderAll(); },
+    }, l + (state[k === 'master' ? 'master' : voiceRole].on ? ' •' : ''))));
   }
 
-  // ------------------------------------------------------------ presets
+  // ------------------------------------------------------------ switch + presets
   const isBuiltIn = (name?: string) => BUILT_IN.some((b) => b.name === name);
   function applyPreset(src: FxChain, name: string) {
     const c = cloneChain(src); c.on = true; c.preset = name;
@@ -99,22 +134,34 @@ export function openFxSheet(ctx: FxCtx): void {
     const c = chain();
     const cur = c.preset ? [...BUILT_IN, ...custom].find((x) => x.name === c.preset) : undefined;
     const edited = !!cur && !sameSound(c, cur.chain);
-    const chipsRow = h('div', { class: 'chips fx-presets' },
-      ...BUILT_IN.map((b) => h('button', { class: 'chip' + (c.preset === b.name ? ' on' : ''), title: b.hint, onclick: () => applyPreset(b.chain, b.name) }, b.name)),
-      ...custom.map((u) => h('button', { class: 'chip' + (c.preset === u.name ? ' on' : ''), onclick: () => applyPreset(u.chain, u.name) }, '★ ' + u.name)));
-    const acts: HTMLElement[] = [h('button', { class: 'chip', onclick: () => void saveNew() }, icon('plus', 16), 'Save as preset')];
+    const sub = cur ? `${c.preset}${edited ? ' · edited' : ''}` : 'Pick a preset or shape the sound yourself';
+    const mainCard = h('div', { class: 'fz-card fz-main' },
+      h('div', { class: 'fz-main-text' },
+        h('div', { class: 'fz-card-title' }, target === 'master' ? 'Whole mix enhancement' : 'Voice enhancement'),
+        h('div', { class: 'fz-hint' }, sub)),
+      switchEl(c.on, (v) => { c.on = v; touch(); renderAll(); }, 'Enhanced audio on or off'));
+
+    const tile = (name: string, src: FxChain, mine: boolean, hint?: string) => h('button', {
+      class: 'fz-tile' + (c.preset === name ? ' on' : ''), title: hint, 'aria-label': name, onclick: () => applyPreset(src, name),
+    }, curve(src), h('span', { class: 'fz-tile-name' }, (mine ? '★ ' : '') + name));
+    const tiles = h('div', { class: 'fz-tiles' },
+      ...BUILT_IN.map((b) => tile(b.name, b.chain, false, b.hint)),
+      ...custom.map((u) => tile(u.name, u.chain, true)),
+      h('button', { class: 'fz-tile add', 'aria-label': 'Save as preset', onclick: () => void saveNew() }, icon('plus', 22), h('span', { class: 'fz-tile-name' }, 'Save')));
+
+    const acts: HTMLElement[] = [];
     if (cur && !isBuiltIn(c.preset)) {
-      acts.push(h('button', { class: 'chip', onclick: () => overwrite() }, 'Overwrite'),
-        h('button', { class: 'chip', onclick: () => void rename() }, 'Rename'),
-        h('button', { class: 'chip', onclick: () => void remove() }, icon('trash', 16), 'Delete'));
+      acts.push(h('button', { class: 'fz-link', onclick: () => overwrite() }, 'Overwrite'),
+        h('button', { class: 'fz-link', onclick: () => void rename() }, 'Rename'),
+        h('button', { class: 'fz-link danger', onclick: () => void remove() }, 'Delete'));
     }
-    acts.push(h('button', { class: 'chip', onclick: () => resetToDefault() }, icon('undo', 16), 'Reset'));
-    const note = p.mainAudio !== target && target !== 'master'
-      ? h('div', { class: 'at-hint' }, `${target === 'host' ? 'Host' : 'Guest'} mic is not the audio source right now, so you will not hear or export it. Change the audio source in Audio.`)
-      : h('div', { class: 'at-hint' }, target === 'master' ? 'Master works on the whole mix: voice and music together.' : (cur ? `${c.preset}${edited ? ' (edited)' : ''}: ${'hint' in cur ? cur.hint : 'your own preset'}` : 'Pick a preset or shape the sound yourself.'));
-    top.replaceChildren(
-      head(target === 'master' ? 'Master' : target === 'host' ? 'Host mic' : 'Guest mic', c.on, (v) => { c.on = v; touch(); renderAll(); }),
-      note, chipsRow, h('div', { class: 'schips fx-acts' }, ...acts));
+    top.replaceChildren(mainCard,
+      h('div', { class: 'fz-sec-head' }, h('span', {}, 'Presets'),
+        h('button', { class: 'fz-link', onclick: () => resetToDefault() }, icon('undo', 14), 'Reset')),
+      tiles,
+      ...(acts.length ? [h('div', { class: 'fz-acts' }, ...acts)] : []));
+    // keep the chosen preset in view
+    requestAnimationFrame(() => centerIn(tiles, tiles.querySelector('.fz-tile.on') as HTMLElement | null));
   }
   async function saveNew() {
     const c = chain();
@@ -157,6 +204,7 @@ export function openFxSheet(ctx: FxCtx): void {
     const fresh = b ? cloneChain(b.chain) : (() => { const d = defaultChain(); d.on = c.on; return d; })();
     if (b) fresh.on = c.on;
     state[target] = mergeChain(fresh); touch(); renderAll();
+    if (b && fresh.noise != null && target !== 'master') ctx.setNoise(target, fresh.noise);
   }
 
   // ------------------------------------------------------------ EQ graph
@@ -226,24 +274,26 @@ export function openFxSheet(ctx: FxCtx): void {
     if (!c.on) c.on = true;
     syncSliders(); touch();
   });
-  const endDrag = () => { if (drag) { drag = null; renderTabs(); renderTop(); } };
+  const endDrag = () => { if (drag) { drag = null; renderSeg(); renderTop(); } };
   cv.addEventListener('pointerup', endDrag); cv.addEventListener('pointercancel', endDrag);
 
   // ------------------------------------------------------------ band picker + sliders
   function renderBands() {
     bandRow.replaceChildren(...BANDS.map((b) => h('button', {
-      class: 'chip fx-band' + (b.key === band ? ' on' : ''), onclick: () => { band = b.key; renderBands(); renderCtrl(); draw(); },
+      class: 'fz-band' + (b.key === band ? ' on' : ''), onclick: () => { band = b.key; renderBands(); renderCtrl(); draw(); },
     }, h('i', { class: 'fx-dot', style: `background:${b.color}` }), `${b.short} ${b.label}`)));
+    requestAnimationFrame(() => centerIn(bandRow, bandRow.querySelector('.fz-band.on') as HTMLElement | null));
   }
   let sliders: { f?: HTMLInputElement; g?: HTMLInputElement; q?: HTMLInputElement; fv?: HTMLElement; gv?: HTMLElement; qv?: HTMLElement } = {};
   /** After a drag on the graph, move the sliders to match. */
   function syncSliders() {
     const c = chain();
     const s = sliders;
-    if (band === 'hpf') { if (s.f) s.f.value = String(c.hpf.f); if (s.fv) s.fv.textContent = fmtHz(c.hpf.f); return; }
+    const set = (el: HTMLInputElement | undefined, v: number) => { if (el) { el.value = String(v); paintRange(el); } };
+    if (band === 'hpf') { set(s.f, c.hpf.f); if (s.fv) s.fv.textContent = fmtHz(c.hpf.f); return; }
     const b = c[band];
-    if (s.f) s.f.value = String(b.f); if (s.fv) s.fv.textContent = fmtHz(b.f);
-    if (s.g) s.g.value = String(b.g); if (s.gv) s.gv.textContent = fmtDb(b.g);
+    set(s.f, b.f); if (s.fv) s.fv.textContent = fmtHz(b.f);
+    set(s.g, b.g); if (s.gv) s.gv.textContent = fmtDb(b.g);
   }
   function renderCtrl() {
     const c = chain();
@@ -253,28 +303,39 @@ export function openFxSheet(ctx: FxCtx): void {
       sliders[key] = inp; (sliders as Record<string, HTMLElement>)[`${key}v`] = val; return el;
     };
     sliders = {};
+    const touchOn = () => { if (!c.on) c.on = true; touch(); };
     if (band === 'hpf') {
-      parts.push(head('Low-cut (removes rumble, fan, AC hum)', c.hpf.on, (v) => { c.hpf.on = v; touch(); renderCtrl(); }));
-      if (c.hpf.on) parts.push(grab(slider('Frequency', FX_RANGE.hpf.f[0], FX_RANGE.hpf.f[1], 1, c.hpf.f, fmtHz, (v) => { c.hpf.f = v; if (!c.on) c.on = true; touch(); }), 'f'));
+      parts.push(h('div', { class: 'fz-band-head' }, h('div', {}, h('div', { class: 'fz-card-title' }, 'Low-cut'), h('div', { class: 'fz-hint' }, 'Removes rumble, fan and AC hum')),
+        switchEl(c.hpf.on, (v) => { c.hpf.on = v; touchOn(); renderCtrl(); }, 'Low-cut on or off')));
+      if (c.hpf.on) parts.push(grab(slider('Frequency', FX_RANGE.hpf.f[0], FX_RANGE.hpf.f[1], 1, c.hpf.f, fmtHz, (v) => { c.hpf.f = v; touchOn(); }), 'f'));
     } else {
       const r = FX_RANGE[band];
       const lbl = BANDS.find((b) => b.key === band)!.label;
-      parts.push(h('div', { class: 'fx-sec-title', style: 'margin-top:16px' }, lbl));
+      parts.push(h('div', { class: 'fz-band-head' }, h('div', { class: 'fz-card-title' }, lbl)));
       const b = c[band];
-      parts.push(grab(slider('Frequency', r.f[0], r.f[1], 1, b.f, fmtHz, (v) => { b.f = v; if (!c.on) c.on = true; touch(); }), 'f'));
-      parts.push(grab(slider('Gain', -12, 12, 0.1, b.g, fmtDb, (v) => { b.g = v; if (!c.on) c.on = true; touch(); }), 'g'));
-      if (band !== 'air') parts.push(grab(slider('Q (width)', 0.3, 4, 0.05, c[band as 'mud'].q, (v) => v.toFixed(2), (v) => { c[band as 'mud'].q = v; if (!c.on) c.on = true; touch(); }), 'q'));
+      parts.push(grab(slider('Frequency', r.f[0], r.f[1], 1, b.f, fmtHz, (v) => { b.f = v; touchOn(); }), 'f'));
+      parts.push(grab(slider('Gain', -12, 12, 0.1, b.g, fmtDb, (v) => { b.g = v; touchOn(); }), 'g'));
+      if (band !== 'air') parts.push(grab(slider('Q (width)', 0.3, 4, 0.05, c[band as 'mud'].q, (v) => v.toFixed(2), (v) => { c[band as 'mud'].q = v; touchOn(); }), 'q'));
     }
     ctrl.replaceChildren(...parts);
   }
 
-  // ------------------------------------------------------------ dynamics + output
+  // ------------------------------------------------------------ noise, dynamics, output
   function renderDyn() {
     const c = chain();
     const on = () => { if (!c.on) c.on = true; };
+    const noiseCard = target === 'master' ? null : card('De-noise', 'Reduces fan and room hiss. Same as the Denoise tool. A light 5-15% keeps the voice natural.', undefined,
+      (() => {
+        const role = target as 'host' | 'constant';
+        const el = slider('Strength', 0, 100, 1, ctx.getNoise(role), (v) => `${v}%`, () => {});
+        const inp = el.querySelector('input') as HTMLInputElement;
+        inp.addEventListener('change', () => { chain().noise = Number(inp.value); ctx.setNoise(role, Number(inp.value)); ctx.changed(); });
+        return el;
+      })());
     dyn.replaceChildren(
-      h('div', { class: 'at-sec' }, head('Vocal compressor', c.comp.on, (v) => { c.comp.on = v; on(); touch(); renderDyn(); }),
-        h('div', { class: 'at-hint' }, 'Loud words come down, quiet words come up, so the voice stays even.'),
+      ...(noiseCard ? [noiseCard] : []),
+      card('Compressor', 'Loud words come down, quiet words come up, so the voice stays even.',
+        switchEl(c.comp.on, (v) => { c.comp.on = v; on(); touch(); renderDyn(); }, 'Compressor on or off'),
         ...(c.comp.on ? [
           slider('Threshold', -50, 0, 1, c.comp.thr, (v) => `${v} dB`, (v) => { c.comp.thr = v; on(); touch(); }),
           slider('Ratio', 1, 12, 0.5, c.comp.ratio, (v) => `${v}:1`, (v) => { c.comp.ratio = v; on(); touch(); }),
@@ -282,28 +343,18 @@ export function openFxSheet(ctx: FxCtx): void {
           slider('Release', 20, 500, 5, c.comp.release, (v) => `${v} ms`, (v) => { c.comp.release = v; on(); touch(); }),
           slider('Make-up gain', 0, 12, 0.5, c.comp.makeup, (v) => `+${v} dB`, (v) => { c.comp.makeup = v; on(); touch(); }),
         ] : [])),
-      ...(target === 'master' ? [] : [h('div', { class: 'at-sec' }, h('div', { class: 'fx-sec-title' }, 'De-noise'),
-        h('div', { class: 'at-hint' }, 'Reduces fan and room hiss. Same as the Denoise tool. Light (5-15%) keeps the voice natural.'),
-        (() => {
-          const role = target as 'host' | 'constant';
-          const el = slider('Strength', 0, 100, 1, ctx.getNoise(role), (v) => `${v}%`, () => {});
-          const inp = el.querySelector('input') as HTMLInputElement;
-          inp.addEventListener('change', () => { chain().noise = Number(inp.value); ctx.setNoise(role, Number(inp.value)); ctx.changed(); });
-          return el;
-        })())]),
-      h('div', { class: 'at-sec' }, head('De-esser', c.deess.on, (v) => { c.deess.on = v; on(); touch(); renderDyn(); }),
-        h('div', { class: 'at-hint' }, 'Softens sharp "s" and "sh" sounds.'),
+      card('De-esser', 'Softens sharp "s" and "sh" sounds.',
+        switchEl(c.deess.on, (v) => { c.deess.on = v; on(); touch(); renderDyn(); }, 'De-esser on or off'),
         ...(c.deess.on ? [
           slider('Amount', 0, 100, 1, c.deess.amount, (v) => `${v}%`, (v) => { c.deess.amount = v; on(); touch(); }),
           slider('Frequency', 4000, 9000, 100, c.deess.f, fmtHz, (v) => { c.deess.f = v; on(); touch(); }),
         ] : [])),
-      h('div', { class: 'at-sec' }, h('div', { class: 'fx-sec-title' }, 'Output & limiter'),
-        h('div', { class: 'at-hint' }, 'The limiter holds the sound under the ceiling so it never cracks or distorts.'),
+      card('Output & limiter', 'The limiter holds the sound under the ceiling so it never cracks or distorts.', undefined,
         slider('Output gain', -12, 12, 0.5, c.out.gain, fmtDb, (v) => { c.out.gain = v; on(); touch(); }),
         slider('Limiter ceiling', -6, 0, 0.5, c.out.ceiling, (v) => `${v} dBFS`, (v) => { c.out.ceiling = v; on(); touch(); })),
-      h('div', { class: 'at-hint', style: 'margin-top:14px' }, 'Preview and export use the same settings. A/B only changes what you hear now; the export always has the effect on.'));
+      h('div', { class: 'fz-foot' }, 'Preview and export use the same settings. A/B only changes what you hear now; the export always has the effect on.'));
   }
 
-  function renderAll() { renderTabs(); renderTop(); renderBands(); renderCtrl(); renderDyn(); draw(); }
+  function renderAll() { renderSeg(); renderTop(); renderBands(); renderCtrl(); renderDyn(); draw(); }
   renderAll();
 }

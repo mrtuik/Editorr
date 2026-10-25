@@ -163,7 +163,7 @@ export function editorScreen() {
   const dialogHost = h('div', { class: 'taskdialog-wrap' });
   const hudTimeBadge = h('div', { class: 'hud-time-badge' }, `${fmtClock(playMs)} / ${fmtClock(p.durationMs)}`);
   const playRipple = h('div', { class: 'preview-play-ripple' }, icon('play', 28));
-  const preview = h('div', { class: 'preview' }, stage, guideV, guideH, playRipple, pillsEl, dialogHost);
+  const preview = h('div', { class: 'preview' }, stage, guideV, guideH, playRipple);
 
   function triggerPlayRipple(isPlaying: boolean) {
     playRipple.replaceChildren(icon(isPlaying ? 'play' : 'pause', 28));
@@ -2404,7 +2404,7 @@ export function editorScreen() {
         tool('volume', 'Volume', () => openPanel('audio')),
         tool('scissors', 'Split', doSplitAudio),
         tool('wand', 'Denoise', () => openPanel('denoise')),
-        tool('eq', 'Enhanced', openFx),
+        tool('enhance', 'Enhanced', openFx),
         tool('silence', 'Silence', () => openPanel('silence')),
         tool('trash', 'Delete', () => void doDeleteAudio()));
     } else if (!hasClipSel && !hasSegSel && toolGroup === 'text') {
@@ -3137,7 +3137,7 @@ export function editorScreen() {
       h('div', { class: 'grow' }),
       resChip,
       h('button', { class: 'exportbtn', 'aria-label': 'Export', onclick: goExport }, 'Export')),
-    preview, controls, tlWrap, toolbar, panelEl);
+    preview, controls, tlWrap, pillsEl, toolbar, panelEl, dialogHost);
 
   app.onBack = () => {
     if (taskSheetEl) { closeListSheet(); return true; }
@@ -3219,24 +3219,35 @@ export function editorScreen() {
 
   offTasks = onTasks((list: Task[]) => {
     lastTasks = list;
-    // 1) dialog for the first modal task that is not minimized
+    // 1) small centered card for the first modal task that is not minimized
     const dlg = list.find((t) => t.modal && !t.minimized);
     if (dlg) {
       const pct = dlg.pct ?? 0;
-      dialogEl.replaceChildren(h('div', { class: 'taskdialog', role: 'dialog' },
+      const ring = h('div', { class: 'td-ring2' + (pct > 0 ? '' : ' indet'), style: `--p:${pct}` }, h('span', {}, pct > 0 ? `${pct}%` : ''));
+      dialogEl.replaceChildren(h('div', { class: 'taskdialog', role: 'dialog', 'aria-label': dlg.label },
+        h('div', { class: 'td-tile' }, ring),
         h('div', { class: 'td-title' }, dlg.label),
-        h('div', { class: 'td-box' }, h('div', { class: 'td-ring' }, spinner(34)), h('div', { class: 'td-pct' }, pct > 0 ? `${pct}%` : '')),
-        h('button', { class: 'td-min', onclick: () => minimizeTask(dlg.id) }, 'Minimize')));
+        h('div', { class: 'td-sub' }, 'This can take a moment. You can keep editing.'),
+        h('button', { class: 'td-min', onclick: () => minimizeTask(dlg.id) }, 'Minimize'),
+        dlg.cancel ? h('button', {
+          class: 'td-cancel',
+          onclick: async () => {
+            const stop = dlg.cancel!;
+            if (await confirmDialog('Stop this task?', `${dlg.label} will be cancelled.`, 'Stop task')) stop();
+          },
+        }, 'Cancel task') : null));
     } else dialogEl.replaceChildren();
 
-    // 2) ONE small dark pill at bottom-left inside preview for all tasks without open modal dialog
+    // 2) ONE small capsule at the left, just above the tools, for every task without an open dialog
     const activeTasks = list.filter((t) => !t.modal || t.minimized);
     if (!activeTasks.length) {
       pillsEl.replaceChildren();
       closeListSheet();
     } else {
       const first = activeTasks[0];
-      const label = first.label + (activeTasks.length === 1 && first.pct !== undefined && first.pct > 0 ? ` ${first.pct}%` : '');
+      const one = activeTasks.length === 1;
+      const pct = one && first.pct !== undefined && first.pct > 0 ? first.pct : 0;
+      const label = one ? first.label : `${activeTasks.length} tasks running`;
       const pillBtn = h('button', {
         class: 'pill tap',
         'aria-label': `${activeTasks.length} running: ${label}`,
@@ -3245,7 +3256,10 @@ export function editorScreen() {
           if (taskSheetEl) closeListSheet();
           else openListSheet();
         },
-      }, h('span', { class: 'pill-count' }, String(activeTasks.length)), h('span', { class: 'pill-text' }, label));
+      }, h('span', { class: 'pill-ring' + (pct > 0 ? '' : ' indet'), style: `--p:${pct}` }),
+        h('span', { class: 'pill-text' }, label),
+        pct > 0 ? h('span', { class: 'pill-pct' }, `${pct}%`) : null,
+        one ? null : h('span', { class: 'pill-count' }, String(activeTasks.length)));
       pillsEl.replaceChildren(pillBtn);
     }
     renderListSheet();

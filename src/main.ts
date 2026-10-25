@@ -8,6 +8,9 @@ import { settingsScreen } from './screens/settings';
 import { profileScreen } from './screens/profile';
 import { initStorage, listProjects, loadSettings } from './core/store';
 import { pruneUnusedVideos } from './core/media';
+import { installRangeFill } from './ui';
+
+installRangeFill();
 
 const root = document.getElementById('app')!;
 let cleanup: (() => void) | undefined;

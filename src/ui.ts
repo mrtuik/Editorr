@@ -215,7 +215,34 @@ export const ICON = {
   sensMed: '<path d="M5 19v-4M12 19v-8" /><path d="M19 19V5" opacity=".25"/>',
   sensHigh: '<path d="M5 19v-4M12 19v-8M19 19V5" />',
   editPencil: '<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />',
+  /** Enhanced Audio tool icon (music-note-4, duotone). Filled shapes, so no stroke. */
+  enhance: '<g fill="currentColor" stroke="none"><path d="M8 13.2501C10.6233 13.2501 12.7499 15.3768 12.75 18.0001C12.75 20.6234 10.6234 22.7501 8 22.7501C5.37665 22.7501 3.25 20.6234 3.25 18.0001C3.25007 15.3768 5.37669 13.2501 8 13.2501Z"/><path d="M17.6816 2.50494C18.9487 2.35727 20.1514 3.10047 20.5859 4.29986C20.6838 4.57015 20.7183 4.86271 20.7344 5.169C20.7506 5.47731 20.75 5.86475 20.75 6.34186C20.75 6.71942 20.7534 7.00851 20.7012 7.28131C20.5742 7.94489 20.2066 8.53889 19.6699 8.94928C19.4494 9.11781 19.19 9.24443 18.8525 9.41315L16.2188 10.7296C15.7918 10.943 15.4452 11.1169 15.1621 11.2403C14.881 11.3628 14.6039 11.4628 14.3184 11.4962C13.0513 11.6438 11.8486 10.9006 11.4141 9.70123C11.3162 9.43096 11.2817 9.13836 11.2656 8.83209C11.2494 8.52382 11.25 8.13628 11.25 7.65924C11.25 7.2818 11.2467 6.99251 11.2988 6.71979C11.4259 6.05623 11.7934 5.46218 12.3301 5.05182C12.5506 4.88327 12.81 4.75667 13.1475 4.58795L15.7812 3.27154C16.2082 3.05809 16.5548 2.8842 16.8379 2.7608C17.1191 2.63825 17.3961 2.53825 17.6816 2.50494Z"/><path d="M11.25 18V8C11.25 7.58579 11.5858 7.25 12 7.25C12.4142 7.25 12.75 7.58579 12.75 8V18C12.75 18.4142 12.4142 18.75 12 18.75C11.5858 18.75 11.25 18.4142 11.25 18Z" opacity=".5"/></g>',
 };
+
+/**
+ * Slider fill. A range input shows its filled part through the --rf variable (0%..100%).
+ * (The old --fill variable is also a plain colour in :root, which made some slider tracks invisible.)
+ */
+export function paintRange(el: HTMLInputElement): void {
+  const min = parseFloat(el.min || '0'), max = parseFloat(el.max || '100'), v = parseFloat(el.value);
+  const span = max - min || 1;
+  el.style.setProperty('--rf', `${Math.max(0, Math.min(100, ((v - min) / span) * 100))}%`);
+}
+/** Keep every range slider in the app painted: at creation, while dragging and after code changes its value. */
+export function installRangeFill(): void {
+  const all = (root: ParentNode) => root.querySelectorAll<HTMLInputElement>('input[type=range]').forEach(paintRange);
+  const onEvt = (e: Event) => { const t = e.target as HTMLElement | null; if (t instanceof HTMLInputElement && t.type === 'range') paintRange(t); };
+  for (const ev of ['input', 'change', 'pointerdown', 'pointermove', 'pointerup']) document.addEventListener(ev, onEvt, true);
+  new MutationObserver((list) => {
+    for (const m of list) m.addedNodes.forEach((n) => {
+      if (!(n instanceof HTMLElement)) return;
+      if (n instanceof HTMLInputElement && n.type === 'range') paintRange(n); else all(n);
+    });
+  }).observe(document.documentElement, { childList: true, subtree: true });
+  // programmatic `input.value = x` does not fire events: a light re-paint keeps those sliders right too
+  setInterval(() => { all(document); }, 500);
+  all(document);
+}
 
 export function icon(name: keyof typeof ICON, size = 24): SVGElement {
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
