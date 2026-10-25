@@ -124,6 +124,8 @@ export interface Settings {
   musicClipDuck?: boolean;
   /** Music: language of Auto BGM songs, and how loud Auto SFX effects are (percent). */
   musicLang?: 'en' | 'hi' | 'te';
+  /** New project: background music + meme sounds are added by themselves (default on). */
+  autoSound?: boolean;
   sfxLevel?: number;
 }
 
@@ -167,6 +169,8 @@ export interface Project {
   bgm?: { path: string; names: string[]; levelDb: number; duckDb: number; fadeMs: number; sfx: { name: string; startMs: number }[]; items?: { name: string; startMs: number; endMs: number; kind: 'bgm' | 'music' | 'sfx'; mood?: string }[] };
   /** Enhanced Audio: EQ, de-esser, compressor and limiter for the Host mic, the Guest (Constant) mic and the whole mix. */
   fx?: import('./fx').FxState;
+  /** the sound designer already ran on this project */
+  autoSoundDone?: boolean;
   /** small jpeg data URL for Home */
   thumb?: string;
 }

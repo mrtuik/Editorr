@@ -2269,11 +2269,11 @@ export function editorScreen() {
   }
 
   /** Mixes the picked songs and effects under the voice and saves one wav. */
-  async function makeMusic(o: { levelDb: number; duckDb: number; fadeMs: number; clipDb: number; clipDuck: boolean }): Promise<boolean> {
+  async function makeMusic(o: { levelDb: number; duckDb: number; fadeMs: number; clipDb: number; clipDuck: boolean }, quiet = false): Promise<boolean> {
     if (!ensureGraph() || !actx) { toast('Audio is not ready yet. Try again in a moment.'); return false; }
     const role = p.mainAudio;
     const voice = sourcePcm(role);
-    startTask('music', 'Making music track', 5, { modal: true });
+    startTask('music', 'Making music track', 5, { modal: !quiet });
     const yieldUi = () => new Promise<void>((r) => setTimeout(r, 30));
     try {
       await yieldUi();
@@ -2313,6 +2313,24 @@ export function editorScreen() {
       toast(`Music failed: ${error instanceof Error ? error.message : 'unknown error'}`, 8000);
       return false;
     } finally { endTask('music'); }
+  }
+
+  /** New project: background music and meme sounds are put on the whole video by themselves (works in the background, the editor stays usable). */
+  async function autoSound() {
+    if (destroyed || p.bgm || p.autoSoundDone || p.durationMs < 3000) return;
+    p.autoSoundDone = true; scheduleSave();
+    startTask('autosound', 'AI sound designer', 0, { modal: false });
+    const say = (s: string) => updateTask('autosound', `AI sound designer: ${s}`);
+    try {
+      await autoBgm({ lang: app.settings.musicLang ?? 'en', status: say });
+      if (destroyed) return;
+      await autoSfx({ status: say });
+      if (destroyed) return;
+      if (!clipFiles.length && !sfxFiles.length) return;
+      say('mixing...');
+      await makeMusic({ levelDb: app.settings.musicLevelDb ?? -20, duckDb: app.settings.musicDuckDb ?? 14, fadeMs: app.settings.musicFadeMs ?? 1500, clipDb: app.settings.musicClipDb ?? -18, clipDuck: app.settings.musicClipDuck ?? true }, true);
+    } catch { toast('The sound designer stopped. Add sound from Music any time.', 4000); }
+    finally { endTask('autosound'); }
   }
 
   function clearMusic() { stopBgm(); stopPreview(); delete p.bgm; bgmBuffer = null; bgmPeaks = null; draw(); songFiles.length = 0; sfxFiles.length = 0; clipFiles.length = 0; scheduleSave(); toast('Music removed.'); }
@@ -2470,14 +2488,14 @@ export function editorScreen() {
           if (!/no suitable/i.test(note)) ytOk = false;
         }
       }
-      if (!list.length && !info.meme) list.push({ name: info.label, ...tidySfx(toBuffer(synthSfx(info.synth)), 3), yt: false });
+      if (!list.length) list.push({ name: info.label, ...tidySfx(toBuffer(synthSfx(info.synth)), 3), yt: false });
       if (list.length) variants.set(kind, list);
     }
     const count: Record<string, number> = {};
     let added = 0, fromYoutube = 0;
     for (const c of cuts) {
       const list = variants.get(c.kind);
-      if (!list) continue; // meme sound without YouTube: skipped
+      if (!list) continue;
       const n = count[c.kind] = (count[c.kind] ?? -1) + 1;
       const v = list[n % list.length]!;
       // the loudest part of the effect lands on the moment (a whoosh may start up to 0.9 s before it)
@@ -3255,6 +3273,7 @@ export function editorScreen() {
     computePeaks(); requestDraw();
     applyVolume();
 
+    const freshProject = !p.segments.length;
     if (!p.segments.length) {
       // first time in the editor with these two videos
       if (audioReady()) {
@@ -3293,6 +3312,7 @@ export function editorScreen() {
     }
 
     if (destroyed) return;
+    if (freshProject && p.syncConfidence !== 'Low' && app.settings.autoSound !== false) void autoSound();
     const intent: Intent | undefined = app.intent; app.intent = undefined;
     if (intent) openPanel(intent);
   }

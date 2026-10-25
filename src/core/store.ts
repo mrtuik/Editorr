@@ -34,7 +34,7 @@ export const DEFAULT_SETTINGS: Settings = {
   zoomOutMs: 300,
   zoomEase: [0.42, 0, 0.58, 1],
   musicLevelDb: -20,
-  musicDuckDb: 12,
+  musicDuckDb: 14,
   musicFadeMs: 1500,
 };
 

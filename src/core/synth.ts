@@ -74,11 +74,71 @@ export function synthLoop(mood: Mood, seed = 7): Float32Array {
   return out;
 }
 
-export type SfxKind = 'whoosh' | 'pop' | 'ding' | 'hit' | 'riser';
-export const SFX_LABEL: Record<SfxKind, string> = { whoosh: 'Whoosh', pop: 'Pop', ding: 'Ding', hit: 'Hit', riser: 'Riser' };
+export type SfxKind = 'whoosh' | 'pop' | 'ding' | 'hit' | 'riser' | 'boom' | 'crickets' | 'cash' | 'trombone' | 'boing' | 'applause' | 'laugh';
+export const SFX_LABEL: Record<SfxKind, string> = { whoosh: 'Whoosh', pop: 'Pop', ding: 'Ding', hit: 'Hit', riser: 'Riser', boom: 'Boom', crickets: 'Crickets', cash: 'Cha-ching', trombone: 'Sad trombone', boing: 'Boing', applause: 'Applause', laugh: 'Laugh' };
 
 export function synthSfx(kind: SfxKind): Float32Array {
   const r = rng(99 + kind.length);
+  const R = BGM_RATE;
+  if (kind === 'boom') { // vine-boom style: a deep dropping thump with a bit of crunch
+    const out = new Float32Array(Math.round(0.9 * R)); let ph = 0;
+    for (let k = 0; k < out.length; k++) { const t = k / R; ph += TAU * (40 + 110 * Math.exp(-t * 9)) / R; out[k] = Math.tanh(2.2 * Math.sin(ph)) * Math.exp(-t * 3.2); }
+    noiseHit(out, 0, 0.08, 0.5, r, 0.4); return out;
+  }
+  if (kind === 'crickets') { // three groups of quick high chirps
+    const out = new Float32Array(Math.round(2.4 * R));
+    for (let g = 0; g < 3; g++) for (let q = 0; q < 3; q++) {
+      const at = Math.round((0.1 + g * 0.75 + q * 0.075) * R), n = Math.round(0.05 * R);
+      for (let k = 0; k < n; k++) { const t = k / R; out[at + k]! += Math.sin(TAU * 4600 * t) * Math.sin(Math.PI * k / n) * 0.5; }
+    }
+    return out;
+  }
+  if (kind === 'cash') { // two bright bell hits
+    const out = new Float32Array(Math.round(1.2 * R));
+    for (const [at, f] of [[0, 2093], [0.09, 2637]] as [number, number][]) {
+      const s0 = Math.round(at * R);
+      for (let k = 0; s0 + k < out.length; k++) { const t = k / R; out[s0 + k]! += (Math.sin(TAU * f * t) + 0.4 * Math.sin(TAU * f * 2.76 * t)) * Math.exp(-t * 7) * 0.4; }
+    }
+    noiseHit(out, 0, 0.02, 0.4, r, 0.9); return out;
+  }
+  if (kind === 'trombone') { // wah wah wah waaah
+    const notes: [number, number, number][] = [[233, 0.38, 0], [220, 0.38, 0.4], [208, 0.38, 0.8], [196, 1.0, 1.2]];
+    const out = new Float32Array(Math.round(2.4 * R));
+    for (const [f0, dur, at] of notes) {
+      const s0 = Math.round(at * R), n = Math.round(dur * R); let ph = 0, y = 0;
+      for (let k = 0; k < n; k++) {
+        const t = k / R, last = dur > 0.9;
+        const f = f0 * (last ? 1 - 0.14 * Math.max(0, (t - 0.3) / 0.7) : 1) * (1 + (last ? 0.012 * Math.sin(TAU * 6 * t) : 0));
+        ph = (ph + f / R) % 1;
+        y += ((2 * ph - 1) - y) * (0.08 + 0.1 * Math.min(1, t * 6));
+        const e = Math.min(1, k / (0.03 * R)) * Math.min(1, (n - k) / (0.08 * R));
+        out[s0 + k]! += (y * 1.6 + Math.sin(TAU * ph) * 0.3) * e * 0.5;
+      }
+    }
+    return out;
+  }
+  if (kind === 'boing') { // cartoon spring
+    const out = new Float32Array(Math.round(0.7 * R)); let ph = 0;
+    for (let k = 0; k < out.length; k++) { const t = k / R; ph += TAU * (260 + 380 * Math.exp(-t * 5) + 70 * Math.sin(TAU * 17 * t) * Math.exp(-t * 3)) / R; out[k] = Math.sin(ph) * Math.exp(-t * 4.5) * 0.9; }
+    return out;
+  }
+  if (kind === 'applause') { // a crowd of claps
+    const out = new Float32Array(Math.round(2.2 * R));
+    for (let c = 0; c < 140; c++) { const t = r() * 1.9, swell = Math.sin(Math.PI * Math.min(1, t / 1.9)) ** 0.6; noiseHit(out, t, 0.025, (0.25 + r() * 0.5) * swell, r, 0.75); }
+    return out;
+  }
+  if (kind === 'laugh') { // ha ha ha ha
+    const out = new Float32Array(Math.round(1.3 * R));
+    for (let b = 0; b < 4; b++) {
+      const s0 = Math.round((0.05 + b * 0.24) * R), n = Math.round(0.14 * R), f0 = 270 - b * 14;
+      for (let k = 0; k < n; k++) {
+        const t = k / R; let v = 0;
+        for (let hnum = 1; hnum <= 10; hnum++) { const f = hnum * f0, g = Math.exp(-(((f - 750) / 320) ** 2)) + 0.6 * Math.exp(-(((f - 1250) / 420) ** 2)); v += Math.sin(TAU * f * t) * g / hnum ** 0.3; }
+        out[s0 + k]! += (v * 0.25 + (r() * 2 - 1) * 0.08) * Math.sin(Math.PI * k / n);
+      }
+    }
+    return out;
+  }
   if (kind === 'whoosh' || kind === 'riser') {
     const dur = kind === 'whoosh' ? 0.65 : 1.6, n = Math.round(dur * BGM_RATE), out = new Float32Array(n);
     let y = 0;

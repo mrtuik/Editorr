@@ -20,9 +20,9 @@ export interface AutoInfo {
   maxS: number;
   /** the loudest part may start up to this long before the moment (ms) */
   lead: number;
-  /** meme-class sounds are skipped when YouTube is not available (a made-up beep would sound silly there) */
+  /** meme-class sounds are kept further apart from each other */
   meme: boolean;
-  /** sound made on the phone when YouTube fails (structure sounds only) */
+  /** sound made on the phone when YouTube is slow or fails, so the video still gets its sounds at once */
   synth: SfxKind;
   priority: number;
 }
@@ -32,14 +32,14 @@ export const AUTO_INFO: Record<AutoKind, AutoInfo> = {
   pop:      { label: 'Pop',      query: 'pop click sound effect',                maxS: 0.7, lead: 40,  meme: false, synth: 'pop',    priority: 1 },
   ding:     { label: 'Ding',     query: 'notification ding sound effect',        maxS: 1.2, lead: 40,  meme: false, synth: 'ding',   priority: 3 },
   hit:      { label: 'Hit',      query: 'impact hit boom sound effect',          maxS: 1.0, lead: 40,  meme: false, synth: 'hit',    priority: 3 },
-  laugh:    { label: 'Laugh',    query: 'laugh track sound effect funny',        maxS: 3.0, lead: 40,  meme: true,  synth: 'hit',    priority: 5 },
-  meme:     { label: 'Funny',    query: 'funny meme sound effects',              maxS: 2.5, lead: 40,  meme: true,  synth: 'hit',    priority: 5 },
-  wow:      { label: 'Boom',     query: 'vine boom sound effect',                maxS: 1.8, lead: 40,  meme: true,  synth: 'hit',    priority: 4 },
-  bruh:     { label: 'Bruh',     query: 'bruh sound effect meme',                maxS: 1.5, lead: 40,  meme: true,  synth: 'hit',    priority: 5 },
-  cash:     { label: 'Cash',     query: 'cha ching cash register sound effect',  maxS: 1.5, lead: 40,  meme: true,  synth: 'ding',   priority: 5 },
-  sad:      { label: 'Sad',      query: 'sad trombone meme sound effect',        maxS: 3.0, lead: 40,  meme: true,  synth: 'hit',    priority: 5 },
-  applause: { label: 'Applause', query: 'applause cheer sound effect',           maxS: 3.0, lead: 40,  meme: true,  synth: 'hit',    priority: 5 },
-  silence:  { label: 'Silence',  query: 'crickets awkward silence sound effect', maxS: 3.0, lead: 40,  meme: true,  synth: 'hit',    priority: 3 },
+  laugh:    { label: 'Laugh',    query: 'laugh track sound effect funny',        maxS: 3.0, lead: 40,  meme: true,  synth: 'laugh',    priority: 5 },
+  meme:     { label: 'Funny',    query: 'funny meme sound effects',              maxS: 2.5, lead: 40,  meme: true,  synth: 'boing',    priority: 5 },
+  wow:      { label: 'Boom',     query: 'vine boom sound effect',                maxS: 1.8, lead: 40,  meme: true,  synth: 'boom',    priority: 4 },
+  bruh:     { label: 'Bruh',     query: 'bruh sound effect meme',                maxS: 1.5, lead: 40,  meme: true,  synth: 'boom',    priority: 5 },
+  cash:     { label: 'Cash',     query: 'cha ching cash register sound effect',  maxS: 1.5, lead: 40,  meme: true,  synth: 'cash',   priority: 5 },
+  sad:      { label: 'Sad',      query: 'sad trombone meme sound effect',        maxS: 3.0, lead: 40,  meme: true,  synth: 'trombone',    priority: 5 },
+  applause: { label: 'Applause', query: 'applause cheer sound effect',           maxS: 3.0, lead: 40,  meme: true,  synth: 'applause',    priority: 5 },
+  silence:  { label: 'Silence',  query: 'crickets awkward silence sound effect', maxS: 3.0, lead: 40,  meme: true,  synth: 'crickets',    priority: 3 },
 };
 
 const TOKENS: Partial<Record<AutoKind, string[]>> = {

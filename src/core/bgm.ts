@@ -71,7 +71,7 @@ function duckCurve(i: MixInput): { curve: Float32Array; voiceDb: number } {
     f = k;
   }
   const target = Math.pow(10, -i.duckDb / 20);
-  const att = 1 - Math.exp(-FRAME / 150), rel = 1 - Math.exp(-FRAME / 400);
+  const att = 1 - Math.exp(-FRAME / 120), rel = 1 - Math.exp(-FRAME / 300);
   let y = 1;
   const loud: number[] = [];
   for (let f = 0; f < frames; f++) {

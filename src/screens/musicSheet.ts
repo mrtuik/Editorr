@@ -74,7 +74,7 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
   const unmount = () => { if (browser) { browser.destroy(); browser = null; } stopSound(); };
   /** CapCut layout (see-through scrim, short sheet, no title bar) for Auto BGM, Music and SFX. */
   const setLayout = (sb: boolean) => { box.classList.toggle('clear', sb); sheet.classList.toggle('sb', sb); };
-  const level = () => settings.musicLevelDb ?? -20, duck = () => settings.musicDuckDb ?? 12, fade = () => settings.musicFadeMs ?? 1500;
+  const level = () => settings.musicLevelDb ?? -20, duck = () => settings.musicDuckDb ?? 14, fade = () => settings.musicFadeMs ?? 1500;
   const clipDb = () => settings.musicClipDb ?? -18, clipDuck = () => settings.musicClipDuck ?? true;
   const hasAny = () => ctx.songs.length > 0 || ctx.sfx.length > 0 || ctx.clips.length > 0;
 

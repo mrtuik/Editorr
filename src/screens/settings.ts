@@ -66,6 +66,8 @@ export function settingsScreen() {
       group('Project & export defaults',
         option<number>('Default export resolution', 'Target resolution for new exports.', [[720, '720p'], [1080, '1080p'], [2160, '4K']], s.resolution, (v) => { s.resolution = v; save(); }),
         option<number>('Frame rate', 'Default export frame rate.', [[30, '30 FPS'], [60, '60 FPS']], s.fps, (v) => { s.fps = v; save(); })),
+      group('Sound',
+        option<string>('AI sound designer', 'On a new project, add background music and meme sound effects by itself. It uses YouTube when online.', [['on', 'On'], ['off', 'Off']], s.autoSound === false ? 'off' : 'on', (v) => { s.autoSound = v === 'on'; save(); })),
       group('Storage & cache',
         storageBody,
         action('silence', 'Clear cache', clearCache),
