@@ -64,6 +64,7 @@ export function editorScreen() {
   let playMs = 0;
   const songFiles: { name: string; buf: AudioBuffer }[] = [];
   const sfxFiles: { name: string; buf: AudioBuffer; startMs: number }[] = [];
+  const clipFiles: { name: string; buf: AudioBuffer; startMs: number }[] = [];
   let bgmBuffer: AudioBuffer | null = null;
   let bgmSource: AudioBufferSourceNode | null = null;
   let bgmLoading = false;
@@ -2055,7 +2056,7 @@ export function editorScreen() {
   }
 
   /** Mixes the picked songs and effects under the voice and saves one wav. */
-  async function makeMusic(o: { levelDb: number; duckDb: number; fadeMs: number }): Promise<boolean> {
+  async function makeMusic(o: { levelDb: number; duckDb: number; fadeMs: number; clipDb: number; clipDuck: boolean }): Promise<boolean> {
     if (!ensureGraph() || !actx) { toast('Audio is not ready yet. Try again in a moment.'); return false; }
     const role = p.mainAudio;
     const voice = sourcePcm(role);
@@ -2065,6 +2066,7 @@ export function editorScreen() {
       await yieldUi();
       const mix = renderMix({
         songs: songFiles.map((s) => s.buf), sfx: sfxFiles.map((s) => ({ buf: s.buf, startMs: s.startMs })),
+        clips: clipFiles.map((c) => ({ buf: c.buf, startMs: c.startMs, levelDb: o.clipDb, duck: o.clipDuck })),
         durationMs: p.durationMs, voice, voiceShiftMs: role === 'host' ? 0 : p.offsetMs,
         levelDb: o.levelDb, duckDb: o.duckDb, fadeMs: o.fadeMs,
       });
@@ -2082,7 +2084,7 @@ export function editorScreen() {
       const buf = actx.createBuffer(1, mix.length, BGM_RATE);
       buf.getChannelData(0).set(mix);
       bgmBuffer = buf;
-      p.bgm = { path, names: [...songFiles.map((s) => s.name), ...sfxFiles.map((s) => s.name)], levelDb: o.levelDb, duckDb: o.duckDb, fadeMs: o.fadeMs, sfx: sfxFiles.map((s) => ({ name: s.name, startMs: s.startMs })) };
+      p.bgm = { path, names: [...songFiles.map((s) => s.name), ...clipFiles.map((c) => c.name), ...sfxFiles.map((s) => s.name)], levelDb: o.levelDb, duckDb: o.duckDb, fadeMs: o.fadeMs, sfx: sfxFiles.map((s) => ({ name: s.name, startMs: s.startMs })) };
       scheduleSave();
       toast('Music added. It plays under the voice and is in the export.');
       return true;
@@ -2094,7 +2096,7 @@ export function editorScreen() {
 
   function openMusic() {
     openMusicSheet({
-      p, playMs: () => playMs, songs: songFiles, sfx: sfxFiles,
+      p, playMs: () => playMs, songs: songFiles, sfx: sfxFiles, clips: clipFiles,
       addSongs: async (files) => {
         for (const f of files) {
           try { songFiles.push({ name: f.name, buf: await decodeFile(f) }); } catch { toast(`Cannot read ${f.name}. Pick an mp3, m4a, wav or ogg file.`, 5000); }
@@ -2103,13 +2105,20 @@ export function editorScreen() {
       addSongFromPath: async (path, title) => {
         try { songFiles.push({ name: title, buf: await decodeUrl(fileSrc(path)) }); } catch { toast(`Cannot play the audio of ${title}.`, 5000); throw new Error('decode'); }
       },
+      addClip: async (file, startMs) => {
+        try { clipFiles.push({ name: file.name, buf: await decodeFile(file), startMs }); } catch { toast(`Cannot read ${file.name}. Pick an mp3, m4a, wav or ogg file.`, 5000); }
+      },
+      addClipFromPath: async (path, title, startMs) => {
+        try { clipFiles.push({ name: title, buf: await decodeUrl(fileSrc(path)), startMs }); } catch { toast(`Cannot play the audio of ${title}.`, 5000); throw new Error('decode'); }
+      },
+      removeClip: (i) => { clipFiles.splice(i, 1); },
       addSfx: async (file, startMs) => {
         try { sfxFiles.push({ name: file.name, buf: await decodeFile(file), startMs }); } catch { toast(`Cannot read ${file.name}.`, 5000); }
       },
       removeSong: (i) => { songFiles.splice(i, 1); },
       removeSfx: (i) => { sfxFiles.splice(i, 1); },
       apply: makeMusic,
-      clear: () => { stopBgm(); delete p.bgm; bgmBuffer = null; songFiles.length = 0; sfxFiles.length = 0; scheduleSave(); toast('Music removed.'); },
+      clear: () => { stopBgm(); delete p.bgm; bgmBuffer = null; songFiles.length = 0; sfxFiles.length = 0; clipFiles.length = 0; scheduleSave(); toast('Music removed.'); },
       preview: () => { if (playing) startCleanAudio(); },
     }, app.settings, () => { void saveSettings(app.settings); });
   }

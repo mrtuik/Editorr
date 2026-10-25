@@ -119,6 +119,9 @@ export interface Settings {
   musicLevelDb?: number;
   musicDuckDb?: number;
   musicFadeMs?: number;
+  /** Music > Music (by hand): level compared with the voice (dB) and whether it drops while someone talks. */
+  musicClipDb?: number;
+  musicClipDuck?: boolean;
 }
 
 export interface Project {

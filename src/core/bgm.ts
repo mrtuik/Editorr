@@ -36,6 +36,8 @@ const rmsDb = (a: Float32Array, from = 0, to = a.length) => {
 export interface MixInput {
   songs: AudioBuffer[];
   sfx: { buf: AudioBuffer; startMs: number }[];
+  /** Songs placed by hand (Music > Music): start at startMs, played once, level compared with the voice. */
+  clips?: { buf: AudioBuffer; startMs: number; levelDb: number; duck: boolean }[];
   durationMs: number;
   /** the voice (mono 16 kHz) and where its time 0 is on the timeline */
   voice?: Float32Array;
@@ -118,6 +120,27 @@ export function renderMix(i: MixInput): Float32Array {
       if (k < fade) w *= k / fade;
       if (k > N - fade) w *= (N - k) / fade;
       out[k] *= w;
+    }
+  }
+  // hand-placed songs: start where the user put them, play once, cut at the end of the video
+  for (const c of i.clips ?? []) {
+    const t = mono(c.buf);
+    const at = Math.max(0, Math.round((c.startMs / 1000) * BGM_RATE));
+    const len = Math.min(t.length, N - at);
+    if (len <= 0) continue;
+    const g = Math.min(10, Math.pow(10, (voiceDb + c.levelDb - rmsDb(t)) / 20));
+    const fade = Math.max(1, Math.min(Math.round((i.fadeMs / 1000) * BGM_RATE), Math.floor(len / 2)));
+    for (let k = 0; k < len; k++) {
+      let d = 1;
+      if (c.duck) {
+        const pos = ((at + k) / BGM_RATE) * 1000 / FRAME;
+        const f0 = Math.floor(pos), fr = pos - f0;
+        d = (curve[f0] ?? 1) * (1 - fr) + (curve[f0 + 1] ?? 1) * fr;
+      }
+      let w = g * d;
+      if (k < fade) w *= k / fade;
+      if (k > len - fade) w *= (len - k) / fade;
+      out[at + k] += t[k] * w;
     }
   }
   // effects: peak 0.7 of full scale, not ducked

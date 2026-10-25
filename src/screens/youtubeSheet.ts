@@ -2,10 +2,12 @@ import { h, icon, toast, fmtTime } from '../ui';
 import { EditorrNative, type YoutubeItem } from '../core/native';
 
 /**
- * Optional YouTube module: search a song, tap it, the audio is saved on the phone and added to Auto BGM.
+ * Optional YouTube module: search a song, tap it, the audio is saved on the phone and handed to onAdded.
  * Creative Commons filter is ON by default (safest for Instagram / YouTube posts).
+ * mountYoutubeSearch puts the search box and results inside any container (used by Music > Music).
+ * Returns a cleanup function (call it when the container goes away).
  */
-export function openYoutubeSheet(onAdded: (path: string, title: string) => Promise<void>): void {
+export function mountYoutubeSearch(host: HTMLElement, onAdded: (path: string, title: string) => Promise<void>, hintText?: string): () => void {
   let ccOnly = true;
   let busyId: string | null = null;
   let items: YoutubeItem[] = [];
@@ -13,37 +15,26 @@ export function openYoutubeSheet(onAdded: (path: string, title: string) => Promi
   let status = '';
   let progress = 0;
 
-  const input = h('input', { type: 'text', placeholder: 'Song name or artist', 'aria-label': 'Search YouTube', enterkeyhint: 'search' }) as HTMLInputElement;
+  const input = h('input', { type: 'text', placeholder: 'Search YouTube: song name or artist', 'aria-label': 'Search YouTube', enterkeyhint: 'search' }) as HTMLInputElement;
   const goBtn = h('button', { class: 'btn primary', style: 'min-width:48px;min-height:48px', 'aria-label': 'Search', onclick: () => void search() }, icon('search', 20));
   const ccBtn = h('button', { class: 'at-tile', style: 'min-height:44px;flex-direction:row;gap:8px;margin-top:8px', onclick: () => { ccOnly = !ccOnly; drawCc(); } });
   const list = h('div', { class: 'rx-list', style: 'max-height:none;margin-top:10px' });
   const hint = h('div', { class: 'at-hint' });
-  const body = h('div', { class: 'at-body' },
-    h('div', { style: 'display:flex;gap:8px' }, input, goBtn), ccBtn, hint, list);
-  const close = () => {
-    cleanup();
-    sheet.classList.add('out');
-    setTimeout(() => box.remove(), 180);
-  };
-  const sheet = h('div', { class: 'at-sheet', role: 'dialog' }, h('div', { class: 'at-handle' }),
-    h('div', { class: 'at-head' }, h('button', { class: 'at-back', 'aria-label': 'Back', onclick: close }, icon('back', 20)),
-      h('div', { class: 'at-title' }, 'YouTube'), h('span', { class: 'at-head-gap' })), body);
-  const box = h('div', { class: 'at-scrim', style: 'z-index:140', onclick: (e: Event) => { if (e.target === box) close(); } }, sheet);
-  document.body.append(box);
+  host.append(h('div', { style: 'display:flex;gap:8px' }, input, goBtn), ccBtn, hint, list);
 
   let handle: { remove: () => Promise<void> } | null = null;
+  let alive = true;
   void EditorrNative.addListener('ytProgress', (e: { id: string; percent: number }) => {
     if (e.id !== busyId) return;
     progress = e.percent; drawList();
-  }).then((hd: { remove: () => Promise<void> }) => { handle = hd; });
-  function cleanup() { if (handle) void handle.remove(); if (busyId) void EditorrNative.youtubeCancel().catch(() => {}); }
+  }).then((hd: { remove: () => Promise<void> }) => { if (alive) handle = hd; else void hd.remove(); });
 
   function drawCc() {
     ccBtn.classList.toggle('on', ccOnly);
     ccBtn.replaceChildren(icon('check', 18), h('span', {}, ccOnly ? 'Creative Commons only (safer for posting)' : 'All results (may get claims or be muted)'));
   }
   function drawHint() {
-    hint.textContent = status || 'Bollywood and English songs can get a copyright claim or be muted on Instagram / YouTube. YouTube Audio Library and Creative Commons songs are safe.';
+    hint.textContent = status || hintText || 'Bollywood and English songs can get a copyright claim or be muted on Instagram / YouTube. YouTube Audio Library and Creative Commons songs are safe.';
   }
   function drawList() {
     list.replaceChildren(...items.map((it) => {
@@ -78,10 +69,32 @@ export function openYoutubeSheet(onAdded: (path: string, title: string) => Promi
       done.add(it.id);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      if (!/cancel/i.test(msg)) toast(msg || 'Download failed.', 6000);
+      if (!/cancel|decode/i.test(msg)) toast(msg || 'Download failed.', 6000);
     } finally { busyId = null; drawList(); }
   }
 
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); void search(); } });
   drawCc(); drawHint();
+
+  return () => {
+    alive = false;
+    if (handle) void handle.remove();
+    if (busyId) void EditorrNative.youtubeCancel().catch(() => {});
+  };
+}
+
+/** The same search in its own bottom sheet (used by Auto BGM > Add from YouTube). */
+export function openYoutubeSheet(onAdded: (path: string, title: string) => Promise<void>): void {
+  const body = h('div', { class: 'at-body' });
+  const close = () => {
+    cleanup();
+    sheet.classList.add('out');
+    setTimeout(() => box.remove(), 180);
+  };
+  const sheet = h('div', { class: 'at-sheet', role: 'dialog' }, h('div', { class: 'at-handle' }),
+    h('div', { class: 'at-head' }, h('button', { class: 'at-back', 'aria-label': 'Back', onclick: close }, icon('back', 20)),
+      h('div', { class: 'at-title' }, 'YouTube'), h('span', { class: 'at-head-gap' })), body);
+  const box = h('div', { class: 'at-scrim', style: 'z-index:140', onclick: (e: Event) => { if (e.target === box) close(); } }, sheet);
+  document.body.append(box);
+  const cleanup = mountYoutubeSearch(body, onAdded);
 }
