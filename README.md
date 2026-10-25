@@ -128,7 +128,7 @@ Settings page: waiting for the CapCut reference screenshot.
 - Settings page rebuilt in CapCut style: grouped rounded cards, option chips, storage bar with legend, action rows.
 - New Sync and Swap icons.
 
-## v16.7.0: optional YouTube songs (Music > Auto BGM > Add from YouTube)
+## v16.7.1: optional YouTube songs (Music > Auto BGM > Add from YouTube)
 
 Search a song on YouTube, tap it, the audio is saved on the phone and added to Auto BGM like a song from the phone. Everything is inside Editorr (pure Java, no extra library, no Kotlin, no JDK 21).
 

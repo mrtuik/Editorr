@@ -18,7 +18,7 @@ jobs:
     env:
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
       VERSION_CODE: ${{ github.run_number }}
-      VERSION_NAME: 16.7.0
+      VERSION_NAME: 16.7.1
       # YouTube module: OFF by default. ON when you tick it in "Run workflow", or set the repo variable EDITORR_YOUTUBE to 1.
       EDITORR_YOUTUBE: ${{ (github.event.inputs.youtube == 'true' || vars.EDITORR_YOUTUBE == '1') && '1' || '0' }}
       VITE_YOUTUBE: ${{ (github.event.inputs.youtube == 'true' || vars.EDITORR_YOUTUBE == '1') && '1' || '0' }}
