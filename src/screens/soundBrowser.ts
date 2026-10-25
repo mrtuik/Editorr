@@ -75,6 +75,8 @@ export interface SoundBrowserOpts {
   onAdd: (path: string, title: string) => Promise<void>;
   /** The chevron next to the search pill. */
   onClose: () => void;
+  /** The X next to the search pill: clears the search, or (when it is empty) closes the whole sheet. */
+  onCloseAll?: () => void;
   extraTabs?: ExtraTab[];
   /** The "Add with auto" switch under the search bar: on = everything the whole video needs is added by itself. */
   autoToggle?: { label: string; isOn: () => boolean; run: (on: boolean, status: (s: string) => void) => Promise<void> };
@@ -97,8 +99,11 @@ export function mountSoundBrowser(host: HTMLElement, o: SoundBrowserOpts): { des
 
   const input = h('input', { type: 'text', class: 'sb-input', placeholder: mode === 'sfx' ? 'Search sound effects' : 'Search music', enterkeyhint: 'search', autocomplete: 'off', 'aria-label': 'Search' }) as HTMLInputElement;
   const search = h('div', { class: 'sb-search' },
-    h('label', { class: 'sb-pill' }, icon('search', 22), input),
-    h('button', { class: 'sb-collapse', 'aria-label': 'Close', onclick: () => o.onClose() }, icon('chevD', 26)));
+    h('label', { class: 'sb-pill' }, icon('search', 20), input),
+    h('button', { class: 'sb-collapse', 'aria-label': 'Clear search or close', onclick: () => {
+      if (input.value) { input.value = ''; select(tab === '' ? '0' : tab); } else (o.onCloseAll ?? o.onClose)();
+    } }, icon('close', 22)),
+    h('button', { class: 'sb-collapse', 'aria-label': 'Hide', onclick: () => o.onClose() }, icon('chevD', 24)));
   const tabsEl = h('div', { class: 'sb-tabs', role: 'tablist' });
   const listEl = h('div', { class: 'sb-list' });
   const autoEl = h('div', { class: 'sb-auto' });

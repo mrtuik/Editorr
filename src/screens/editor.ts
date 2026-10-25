@@ -13,7 +13,8 @@ import { askAutoZoom } from './zoomSheet';
 import { openMusicSheet, type AutoPlan } from './musicSheet';
 import { BGM_RATE, decodeFile, decodeUrl, renderMix, toBase64, toBuffer, toWav } from '../core/bgm';
 import { MOOD_LABEL, analyzeMood, moodQuery, type MusicLang } from '../core/mood';
-import { SFX_LABEL, synthLoop, synthSfx, type SfxKind } from '../core/synth';
+import { synthLoop, synthSfx } from '../core/synth';
+import { AUTO_INFO, planSfx, type AutoKind } from '../core/sfxPlan';
 import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, pageAt, type CapPage, textPage, textStyleOf } from '../core/captions';
 import { transcribe, type WhisperModel } from '../core/transcribe';
 import { addPunchZooms, addReactions, findPeaks, removeAllReactions, removeReaction } from '../core/autocut';
@@ -2426,43 +2427,31 @@ export function editorScreen() {
    *  The sounds come from YouTube; a sound made on the phone is used only when YouTube does not work. */
   async function autoSfx(o: { status: (s: string) => void }): Promise<{ count: number; fromYoutube: number; note?: string }> {
     for (let i = sfxFiles.length - 1; i >= 0; i--) if (sfxFiles[i]!.auto) sfxFiles.splice(i, 1);
-    const cuts: { kind: SfxKind; startMs: number }[] = [];
-    // every moment that needs a sound: layout change = whoosh, other camera = pop, reaction cutaway = hit, text appearing = ding
-    const all: { kind: SfxKind; startMs: number }[] = [];
-    for (let i = 1; i < p.segments.length; i++) {
-      const a = p.segments[i - 1]!, b = p.segments[i]!;
-      const kind: SfxKind | null = b.reaction && !a.reaction ? 'hit' : a.style !== b.style ? 'whoosh' : a.main !== b.main ? 'pop' : null;
-      if (kind) all.push({ kind, startMs: b.startMs });
-    }
-    for (const t of p.texts ?? []) if (t.e > t.s) all.push({ kind: 'ding', startMs: t.s });
-    all.sort((x, y) => x.startMs - y.startMs);
-    let last = -1e9;
-    for (const c of all) {
-      if (cuts.length >= 80 || c.startMs - last < 2000) continue;
-      cuts.push(c); last = c.startMs;
-    }
+    o.status('Looking for funny and important moments...');
+    await new Promise<void>((r) => setTimeout(r, 30));
+    const role = p.mainAudio;
+    const cuts = planSfx({ segments: p.segments, texts: p.texts ?? [], words: p.captions?.words, voice: sourcePcm(role), voiceShiftMs: role === 'host' ? 0 : p.offsetMs, durationMs: p.durationMs });
     if (!cuts.length) return { count: 0, fromYoutube: 0 };
-    const QUERY: Partial<Record<SfxKind, string>> = { whoosh: 'whoosh transition sound effect', pop: 'pop click sound effect', ding: 'notification ding sound effect', hit: 'impact hit boom sound effect' };
-    const MAXS: Partial<Record<SfxKind, number>> = { whoosh: 1.4, pop: 0.7, ding: 1.2, hit: 1.0 };
 
     let ytOk = await youtubeAvailable();
     let note = ytOk ? '' : 'YouTube works only in the Android app.';
-    let fromYoutube = 0;
-    const variants = new Map<SfxKind, { name: string; buf: AudioBuffer; peakMs: number }[]>();
+    type Variant = { name: string; buf: AudioBuffer; peakMs: number; yt: boolean };
+    const variants = new Map<AutoKind, Variant[]>();
     for (const kind of new Set(cuts.map((c) => c.kind))) {
-      const list: { name: string; buf: AudioBuffer; peakMs: number }[] = [];
+      const info = AUTO_INFO[kind];
+      const list: Variant[] = [];
       if (ytOk) {
         try {
-          o.status(`Searching YouTube for ${SFX_LABEL[kind].toLowerCase()} sounds...`);
-          const r = await EditorrNative.youtubeSearch({ query: QUERY[kind] ?? 'sound effect', ccOnly: false, shortOnly: true, maxSeconds: 20 });
-          const picks = r.items.filter((it: { durationMs: number }) => it.durationMs >= 300 && it.durationMs <= 12_000).slice(0, 4);
+          o.status(`Searching YouTube for ${info.label.toLowerCase()} sounds...`);
+          const r = await EditorrNative.youtubeSearch({ query: info.query, ccOnly: false, shortOnly: true, maxSeconds: 30 });
+          const picks = r.items.filter((it: { durationMs: number }) => it.durationMs >= 300 && it.durationMs <= 20_000).slice(0, 6);
           if (!picks.length) throw new Error('No suitable sound found.');
           for (const pick of picks) {
-            if (list.length >= 2) break;
+            if (list.length >= (info.meme ? 3 : 2)) break;
             try {
               o.status(`Downloading ${pick.title.slice(0, 28)}...`);
               const d = await EditorrNative.youtubeDownload({ id: pick.id });
-              list.push({ name: d.title || pick.title, ...tidySfx(await decodeUrl(fileSrc(d.path)), MAXS[kind] ?? 1) });
+              list.push({ name: d.title || pick.title, ...tidySfx(await decodeUrl(fileSrc(d.path)), info.maxS), yt: true });
             } catch (error) { note = error instanceof Error ? error.message : String(error); }
           }
           if (!list.length) throw new Error(note || 'No sound could be downloaded.');
@@ -2471,20 +2460,22 @@ export function editorScreen() {
           if (!/no suitable/i.test(note)) ytOk = false;
         }
       }
-      if (!list.length) list.push({ name: SFX_LABEL[kind], ...tidySfx(toBuffer(synthSfx(kind)), 3) });
-      variants.set(kind, list);
+      if (!list.length && !info.meme) list.push({ name: info.label, ...tidySfx(toBuffer(synthSfx(info.synth)), 3), yt: false });
+      if (list.length) variants.set(kind, list);
     }
     const count: Record<string, number> = {};
+    let added = 0, fromYoutube = 0;
     for (const c of cuts) {
-      const list = variants.get(c.kind)!;
+      const list = variants.get(c.kind);
+      if (!list) continue; // meme sound without YouTube: skipped
       const n = count[c.kind] = (count[c.kind] ?? -1) + 1;
       const v = list[n % list.length]!;
-      // the loudest part of the effect lands exactly on the cut (a whoosh may start up to 0.9 s before it, a pop starts right on it)
-      const lead = Math.min(v.peakMs, c.kind === 'whoosh' ? 900 : 40);
+      // the loudest part of the effect lands on the moment (a whoosh may start up to 0.9 s before it)
+      const lead = Math.min(v.peakMs, AUTO_INFO[c.kind].lead);
       sfxFiles.push({ name: v.name, buf: v.buf, startMs: Math.max(0, c.startMs - lead), auto: true });
-      if (v.name !== SFX_LABEL[c.kind]) fromYoutube++;
+      added++; if (v.yt) fromYoutube++;
     }
-    return { count: cuts.length, fromYoutube, ...(fromYoutube < cuts.length && note ? { note } : {}) };
+    return { count: added, fromYoutube, ...(fromYoutube < added && note ? { note } : {}) };
   }
 
   /** Hear the n-th effect of the list (first seconds). */

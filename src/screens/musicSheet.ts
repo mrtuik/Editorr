@@ -191,7 +191,7 @@ export function openMusicSheet(ctx: MusicCtx, settings: MusicSettings, persist: 
       paintBrowserFoot();
     };
     browser = mountSoundBrowser(hostEl, {
-      mode, first: '0', extraTabs: extra, onClose: leaveView,
+      mode, first: '0', extraTabs: extra, onClose: leaveView, onCloseAll: () => close(),
       autoToggle: {
         label: 'Add with auto',
         isOn: () => (mode === 'sfx' ? ctx.sfx.some((x) => x.auto) : ctx.clips.some((c) => c.kind === 'bgm')),
