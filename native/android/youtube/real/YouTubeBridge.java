@@ -32,7 +32,8 @@ public final class YouTubeBridge {
     private static final String WEB_VERSION = "2.20250925.01.00";
     private static final String WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
     // Tried in this order until one gives a direct audio link: "ANDROID_VR:<version>" or "IOS".
-    private static final String[] CLIENTS = { "ANDROID_VR:1.65.10", "ANDROID_VR:1.60.19", "IOS" };
+    private static final String[] CLIENTS = { "ANDROID_VR:1.65.10", "ANDROID_VR:1.60.19", "TV:7.20250326.16.00", "IOS" };
+    private static final String TV_UA = "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version";
     private static final String IOS_NAME = "IOS";
     private static final String IOS_VERSION = "20.10.4";
     private static final String IOS_UA = "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)";
@@ -42,6 +43,7 @@ public final class YouTubeBridge {
     private static final int CHUNK = 10 * 1024 * 1024;
     private static final long MAX_BYTES = 80L * 1024 * 1024;
     private static final int MAX_RESULTS = 15;
+    private static final int MAX_RESULTS_SHORT = 30;
     private static volatile boolean cancelled;
 
     private YouTubeBridge() { }
@@ -51,6 +53,11 @@ public final class YouTubeBridge {
     // ------------------------------------------------------------------ search
 
     public static JSONArray search(String query, boolean creativeCommonsOnly) throws Exception {
+        return search(query, creativeCommonsOnly, false, 0);
+    }
+
+    /** shortOnly = YouTube filter "under 4 minutes" (sound effects); maxSeconds > 0 drops longer results. */
+    public static JSONArray search(String query, boolean creativeCommonsOnly, boolean shortOnly, int maxSeconds) throws Exception {
         JSONObject client = new JSONObject();
         client.put("clientName", "WEB");
         client.put("clientVersion", WEB_VERSION);
@@ -62,12 +69,13 @@ public final class YouTubeBridge {
         body.put("context", ctx);
         body.put("query", query);
         // filter: type = video; with Creative Commons = video + CC licence
-        body.put("params", creativeCommonsOnly ? "EgQQATAB" : "EgIQAQ==");
+        body.put("params", creativeCommonsOnly ? "EgQQATAB" : shortOnly ? "EgQQARgB" : "EgIQAQ==");
         JSONObject res = post("search", body, WEB_UA, "1", WEB_VERSION);
         JSONArray found = new JSONArray();
         collectVideos(res, found);
         JSONArray out = new JSONArray();
-        for (int i = 0; i < found.length() && out.length() < MAX_RESULTS; i++) {
+        int cap = shortOnly ? MAX_RESULTS_SHORT : MAX_RESULTS;
+        for (int i = 0; i < found.length() && out.length() < cap; i++) {
             JSONObject v = found.optJSONObject(i);
             if (v == null) continue;
             String id = v.optString("videoId", "");
@@ -78,7 +86,9 @@ public final class YouTubeBridge {
             item.put("id", id);
             item.put("title", runsText(v.optJSONObject("title")));
             item.put("channel", runsText(v.optJSONObject("ownerText")));
-            item.put("durationMs", parseClock(len) * 1000L);
+            long secs = parseClock(len);
+            if (maxSeconds > 0 && secs > maxSeconds) continue;
+            item.put("durationMs", secs * 1000L);
             out.put(item);
         }
         return out;
@@ -128,17 +138,22 @@ public final class YouTubeBridge {
         if (!dir.exists() && !dir.mkdirs()) throw new IOException("Cannot make the music folder.");
         prune(dir);
 
-        Pick pick = null;
         String title = "";
         long durationMs = 0;
         String lastError = "no direct audio link";
-        String ua = IOS_UA;
+        File out = null;
+        Pick done = null;
+        outer:
         for (String spec : CLIENTS) {
+            if (cancelled) throw new IOException("Cancelled");
             try {
                 boolean vr = spec.startsWith("ANDROID_VR");
-                String ver = vr ? spec.substring(spec.indexOf(':') + 1) : IOS_VERSION;
-                ua = vr ? vrUa(ver) : IOS_UA;
-                JSONObject res = post("player", playerBody(vr ? "ANDROID_VR" : IOS_NAME, ver, videoId), ua, vr ? "28" : "5", ver);
+                boolean tv = spec.startsWith("TV:");
+                String ver = (vr || tv) ? spec.substring(spec.indexOf(':') + 1) : IOS_VERSION;
+                String ua = vr ? vrUa(ver) : tv ? TV_UA : IOS_UA;
+                String name = vr ? "ANDROID_VR" : tv ? "TVHTML5" : IOS_NAME;
+                String id = vr ? "28" : tv ? "7" : "5";
+                JSONObject res = post("player", playerBody(name, ver, videoId), ua, id, ver);
                 JSONObject ps = res.optJSONObject("playabilityStatus");
                 String status = ps != null ? ps.optString("status", "") : "";
                 if (!"OK".equals(status)) {
@@ -150,19 +165,41 @@ public final class YouTubeBridge {
                     title = vd.optString("title", "");
                     durationMs = vd.optLong("lengthSeconds", 0) * 1000L;
                 }
-                pick = pickAudio(res.optJSONObject("streamingData"));
-                if (pick != null) break;
-                lastError = "no direct audio link";
+                java.util.List<Pick> picks = pickAudio(res.optJSONObject("streamingData"));
+                if (picks.isEmpty()) { lastError = "no direct audio link"; continue; }
+                // A link can be refused (403) while the next format or the next client works: try them all.
+                for (Pick pick : picks) {
+                    if (pick.size <= 0) { lastError = "YouTube did not tell the file size."; continue; }
+                    if (pick.size > MAX_BYTES) { lastError = "This audio is too long (over 80 MB)."; continue; }
+                    File o = new File(dir, "yt_" + videoId + "." + pick.ext);
+                    try {
+                        fetch(pick, ua, new File(dir, "yt_" + videoId + ".part"), o, progress);
+                        out = o; done = pick;
+                        break outer;
+                    } catch (IOException e) {
+                        if ("Cancelled".equals(e.getMessage())) throw e;
+                        lastError = e.getMessage() != null ? e.getMessage() : "download failed";
+                    }
+                }
             } catch (IOException e) {
+                if ("Cancelled".equals(e.getMessage())) throw e;
                 lastError = e.getMessage() != null ? e.getMessage() : "network error";
             }
         }
-        if (pick == null) throw new IOException("YouTube gave no audio: " + lastError);
-        if (pick.size <= 0) throw new IOException("YouTube did not tell the file size.");
-        if (pick.size > MAX_BYTES) throw new IOException("This audio is too long (over 80 MB).");
+        if (out == null || done == null) throw new IOException("YouTube gave no audio: " + lastError);
+        Pick pick = done;
 
-        File out = new File(dir, "yt_" + videoId + "." + pick.ext);
-        File tmp = new File(dir, "yt_" + videoId + ".part");
+        JSONObject r = new JSONObject();
+        r.put("path", out.getAbsolutePath());
+        r.put("title", title.isEmpty() ? videoId : title);
+        r.put("durationMs", durationMs);
+        r.put("mime", pick.mime);
+        return r;
+    }
+
+
+    /** Download one stream in 10 MB pieces into tmp, then move it to out. Throws on 403 etc. so the caller can try another link. */
+    private static void fetch(Pick pick, String ua, File tmp, File out, Progress progress) throws IOException {
         byte[] buf = new byte[64 * 1024];
         long pos = 0;
         int lastPct = -1;
@@ -173,6 +210,8 @@ public final class YouTubeBridge {
                 HttpURLConnection c = open(pick.url, ua);
                 c.setRequestMethod("GET");
                 c.setRequestProperty("Range", "bytes=" + pos + "-" + end);
+                c.setRequestProperty("Origin", "https://www.youtube.com");
+                c.setRequestProperty("Referer", "https://www.youtube.com/");
                 long before = pos;
                 try {
                     int code = c.getResponseCode();
@@ -198,20 +237,13 @@ public final class YouTubeBridge {
                 } finally { c.disconnect(); }
                 if (pos == before) throw new IOException("YouTube sent no data.");
             }
-        } catch (Exception e) {
+        } catch (IOException e) {
             //noinspection ResultOfMethodCallIgnored
             tmp.delete();
             throw e;
         }
         if (out.exists() && !out.delete()) throw new IOException("Cannot replace the old file.");
         if (!tmp.renameTo(out)) throw new IOException("Cannot save the audio file.");
-
-        JSONObject r = new JSONObject();
-        r.put("path", out.getAbsolutePath());
-        r.put("title", title.isEmpty() ? videoId : title);
-        r.put("durationMs", durationMs);
-        r.put("mime", pick.mime);
-        return r;
     }
 
     private static String vrUa(String ver) {
@@ -230,6 +262,8 @@ public final class YouTubeBridge {
             client.put("osName", "Android");
             client.put("osVersion", "12L");
             client.put("androidSdkVersion", 32);
+        } else if ("TVHTML5".equals(clientName)) {
+            client.put("clientVersion", version);
         } else {
             client.put("clientVersion", version);
             client.put("deviceMake", "Apple");
@@ -247,33 +281,36 @@ public final class YouTubeBridge {
         return body;
     }
 
-    /** Best audio-only stream that has a plain url (m4a / AAC first: every phone plays it). */
-    private static Pick pickAudio(JSONObject streaming) {
-        if (streaming == null) return null;
+    /** Audio-only streams that have a plain url, best first (m4a / AAC first: every phone plays it, then the rest by bitrate). */
+    private static java.util.List<Pick> pickAudio(JSONObject streaming) {
+        java.util.List<Pick> out = new java.util.ArrayList<>();
+        if (streaming == null) return out;
         JSONArray formats = streaming.optJSONArray("adaptiveFormats");
-        if (formats == null) return null;
-        JSONObject best = null;
-        boolean bestIsMp4 = false;
+        if (formats == null) return out;
+        java.util.List<JSONObject> list = new java.util.ArrayList<>();
         for (int i = 0; i < formats.length(); i++) {
             JSONObject f = formats.optJSONObject(i);
             if (f == null) continue;
-            String mime = f.optString("mimeType", "");
-            if (!mime.startsWith("audio/")) continue;
+            if (!f.optString("mimeType", "").startsWith("audio/")) continue;
             if (f.optString("url", "").isEmpty()) continue;
-            boolean mp4 = mime.startsWith("audio/mp4");
-            if (best == null || (mp4 && !bestIsMp4) || (mp4 == bestIsMp4 && f.optLong("bitrate", 0) > best.optLong("bitrate", 0))) {
-                best = f;
-                bestIsMp4 = mp4;
-            }
+            list.add(f);
         }
-        if (best == null) return null;
-        Pick p = new Pick();
-        p.url = best.optString("url");
-        p.mime = best.optString("mimeType");
-        p.ext = bestIsMp4 ? "m4a" : "webm";
-        p.size = Long.parseLong(best.optString("contentLength", "0").replaceAll("[^0-9]", "0"));
-        if (p.size <= 0) p.size = clenFromUrl(p.url);
-        return p;
+        java.util.Collections.sort(list, (x, y) -> {
+            boolean mx = x.optString("mimeType", "").startsWith("audio/mp4"), my = y.optString("mimeType", "").startsWith("audio/mp4");
+            if (mx != my) return mx ? -1 : 1;
+            return Long.compare(y.optLong("bitrate", 0), x.optLong("bitrate", 0));
+        });
+        for (JSONObject f : list) {
+            if (out.size() >= 3) break;
+            Pick p = new Pick();
+            p.url = f.optString("url");
+            p.mime = f.optString("mimeType");
+            p.ext = p.mime.startsWith("audio/mp4") ? "m4a" : "webm";
+            try { p.size = Long.parseLong(f.optString("contentLength", "0").replaceAll("[^0-9]", "0")); } catch (NumberFormatException e) { p.size = 0; }
+            if (p.size <= 0) p.size = clenFromUrl(p.url);
+            out.add(p);
+        }
+        return out;
     }
 
     private static long clenFromUrl(String url) {

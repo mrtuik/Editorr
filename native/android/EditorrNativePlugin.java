@@ -1344,10 +1344,12 @@ public class EditorrNativePlugin extends Plugin {
     public void youtubeSearch(PluginCall call) {
         final String q = call.getString("query");
         final boolean cc = call.getBoolean("ccOnly", true);
+        final boolean shortOnly = call.getBoolean("shortOnly", false);
+        final int maxSeconds = call.getInt("maxSeconds", 0);
         if (q == null || q.trim().isEmpty()) { call.reject("Type a song name."); return; }
         ytPool.execute(() -> {
             try {
-                JSONArray items = YouTubeBridge.search(q.trim(), cc);
+                JSONArray items = YouTubeBridge.search(q.trim(), cc, shortOnly, maxSeconds);
                 JSObject o = new JSObject();
                 o.put("items", items);
                 call.resolve(o);

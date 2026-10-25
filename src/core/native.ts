@@ -87,7 +87,7 @@ export interface EditorrNativePlugin {
   cancelExport(): Promise<void>;
   /** Optional YouTube module: enabled only in builds made with the flag (see README). */
   youtubeEnabled(): Promise<{ enabled: boolean }>;
-  youtubeSearch(opts: { query: string; ccOnly: boolean }): Promise<{ items: YoutubeItem[] }>;
+  youtubeSearch(opts: { query: string; ccOnly: boolean; /** sound effects: only videos under 4 minutes */ shortOnly?: boolean; /** drop results longer than this (0 = no limit) */ maxSeconds?: number }): Promise<{ items: YoutubeItem[] }>;
   /** Saves the audio of one video in the app music folder. Emits 'ytProgress' {id, percent}. */
   youtubeDownload(opts: { id: string }): Promise<{ path: string; title: string; durationMs: number }>;
   youtubeCancel(): Promise<void>;

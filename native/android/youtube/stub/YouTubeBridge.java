@@ -22,6 +22,10 @@ public final class YouTubeBridge {
         throw new IOException("YouTube is not included in this build.");
     }
 
+    public static JSONArray search(String query, boolean creativeCommonsOnly, boolean shortOnly, int maxSeconds) throws IOException {
+        throw new IOException("YouTube is not included in this build.");
+    }
+
     public static JSONObject download(String videoId, File dir, Progress progress) throws IOException {
         throw new IOException("YouTube is not included in this build.");
     }

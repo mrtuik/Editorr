@@ -2305,26 +2305,94 @@ export function editorScreen() {
     return plan;
   }
 
-  /** Auto SFX: a whoosh where the layout changes, a soft pop where the camera moves to the other person. */
-  function autoSfx(): number {
+  /** A downloaded effect: starts at its first sound (no silence before it) and is at most `maxS` seconds long. */
+  function tidySfx(buf: AudioBuffer, maxS = 4): AudioBuffer {
+    const d = buf.getChannelData(0);
+    let peak = 1e-6; for (let i = 0; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]!));
+    let from = 0; while (from < d.length && Math.abs(d[from]!) < peak * 0.05) from++;
+    from = Math.max(0, from - Math.round(0.02 * BGM_RATE));
+    return toBuffer(d.slice(from, Math.min(d.length, from + Math.round(maxS * BGM_RATE))));
+  }
+
+  /** Auto SFX: a whoosh where the layout changes, a soft pop where the camera moves to the other person.
+   *  The sounds come from YouTube; a sound made on the phone is used only when YouTube does not work. */
+  async function autoSfx(o: { status: (s: string) => void }): Promise<{ count: number; fromYoutube: number; note?: string }> {
     for (let i = sfxFiles.length - 1; i >= 0; i--) if (sfxFiles[i]!.auto) sfxFiles.splice(i, 1);
-    const cache = new Map<SfxKind, AudioBuffer>();
-    const get = (k: SfxKind) => { let b = cache.get(k); if (!b) { b = toBuffer(synthSfx(k)); cache.set(k, b); } return b; };
-    let last = -1e9, n = 0;
-    for (let i = 1; i < p.segments.length && n < 40; i++) {
+    const cuts: { kind: SfxKind; startMs: number }[] = [];
+    let last = -1e9;
+    for (let i = 1; i < p.segments.length && cuts.length < 40; i++) {
       const a = p.segments[i - 1]!, b = p.segments[i]!;
       const kind: SfxKind | null = a.style !== b.style ? 'whoosh' : a.main !== b.main ? 'pop' : null;
       if (!kind || b.startMs - last < 2500) continue;
-      sfxFiles.push({ name: SFX_LABEL[kind], buf: get(kind), startMs: Math.max(0, b.startMs - (kind === 'whoosh' ? 200 : 0)), auto: true });
-      last = b.startMs; n++;
+      cuts.push({ kind, startMs: Math.max(0, b.startMs - (kind === 'whoosh' ? 200 : 0)) });
+      last = b.startMs;
     }
-    return n;
+    if (!cuts.length) return { count: 0, fromYoutube: 0 };
+
+    let ytOk = await youtubeAvailable();
+    let note = ytOk ? '' : 'YouTube works only in the Android app.';
+    let fromYoutube = 0;
+    const variants = new Map<SfxKind, { name: string; buf: AudioBuffer }[]>();
+    for (const kind of new Set(cuts.map((c) => c.kind))) {
+      const list: { name: string; buf: AudioBuffer }[] = [];
+      if (ytOk) {
+        try {
+          o.status(`Searching YouTube for ${kind === 'whoosh' ? 'whoosh' : 'pop'} sounds...`);
+          const r = await EditorrNative.youtubeSearch({ query: kind === 'whoosh' ? 'whoosh transition sound effect' : 'pop click sound effect', ccOnly: false, shortOnly: true, maxSeconds: 20 });
+          const picks = r.items.filter((it: { durationMs: number }) => it.durationMs >= 300 && it.durationMs <= 12_000).slice(0, 4);
+          if (!picks.length) throw new Error('No suitable sound found.');
+          for (const pick of picks) {
+            if (list.length >= 2) break;
+            try {
+              o.status(`Downloading ${pick.title.slice(0, 28)}...`);
+              const d = await EditorrNative.youtubeDownload({ id: pick.id });
+              list.push({ name: d.title || pick.title, buf: tidySfx(await decodeUrl(fileSrc(d.path)), kind === 'whoosh' ? 2.5 : 1.5) });
+            } catch (error) { note = error instanceof Error ? error.message : String(error); }
+          }
+          if (!list.length) throw new Error(note || 'No sound could be downloaded.');
+        } catch (error) {
+          note = error instanceof Error ? error.message : String(error);
+          if (!/no suitable/i.test(note)) ytOk = false;
+        }
+      }
+      if (!list.length) list.push({ name: SFX_LABEL[kind], buf: toBuffer(synthSfx(kind)) });
+      variants.set(kind, list);
+    }
+    const count: Record<string, number> = {};
+    for (const c of cuts) {
+      const list = variants.get(c.kind)!;
+      const n = count[c.kind] = (count[c.kind] ?? -1) + 1;
+      const v = list[n % list.length]!;
+      sfxFiles.push({ name: v.name, buf: v.buf, startMs: c.startMs, auto: true });
+      if (v.name !== SFX_LABEL[c.kind]) fromYoutube++;
+    }
+    return { count: cuts.length, fromYoutube, ...(fromYoutube < cuts.length && note ? { note } : {}) };
+  }
+
+  /** Hear the n-th effect of the list (first seconds). */
+  function previewSfx(n: number): boolean {
+    const c = sfxFiles[n];
+    if (!c || !ensureGraph() || !actx) return false;
+    stopPreview();
+    const src = actx.createBufferSource();
+    src.buffer = c.buf;
+    const gain = actx.createGain();
+    gain.gain.value = 0.8;
+    src.connect(gain); gain.connect(actx.destination);
+    prevSrc = src;
+    src.onended = () => { if (prevSrc === src) prevSrc = null; try { src.disconnect(); gain.disconnect(); } catch { /* ok */ } };
+    if (actx.state === 'suspended') actx.resume().catch(() => {});
+    src.start(actx.currentTime, 0, 6);
+    return true;
   }
 
   function openMusic(start: 'home' | 'bgm' | 'music' | 'sfx' = 'home') {
     openMusicSheet({
       p, playMs: () => playMs, songs: songFiles, sfx: sfxFiles, clips: clipFiles,
-      autoBgm, autoSfx, previewAuto, stopPreview,
+      autoBgm, autoSfx, previewAuto, previewSfx, stopPreview,
+      addSfxFromPath: async (path, title, startMs) => {
+        try { sfxFiles.push({ name: title, buf: tidySfx(await decodeUrl(fileSrc(path)), 8), startMs }); } catch { toast(`Cannot play the audio of ${title}.`, 5000); throw new Error('decode'); }
+      },
       addSongs: async (files) => {
         for (const f of files) {
           try { songFiles.push({ name: f.name, buf: await decodeFile(f) }); } catch { toast(`Cannot read ${f.name}. Pick an mp3, m4a, wav or ogg file.`, 5000); }
