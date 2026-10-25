@@ -128,13 +128,17 @@ Settings page: waiting for the CapCut reference screenshot.
 - Settings page rebuilt in CapCut style: grouped rounded cards, option chips, storage bar with legend, action rows.
 - New Sync and Swap icons.
 
+## v16.9.2: LoveMusic look on every bottom sheet, lime accent
+
+All bottom sheets now share one look (end of `src/style.css`): flat black `#121212`, 22px top corners, grey pill buttons, ONE lime pill for the main action, pill chips (selected = lime with black text), lime slider values and progress. Covers: auto edit options, captions, text, zoom, reaction, face options / face pick, the CapCut tool panels, project menu, long-press menu and export settings. The in-progress task sheet keeps its own CapCut design.
+
 ## v16.9.1: YouTube always on, LoveMusic look
 
 - **Nothing to tick any more.** The YouTube module is part of every build. The `youtube` checkbox in Run workflow and the `EDITORR_YOUTUBE` variable are gone (the build always uses the real module).
 - **Search shows all songs.** The old "Creative Commons only" tick was ON by default, which hid almost every normal song. It is removed. Search always returns everything.
 - **YouTube search is easy to find.** Music > Music has the search box at the top. Auto BGM has "Add from YouTube" above "Add songs from phone". If YouTube cannot be reached, a red message says why (before, the button was silently hidden).
 - **Download is tougher.** Tries ANDROID_VR 1.65.10, then 1.60.19, then iOS. If YouTube refuses the Range header, the same piece is asked again with the `range=` link parameter.
-- **Music and YouTube sheets use the LoveMusic look:** flat black, pill buttons and pill tiles, white primary button, pink values and progress, rounded song rows with a round + / % / tick button.
+- **Music and YouTube sheets use the LoveMusic look:** flat black, pill buttons and pill tiles, rounded song rows with a round + / % / tick button.
 - Not compiled against Android and not run on a phone in this session (no network here).
 
 ## v16.9.0: optional YouTube songs (Music > Auto BGM > Add from YouTube)
