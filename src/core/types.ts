@@ -67,6 +67,8 @@ export interface Segment {
   /** Own crop of this clip. Missing = use the project crop. */
   cropHost?: CropState;
   cropConst?: CropState;
+  /** A cutaway to the listener made by the Reaction tool. */
+  reaction?: boolean;
 }
 
 export interface Settings {
@@ -99,6 +101,20 @@ export interface Settings {
   leadInMs?: number;
   /** Autoframe: a short answer ("hmm", a laugh) shorter than this does not switch the camera (ms). 0 = off. */
   ignoreShortMs?: number;
+  /** Captions: Whisper size and spoken language ('' = auto). */
+  whisperModel?: 'base' | 'small';
+  captionLang?: string;
+  /** Reaction tool: talk time before a cutaway and its length (ms). */
+  reactAfterMs?: number;
+  reactLengthMs?: number;
+  /** Auto zoom. */
+  zoomStrength?: 'soft' | 'medium' | 'strong';
+  /** Auto zoom shape: how much (1.15 = 15%), ease in / hold / ease out in ms, and the easing curve [x1,y1,x2,y2]. */
+  zoomAmount?: number;
+  zoomInMs?: number;
+  zoomHoldMs?: number;
+  zoomOutMs?: number;
+  zoomEase?: number[];
 }
 
 export interface Project {
@@ -132,6 +148,9 @@ export interface Project {
   /** The preview of this video runs on a small H.264 copy (set once one was needed). */
   proxyHost?: boolean;
   proxyConst?: boolean;
+  /** Auto captions (words with times) and how they look. */
+  captions?: import('./captions').CaptionData;
+  captionStyle?: import('./captions').CaptionStyle;
   /** small jpeg data URL for Home */
   thumb?: string;
 }

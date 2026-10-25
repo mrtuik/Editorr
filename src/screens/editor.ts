@@ -6,6 +6,12 @@ import { motionToActivity } from '../core/motion';
 import { cropForFace, FACE_SAMPLE_MS, faceBetween, lastReport, motionFromScan, pickTrack, scanFaces, speakerRuns, type FaceReport, type FaceScan } from '../core/faces';
 import { pickFace } from './facePick';
 import { askFaceOptions } from './faceOptions';
+import { openCaptionSheet, openTextSheet } from './captionSheet';
+import { openReactionSheet } from './reactionSheet';
+import { askAutoZoom } from './zoomSheet';
+import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, pageAt, type CapPage } from '../core/captions';
+import { transcribe, type WhisperModel } from '../core/transcribe';
+import { addPunchZooms, addReactions, findPeaks, removeAllReactions, removeReaction } from '../core/autocut';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
 import { detectSilence } from '../core/silence';
 import { EditorrNative, fileSrc, isNative, tick } from '../core/native';
@@ -54,6 +60,9 @@ export function editorScreen() {
   const p = app.project;
   const hist = new History();
   let playMs = 0;
+  let capPages: CapPage[] = [];
+  let capKey = '';
+  let capVersion = 0;
   let playing = false;
   let selectedId: string | null = null;
   let selClip: Role | null = null;
@@ -128,7 +137,8 @@ export function editorScreen() {
   const constClip = h('div', { class: 'clip-box' }, constV);
   const hostCell = h('div', { class: 'cell' }, hostClip, hostMsg);
   const constCell = h('div', { class: 'cell' }, constClip, constMsg);
-  const stage = h('div', { class: 'stage' }, hostCell, constCell);
+  const capCanvas = h('canvas', { class: 'cap-overlay' }) as HTMLCanvasElement;
+  const stage = h('div', { class: 'stage' }, hostCell, constCell, capCanvas);
   const guideV = h('div', { class: 'guide v' });
   const guideH = h('div', { class: 'guide h' });
   const pillsEl = h('div', { class: 'pills' });
@@ -207,6 +217,7 @@ export function editorScreen() {
     stage.style.width = `${Math.floor(w)}px`;
     stage.style.height = `${Math.floor(w / ar)}px`;
     updateSelFrame();
+    drawCaptionsPreview();
   }
   const ro = new ResizeObserver(() => { applyPreviewHeight(); fitStage(); layoutCrop(); });
   ro.observe(preview);
@@ -1903,6 +1914,102 @@ export function editorScreen() {
     else toast(`Autoframe (${how}): ${cameraSegs} camera cuts, ${segs.length} parts with faces centred. Undo to go back.`, 6000);
   }
 
+  // ======================================================================= Captions, reactions, auto zoom
+  function drawCaptionsPreview() {
+    const g = capCanvas.getContext('2d');
+    if (!g) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.round(stage.clientWidth * dpr), hh = Math.round(stage.clientHeight * dpr);
+    if (!w || !hh) return;
+    if (capCanvas.width !== w || capCanvas.height !== hh) { capCanvas.width = w; capCanvas.height = hh; }
+    g.clearRect(0, 0, w, hh);
+    if (!p.captions?.words.length) return;
+    const st = p.captionStyle ?? DEFAULT_CAPTION_STYLE;
+    const key = `${p.captions.words.length}|${JSON.stringify(st)}|${p.captions.words[0].w}|${p.captions.words[p.captions.words.length - 1].w}|${capVersion}`;
+    if (key !== capKey) { capKey = key; capPages = buildPages(p.captions, st); }
+    const page = pageAt(capPages, playMs);
+    if (page) drawCaption(g, w, hh, page, playMs, st);
+  }
+
+  /** Whisper on the main audio, shifted so that time 0 is timeline 0. */
+  async function generateCaptions(lang: string, model: WhisperModel): Promise<boolean> {
+    if (!needAudio()) return false;
+    const role = p.mainAudio;
+    const src = cleanedPcm(role) ?? sourcePcm(role);
+    if (!src) { toast('Audio is still being read. Try again in a moment.'); return false; }
+    const per = SAMPLE_RATE / 1000;
+    const shiftS = role === 'host' ? 0 : Math.round(p.offsetMs * per);
+    let pcm: Float32Array;
+    if (shiftS >= 0) pcm = src.subarray(shiftS, shiftS + Math.ceil(p.durationMs * per));
+    else { pcm = new Float32Array(Math.ceil(p.durationMs * per)); pcm.set(src.subarray(0, Math.max(0, pcm.length + shiftS)), -shiftS); }
+    setPlaying(false);
+    const job = transcribe(pcm, model, lang, (text, pct) => updateTask('captions', text, pct ?? undefined));
+    startTask('captions', 'Making captions', 0, { modal: true, cancel: () => job.cancel() });
+    try {
+      const data = await job.promise;
+      if (!data.words.length) { toast('No speech found.'); return false; }
+      p.captions = data;
+      p.captionStyle ??= { ...DEFAULT_CAPTION_STYLE };
+      capVersion++;
+      scheduleSave(); drawCaptionsPreview();
+      toast(`Captions ready: ${data.words.length} words. Style them in Text.`);
+      return true;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Captions failed.';
+      toast(msg === 'cancelled' ? 'Cancelled' : `Captions failed: ${msg}`, 8000);
+      return false;
+    } finally { endTask('captions'); }
+  }
+  function openCaptions() {
+    openCaptionSheet({
+      p, settings: app.settings,
+      generate: generateCaptions,
+      changed: () => { capVersion++; drawCaptionsPreview(); scheduleSave(); },
+      remove: () => { delete p.captions; capVersion++; drawCaptionsPreview(); scheduleSave(); },
+      seek: (ms) => seek(ms),
+    });
+  }
+
+  function doReactionTool() {
+    if (!needAudio()) return;
+    openReactionSheet({
+      settings: app.settings,
+      segments: () => p.segments,
+      durationMs: () => p.durationMs,
+      seek: (ms) => seek(ms),
+      remove: (id) => { edit(removeReaction(p.segments, id)); },
+      removeAll: () => { edit(removeAllReactions(p.segments)); },
+      add: () => {
+        const visible = (role: Role, ms: number) => {
+          const sc = faceScanOf(role);
+          if (!sc) return true;
+          const i = Math.min(sc.n - 1, Math.max(0, Math.floor(ms / sc.sampleMs)));
+          return sc.tracks.some((t) => !Number.isNaN(t.cx[i]));
+        };
+        const segs = addReactions(removeAllReactions(p.segments), runtime.hostPcm!, runtime.constPcm!, p.offsetMs, p.durationMs,
+          { afterMs: app.settings.reactAfterMs ?? 8000, lengthMs: app.settings.reactLengthMs ?? 1500 }, visible);
+        edit(segs);
+        const n = segs.filter((s) => s.reaction).length;
+        if (!n) toast('No long talking part found. Try a shorter "After talking for".');
+        return n;
+      },
+    });
+  }
+
+  async function doAutoZoom() {
+    if (!needAudio()) return;
+    const shape = await askAutoZoom(app.settings);
+    if (!shape) return;
+    const host = p.mainAudio === 'host';
+    const pcm = host ? runtime.hostPcm! : runtime.constPcm!;
+    const peaks = findPeaks(pcm, host ? 0 : Math.round(p.offsetMs / 100), p.durationMs, 5000, 5);
+    const before = p.segments.length;
+    const segs = addPunchZooms(p.segments, peaks, shape, (sg, role) => sg[CK(role)] ?? p[CK(role)]);
+    if (segs.length === before) { toast('No good moment found for a zoom.'); return; }
+    edit(segs);
+    toast(`Auto zoom added on ${peaks.length} loud moments. Undo to go back.`);
+  }
+
   function doSwap() { edit(p.segments.map((s) => ({ ...s, main: (s.main === 'host' ? 'constant' : 'host') as Role }))); }
   function doSplit() { edit(splitAt(p.segments, playMs)); selectedId = segmentAt(p.segments, playMs)?.id ?? null; tick(); }
   function doMerge() { const s = selected(); if (s) { edit(mergeWithPrev(p.segments, s.id)); selectedId = null; afterEdit(); } else toast('Tap a segment in the bottom row first.'); }
@@ -1931,6 +2038,9 @@ export function editorScreen() {
         tool('switchSlider', 'Auto switch', () => doAutoSwitch(false)),
         tool('autoframe', 'Autoframe', doAutoframe),
         tool('face', 'Faces', doFaces),
+        tool('text', 'Text', () => openTextSheet(openCaptions)),
+        tool('reaction', 'Reaction', doReactionTool),
+        tool('punch', 'Auto zoom', doAutoZoom),
         tool('silence', 'Silence', () => openPanel('silence')),
         tool('layout', 'Layout', () => openPanel('layout')),
         tool('user', 'On screen', () => openPanel('main')),
@@ -2501,6 +2611,7 @@ export function editorScreen() {
       if (key !== lastCropKey) { lastCropKey = key; layoutCrop(); renderPanel(); }
     }
     hudTimeBadge.textContent = `${fmtClock(playMs)} / ${fmtClock(p.durationMs)}`;
+    drawCaptionsPreview();
     draw();
   }
 

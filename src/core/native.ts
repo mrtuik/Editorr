@@ -1,3 +1,4 @@
+import { exportCaptions } from './captions';
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { effectiveGain } from './gain';
@@ -29,6 +30,8 @@ export interface ExportRequest {
   normalize: boolean;
   /** Gain applied to the kept audio (volume x normalize), 1 = unchanged. */
   gain: number;
+  /** Burned-in captions: pages with words and the look (see captions.ts exportCaptions). */
+  captions?: unknown;
   segments: {
     startMs: number; endMs: number; style: string; main: string; corner: string; size: string;
     /** Own crop of this clip (missing = use cropHost / cropConst above). */
@@ -120,6 +123,7 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     mirrorHost: p.mirrorHost, mirrorConst: p.mirrorConst,
     noiseHost: p.noiseHost, noiseConst: p.noiseConst,
     mainAudio: p.mainAudio,
+    captions: exportCaptions(p.captions, p.captionStyle),
     normalize: p.normalize,
     gain: effectiveGain(p, p.mainAudio),
     // sorted; parts removed by silence cut are simply not in this list

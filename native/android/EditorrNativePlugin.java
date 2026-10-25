@@ -20,6 +20,11 @@ import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.RectF;
+import android.graphics.Typeface;
 
 import androidx.activity.result.ActivityResult;
 import androidx.annotation.NonNull;
@@ -34,6 +39,10 @@ import androidx.media3.common.OverlaySettings;
 import androidx.media3.common.VideoCompositorSettings;
 import androidx.media3.effect.StaticOverlaySettings;
 import androidx.media3.effect.Crop;
+import androidx.media3.effect.BitmapOverlay;
+import androidx.media3.effect.OverlayEffect;
+import androidx.media3.effect.TextureOverlay;
+import androidx.media3.common.VideoFrameProcessingException;
 import androidx.media3.effect.Presentation;
 import androidx.media3.effect.ScaleAndRotateTransformation;
 import androidx.media3.effect.FrameDropEffect;
@@ -58,6 +67,7 @@ import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.google.common.collect.ImmutableList;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -1109,6 +1119,165 @@ public class EditorrNativePlugin extends Plugin {
 
     // ----------------------------------------------------------------- export
 
+    /** Captions drawn onto every frame. Same maths as captions.ts drawCaption, so preview and export match. */
+    private static final class CaptionOverlay extends BitmapOverlay {
+        private final int w, h;
+        private final long[] ps, pe;
+        private final String[][] words;
+        private final long[][] ws;
+        private final double size, y, stroke, activeScale;
+        private final int weight, color, highlight, strokeColor, boxColor;
+        private final boolean shadow, activeColor, hasBox;
+        private int lastKey = -2;
+        private Bitmap lastBmp;
+
+        private CaptionOverlay(int w, int h, long[] ps, long[] pe, String[][] words, long[][] ws, JSONObject st) {
+            this.w = w; this.h = h; this.ps = ps; this.pe = pe; this.words = words; this.ws = ws;
+            this.size = st.optDouble("size", 0.055); this.y = st.optDouble("y", 0.78);
+            this.stroke = st.optDouble("stroke", 0); this.activeScale = st.optDouble("activeScale", 1);
+            this.weight = st.optInt("weight", 700);
+            this.color = css(st.optString("color", "#FFFFFF"), Color.WHITE);
+            this.highlight = css(st.optString("highlight", "#FFD60A"), Color.YELLOW);
+            this.strokeColor = css(st.optString("strokeColor", "#000000"), Color.BLACK);
+            String box = st.optString("box", "");
+            this.hasBox = box != null && box.length() > 0;
+            this.boxColor = css(box, Color.BLACK);
+            this.shadow = st.optBoolean("shadow", false);
+            this.activeColor = st.optBoolean("activeColor", false);
+        }
+
+        static int css(String s, int def) {
+            try {
+                if (s == null || s.isEmpty()) return def;
+                if (s.startsWith("#")) return Color.parseColor(s);
+                if (s.startsWith("rgba(")) {
+                    String[] p = s.substring(5, s.indexOf(')')).split(",");
+                    int r = Integer.parseInt(p[0].trim()), g = Integer.parseInt(p[1].trim()), b = Integer.parseInt(p[2].trim());
+                    int a = Math.round(Float.parseFloat(p[3].trim()) * 255f);
+                    return Color.argb(a, r, g, b);
+                }
+            } catch (Exception ignored) { }
+            return def;
+        }
+
+        static CaptionOverlay create(JSONObject cap, int w, int h, long[] ra, long[] rb) {
+            try {
+                JSONArray pages = cap.optJSONArray("pages");
+                JSONObject st = cap.optJSONObject("style");
+                if (pages == null || st == null || pages.length() == 0) return null;
+                long[] cum = new long[ra.length];
+                long run = 0;
+                for (int i = 0; i < ra.length; i++) { cum[i] = run; run += rb[i] - ra[i]; }
+                List<Long> starts = new ArrayList<>(), ends = new ArrayList<>();
+                List<String[]> allWords = new ArrayList<>();
+                List<long[]> allStarts = new ArrayList<>();
+                for (int pi = 0; pi < pages.length(); pi++) {
+                    JSONObject page = pages.getJSONObject(pi);
+                    JSONArray wa = page.getJSONArray("words");
+                    double pageE = page.getDouble("e");
+                    List<String> t = new ArrayList<>();
+                    List<Long> s = new ArrayList<>();
+                    long lastMappedEnd = -1;
+                    double lastWordE = 0;
+                    for (int k = 0; k < wa.length(); k++) {
+                        JSONObject wo = wa.getJSONObject(k);
+                        double sMs = wo.getDouble("s"), eMs = wo.getDouble("e");
+                        long m = -1;
+                        for (int i = 0; i < ra.length; i++) {
+                            if (sMs >= ra[i] && sMs < rb[i]) { m = cum[i] + Math.round(sMs - ra[i]); break; }
+                        }
+                        if (m < 0) continue;
+                        t.add(wo.getString("t"));
+                        s.add(m);
+                        lastMappedEnd = m + Math.round(Math.max(0, eMs - sMs));
+                        lastWordE = eMs;
+                    }
+                    if (t.isEmpty()) continue;
+                    long pad = Math.round(Math.max(0, pageE - lastWordE));
+                    long[] sa = new long[s.size()];
+                    for (int k = 0; k < sa.length; k++) sa[k] = s.get(k);
+                    starts.add(sa[0]);
+                    ends.add(lastMappedEnd + pad);
+                    allWords.add(t.toArray(new String[0]));
+                    allStarts.add(sa);
+                }
+                if (starts.isEmpty()) return null;
+                long[] ps = new long[starts.size()], pe = new long[starts.size()];
+                for (int i = 0; i < ps.length; i++) { ps[i] = starts.get(i); pe[i] = ends.get(i); }
+                return new CaptionOverlay(w, h, ps, pe, allWords.toArray(new String[0][]), allStarts.toArray(new long[0][]), st);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        @Override
+        public Bitmap getBitmap(long presentationTimeUs) throws VideoFrameProcessingException {
+            long tc = presentationTimeUs / 1000;
+            int pi = -1;
+            for (int i = 0; i < ps.length; i++) { if (tc >= ps[i] && tc < pe[i]) { pi = i; break; } }
+            int wi = -1;
+            if (pi >= 0) { for (int k = 0; k < ws[pi].length; k++) { if (tc >= ws[pi][k]) wi = k; } }
+            int key = pi < 0 ? -1 : pi * 64 + (wi + 1);
+            if (key == lastKey && lastBmp != null) return lastBmp;
+            Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            if (pi >= 0) drawPage(new Canvas(bmp), pi, wi);
+            lastKey = key;
+            lastBmp = bmp;
+            return bmp;
+        }
+
+        private void drawPage(Canvas c, int pi, int active) {
+            String[] t = words[pi];
+            float fs = (float) Math.max(8, size * h);
+            Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+            p.setTypeface(Typeface.create(Typeface.SANS_SERIF, weight >= 700 ? Typeface.BOLD : Typeface.NORMAL));
+            p.setStrokeJoin(Paint.Join.ROUND);
+            float gap = fs * 0.28f;
+            float[] wd = new float[t.length];
+            float total = 0;
+            for (int i = 0; i < t.length; i++) {
+                p.setTextSize(fs * (i == active ? (float) activeScale : 1f));
+                wd[i] = p.measureText(t[i]);
+                total += wd[i];
+            }
+            total += gap * (t.length - 1);
+            float k = 1f;
+            float maxW = w * 0.9f;
+            if (total > maxW) k = maxW / total;
+            total *= k;
+            float cy = (float) (y * h);
+            float x = (w - total) / 2f;
+            if (hasBox) {
+                float padX = fs * 0.45f, padY = fs * 0.3f, r = fs * 0.3f;
+                float top = cy - fs * 0.62f - padY;
+                RectF rf = new RectF(x - padX, top, x + total + padX, top + fs * 1.24f + padY * 2f);
+                p.setStyle(Paint.Style.FILL);
+                p.setColor(boxColor);
+                c.drawRoundRect(rf, r, r, p);
+            }
+            for (int i = 0; i < t.length; i++) {
+                boolean on = i == active;
+                float sc = (on ? (float) activeScale : 1f) * k;
+                p.setTextSize(fs * sc);
+                float tw = wd[i] * k;
+                float base = cy + fs * 0.34f;
+                if (stroke > 0) {
+                    p.clearShadowLayer();
+                    p.setStyle(Paint.Style.STROKE);
+                    p.setStrokeWidth((float) (fs * stroke));
+                    p.setColor(strokeColor);
+                    c.drawText(t[i], x, base, p);
+                }
+                p.setStyle(Paint.Style.FILL);
+                if (shadow) p.setShadowLayer(fs * 0.25f, 0f, fs * 0.06f, 0xBF000000); else p.clearShadowLayer();
+                p.setColor(activeColor && on ? highlight : color);
+                c.drawText(t[i], x, base, p);
+                p.clearShadowLayer();
+                x += tw + gap * k;
+            }
+        }
+    }
+
     private static class Seg {
         long start, end;
         String style, main, corner, size;
@@ -1179,6 +1348,7 @@ public class EditorrNativePlugin extends Plugin {
             final boolean mirrorConst = call.getBoolean("mirrorConst", false);
             final boolean hostAudio = "host".equals(call.getString("mainAudio", "host"));
             final String cleanAudioUri = call.getString("cleanAudioUri");
+            final JSONObject captionsJson = call.getData().optJSONObject("captions");
             final float gain = (float) Math.max(0.0, Math.min(10.0, call.getDouble("gain", 1.0)));
             final List<Seg> segs = new ArrayList<>();
             JSArray arr = call.getArray("segments");
@@ -1242,6 +1412,12 @@ public class EditorrNativePlugin extends Plugin {
             long run = 0;
             for (int i = 0; i < ranges.size(); i++) { cumStart[i] = run; run += ranges.get(i).b - ranges.get(i).a; }
 
+            // burned-in captions (null when the project has none)
+            final long[] capRa = new long[ranges.size()];
+            final long[] capRb = new long[ranges.size()];
+            for (int i = 0; i < ranges.size(); i++) { capRa[i] = ranges.get(i).a; capRb[i] = ranges.get(i).b; }
+            final CaptionOverlay captionOverlay = captionsJson == null ? null : CaptionOverlay.create(captionsJson, outW, outH, capRa, capRb);
+
             List<EditedMediaItem> hostItems = new ArrayList<>();
             List<EditedMediaItem> constItems = new ArrayList<>();
             List<EditedMediaItem> cleanAudioItems = new ArrayList<>();
@@ -1279,7 +1455,11 @@ public class EditorrNativePlugin extends Plugin {
                     .setVideoCompositorSettings(settings)
                     .setEffects(new Effects(
                             ImmutableList.<AudioProcessor>of(),
-                            ImmutableList.<Effect>of(FrameDropEffect.createDefaultFrameDropEffect(fps))))
+                            captionOverlay == null
+                                    ? ImmutableList.<Effect>of(FrameDropEffect.createDefaultFrameDropEffect(fps))
+                                    : ImmutableList.<Effect>of(
+                                            new OverlayEffect(ImmutableList.<TextureOverlay>of(captionOverlay)),
+                                            FrameDropEffect.createDefaultFrameDropEffect(fps))))
                     .build();
 
             // Hardware H.264 encoder with the chosen bitrate. Fallback lets the phone pick the nearest size it supports (big 2K/4K).

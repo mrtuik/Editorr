@@ -5,7 +5,7 @@ import { h, icon } from '../ui';
 
 type Opt<T> = [T, string];
 
-function chips<T extends string>(label: string, hint: string, opts: Opt<T>[], value: T, onPick: (v: T) => void): HTMLElement {
+export function chips<T extends string>(label: string, hint: string, opts: Opt<T>[], value: T, onPick: (v: T) => void): HTMLElement {
   const row = h('div', { class: 'schips' });
   const render = (cur: T) => {
     row.replaceChildren(...opts.map(([v, l]) => h('button', { class: 'chip' + (v === cur ? ' on' : ''), onclick: () => { onPick(v); render(v); } }, l)));

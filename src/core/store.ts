@@ -23,6 +23,16 @@ export const DEFAULT_SETTINGS: Settings = {
   autoframeBy: 'both',
   leadInMs: 300,
   ignoreShortMs: 1500,
+  whisperModel: 'small',
+  captionLang: '',
+  reactAfterMs: 8000,
+  reactLengthMs: 1500,
+  zoomStrength: 'medium',
+  zoomAmount: 1.15,
+  zoomInMs: 300,
+  zoomHoldMs: 1200,
+  zoomOutMs: 300,
+  zoomEase: [0.42, 0, 0.58, 1],
 };
 
 // ---------------------------------------------------------------- IndexedDB
