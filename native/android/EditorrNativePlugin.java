@@ -34,6 +34,8 @@ import androidx.media3.common.C;
 import androidx.media3.common.Effect;
 import androidx.media3.common.audio.AudioProcessor;
 import androidx.media3.common.audio.BaseAudioProcessor;
+import androidx.media3.common.audio.SonicAudioProcessor;
+import androidx.media3.effect.SpeedChangeEffect;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.Size;
@@ -1287,14 +1289,14 @@ public class EditorrNativePlugin extends Plugin {
             return def;
         }
 
-        static CaptionOverlay create(JSONObject cap, int w, int h, long[] ra, long[] rb) {
+        static CaptionOverlay create(JSONObject cap, int w, int h, long[] ra, long[] rb, float[] sp) {
             try {
                 JSONArray pages = cap.optJSONArray("pages");
                 JSONObject st = cap.optJSONObject("style");
                 if (pages == null || st == null || pages.length() == 0) return null;
                 long[] cum = new long[ra.length];
                 long run = 0;
-                for (int i = 0; i < ra.length; i++) { cum[i] = run; run += rb[i] - ra[i]; }
+                for (int i = 0; i < ra.length; i++) { cum[i] = run; run += Math.round((rb[i] - ra[i]) / (double) sp[i]); }
                 List<Long> starts = new ArrayList<>(), ends = new ArrayList<>();
                 List<String[]> allWords = new ArrayList<>();
                 List<long[]> allStarts = new ArrayList<>();
@@ -1310,13 +1312,14 @@ public class EditorrNativePlugin extends Plugin {
                         JSONObject wo = wa.getJSONObject(k);
                         double sMs = wo.getDouble("s"), eMs = wo.getDouble("e");
                         long m = -1;
+                        float wsp = 1f;
                         for (int i = 0; i < ra.length; i++) {
-                            if (sMs >= ra[i] && sMs < rb[i]) { m = cum[i] + Math.round(sMs - ra[i]); break; }
+                            if (sMs >= ra[i] && sMs < rb[i]) { m = cum[i] + Math.round((sMs - ra[i]) / sp[i]); wsp = sp[i]; break; }
                         }
                         if (m < 0) continue;
                         t.add(wo.getString("t"));
                         s.add(m);
-                        lastMappedEnd = m + Math.round(Math.max(0, eMs - sMs));
+                        lastMappedEnd = m + Math.round(Math.max(0, eMs - sMs) / wsp);
                         lastWordE = eMs;
                     }
                     if (t.isEmpty()) continue;
@@ -1410,6 +1413,8 @@ public class EditorrNativePlugin extends Plugin {
         String style, main, corner, size;
         /** Own crop of this clip; null = use the project crop. */
         CropSpec cropHost, cropConst;
+        /** Playback speed of this clip (1 = normal). */
+        float speed = 1f;
     }
 
     /** Pan/zoom of one video inside its frame. zoom 1 = no crop. x,y in -1..1 move the picture. */
@@ -1445,6 +1450,9 @@ public class EditorrNativePlugin extends Plugin {
     private static class Range {
         long a, b;
         CropSpec cropHost, cropConst;
+        float speed = 1f;
+        /** Length of this part in the finished video (source length / speed). */
+        long outLen() { return Math.round((b - a) / (double) speed); }
     }
 
     private static boolean sameCrop(CropSpec p, CropSpec q) {
@@ -1578,6 +1586,7 @@ public class EditorrNativePlugin extends Plugin {
                 JSONObject ch = o.optJSONObject("cropHost"), cc = o.optJSONObject("cropConst");
                 s.cropHost = ch == null ? cropHost : readCrop(ch);
                 s.cropConst = cc == null ? cropConst : readCrop(cc);
+                s.speed = (float) Math.max(0.5, Math.min(2.0, o.optDouble("speed", 1.0)));
                 segs.add(s);
             }
             // A missing/zero duration must never cut everything: fall back to the end of the last segment.
@@ -1609,8 +1618,8 @@ public class EditorrNativePlugin extends Plugin {
                 CropSpec segHost = s.cropHost != null ? s.cropHost : cropHost;
                 CropSpec segConst = s.cropConst != null ? s.cropConst : cropConst;
                 Range last = ranges.isEmpty() ? null : ranges.get(ranges.size() - 1);
-                if (last != null && a - last.b <= 1 && sameCrop(last.cropHost, segHost) && sameCrop(last.cropConst, segConst)) last.b = Math.max(last.b, b);
-                else { Range r = new Range(); r.a = a; r.b = b; r.cropHost = segHost; r.cropConst = segConst; ranges.add(r); }
+                if (last != null && a - last.b <= 1 && sameCrop(last.cropHost, segHost) && sameCrop(last.cropConst, segConst) && Math.abs(last.speed - s.speed) < 0.001f) last.b = Math.max(last.b, b);
+                else { Range r = new Range(); r.a = a; r.b = b; r.cropHost = segHost; r.cropConst = segConst; r.speed = s.speed; ranges.add(r); }
             }
             if (ranges.isEmpty() && segs.isEmpty() && durationMs - hostStart >= 100) {
                 // no layout segments arrived: export the whole overlap as one part
@@ -1627,20 +1636,22 @@ public class EditorrNativePlugin extends Plugin {
             // composition start of each kept part, so the layout lookup can map output time back to Host time
             final long[] cumStart = new long[ranges.size()];
             long run = 0;
-            for (int i = 0; i < ranges.size(); i++) { cumStart[i] = run; run += ranges.get(i).b - ranges.get(i).a; }
+            for (int i = 0; i < ranges.size(); i++) { cumStart[i] = run; run += ranges.get(i).outLen(); }
 
             // burned-in captions (null when the project has none)
             final long[] capRa = new long[ranges.size()];
             final long[] capRb = new long[ranges.size()];
             for (int i = 0; i < ranges.size(); i++) { capRa[i] = ranges.get(i).a; capRb[i] = ranges.get(i).b; }
-            final CaptionOverlay captionOverlay = captionsJson == null ? null : CaptionOverlay.create(captionsJson, outW, outH, capRa, capRb);
+            final float[] capSp = new float[ranges.size()];
+            for (int i = 0; i < ranges.size(); i++) capSp[i] = ranges.get(i).speed;
+            final CaptionOverlay captionOverlay = captionsJson == null ? null : CaptionOverlay.create(captionsJson, outW, outH, capRa, capRb, capSp);
             // free text pieces (Text > Add text): one overlay each, drawn above the captions
             final List<TextureOverlay> overlayList = new ArrayList<>();
             if (captionOverlay != null) overlayList.add(captionOverlay);
             for (int ti = 0; textsJson != null && ti < textsJson.length(); ti++) {
                 JSONObject tj = textsJson.optJSONObject(ti);
                 if (tj == null) continue;
-                CaptionOverlay to = CaptionOverlay.create(tj, outW, outH, capRa, capRb);
+                CaptionOverlay to = CaptionOverlay.create(tj, outW, outH, capRa, capRb, capSp);
                 if (to != null) overlayList.add(to);
             }
 
@@ -1649,11 +1660,11 @@ public class EditorrNativePlugin extends Plugin {
             List<EditedMediaItem> cleanAudioItems = new ArrayList<>();
             for (Range r : ranges) {
                 boolean useCleanTrack = cleanAudioUri != null && !cleanAudioUri.isEmpty();
-                hostItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, useCleanTrack || !hostAudio, mirrorHost, r.cropHost, hostAudio ? gain : 1f, voiceFx));
-                constItems.add(item(constUri, r.a + offsetMs, r.b - r.a, outW, outH, useCleanTrack || hostAudio, mirrorConst, r.cropConst, hostAudio ? 1f : gain, voiceFx));
+                hostItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, useCleanTrack || !hostAudio, mirrorHost, r.cropHost, hostAudio ? gain : 1f, voiceFx, r.speed));
+                constItems.add(item(constUri, r.a + offsetMs, r.b - r.a, outW, outH, useCleanTrack || hostAudio, mirrorConst, r.cropConst, hostAudio ? 1f : gain, voiceFx, r.speed));
                 if (useCleanTrack) {
                     long audioStart = hostAudio ? r.a : r.a + offsetMs;
-                    cleanAudioItems.add(audioItem(cleanAudioUri, audioStart, r.b - r.a, gain, voiceFx));
+                    cleanAudioItems.add(audioItem(cleanAudioUri, audioStart, r.b - r.a, gain, voiceFx, r.speed));
                 }
             }
 
@@ -1680,18 +1691,18 @@ public class EditorrNativePlugin extends Plugin {
                     Range r = ranges.get(ri);
                     long ia = Math.max(os, r.a), ib = Math.min(oe, r.b);
                     if (ib - ia < 100) {
-                        oItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, true, false, null, 1f, null));
+                        oItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, true, false, null, 1f, null, r.speed));
                         continue;
                     }
                     long pa = ia;
                     if (ia - r.a < 100) pa = r.a;               // starts within 100 ms of the part: no tiny stand-in piece
-                    if (pa > r.a) oItems.add(item(hostUri, r.a, pa - r.a, outW, outH, true, false, null, 1f, null));
+                    if (pa > r.a) oItems.add(item(hostUri, r.a, pa - r.a, outW, outH, true, false, null, 1f, null, r.speed));
                     long srcStart = Math.max(0, ia - os);
-                    oItems.add(item(ouri, srcStart, ib - pa, outW, outH, vol <= 0.01f, false, null, vol, null));
-                    long outA = cumStart[ri] + (pa - r.a);
-                    wins.add(new long[] { outA, outA + (ib - pa) });
+                    oItems.add(item(ouri, srcStart, ib - pa, outW, outH, vol <= 0.01f, false, null, vol, null, r.speed));
+                    long outA = cumStart[ri] + Math.round((pa - r.a) / (double) r.speed);
+                    wins.add(new long[] { outA, outA + Math.round((ib - pa) / (double) r.speed) });
                     anyPiece = true;
-                    if (r.b > ib) oItems.add(item(hostUri, ib, r.b - ib, outW, outH, true, false, null, 1f, null));
+                    if (r.b > ib) oItems.add(item(hostUri, ib, r.b - ib, outW, outH, true, false, null, 1f, null, r.speed));
                 }
                 if (!anyPiece || oItems.isEmpty()) continue;
                 overlaySeqs.add(new EditedMediaItemSequence.Builder(oItems.toArray(new EditedMediaItem[0])).build());
@@ -1727,7 +1738,7 @@ public class EditorrNativePlugin extends Plugin {
                     }
                     int idx = 0;
                     for (int i = 0; i < cumStart.length; i++) { if (tc >= cumStart[i]) idx = i; else break; }
-                    long hostT = ranges.get(idx).a + (tc - cumStart[idx]);
+                    long hostT = ranges.get(idx).a + Math.round((tc - cumStart[idx]) * (double) ranges.get(idx).speed);
                     return overlayFor(segs, hostT, inputId == 0);
                 }
             };
@@ -1736,7 +1747,7 @@ public class EditorrNativePlugin extends Plugin {
             // background music / sound effects: one baked track at timeline time, cut per kept part like the clean audio
             List<EditedMediaItem> bgmItems = new ArrayList<>();
             if (bgmUri != null && !bgmUri.isEmpty()) {
-                for (Range r : ranges) bgmItems.add(audioItem(bgmUri, r.a, r.b - r.a, 1f, null));
+                for (Range r : ranges) bgmItems.add(audioItem(bgmUri, r.a, r.b - r.a, 1f, null, r.speed));
             }
             List<EditedMediaItemSequence> seqList = new ArrayList<>();
             seqList.add(hostSeq);
@@ -1810,7 +1821,7 @@ public class EditorrNativePlugin extends Plugin {
         }
     }
 
-    private EditedMediaItem item(String uri, long startMs, long totalMs, int w, int h, boolean removeAudio, boolean mirror, CropSpec crop, float gain, FxCfg fx) {
+    private EditedMediaItem item(String uri, long startMs, long totalMs, int w, int h, boolean removeAudio, boolean mirror, CropSpec crop, float gain, FxCfg fx, float speed) {
         MediaItem mi = new MediaItem.Builder()
                 .setUri(uri)
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
@@ -1819,6 +1830,7 @@ public class EditorrNativePlugin extends Plugin {
                         .build())
                 .build();
         ImmutableList.Builder<Effect> video = new ImmutableList.Builder<>();
+        if (Math.abs(speed - 1f) > 0.001f) video.add(new SpeedChangeEffect(speed));
         video.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
         if (mirror) {
             video.add(new ScaleAndRotateTransformation.Builder()
@@ -1849,12 +1861,12 @@ public class EditorrNativePlugin extends Plugin {
         return new EditedMediaItem.Builder(mi)
                 .setRemoveAudio(removeAudio)
                 .setEffects(new Effects(
-                        removeAudio ? ImmutableList.<AudioProcessor>of() : voiceProcessors(gain, fx),
+                        removeAudio ? ImmutableList.<AudioProcessor>of() : speedProcessors(voiceProcessors(gain, fx), speed),
                         video.build()))
                 .build();
     }
 
-    private EditedMediaItem audioItem(String uri, long startMs, long totalMs, float gain, FxCfg fx) {
+    private EditedMediaItem audioItem(String uri, long startMs, long totalMs, float gain, FxCfg fx, float speed) {
         MediaItem mi = new MediaItem.Builder()
                 .setUri(uri)
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
@@ -1864,8 +1876,8 @@ public class EditorrNativePlugin extends Plugin {
                 .build();
         return new EditedMediaItem.Builder(mi)
                 .setEffects(new Effects(
-                        voiceProcessors(gain, fx),
-                        ImmutableList.<Effect>of()))
+                        speedProcessors(voiceProcessors(gain, fx), speed),
+                        Math.abs(speed - 1f) > 0.001f ? ImmutableList.<Effect>of(new SpeedChangeEffect(speed)) : ImmutableList.<Effect>of()))
                 .build();
     }
 
@@ -1883,6 +1895,15 @@ public class EditorrNativePlugin extends Plugin {
         float c = (float) Math.abs(Math.cos(radians));
         float s = (float) Math.abs(Math.sin(radians));
         return Math.max(c + s / aspect, c + s * aspect);
+    }
+
+    /** Faster / slower clip: the sound is sped up without changing its pitch (Sonic), after gain and Enhanced Audio. */
+    private static ImmutableList<AudioProcessor> speedProcessors(ImmutableList<AudioProcessor> base, float speed) {
+        if (Math.abs(speed - 1f) <= 0.001f) return base;
+        SonicAudioProcessor sonic = new SonicAudioProcessor();
+        sonic.setSpeed(speed);
+        sonic.setPitch(1f);
+        return new ImmutableList.Builder<AudioProcessor>().addAll(base).add(sonic).build();
     }
 
     /** Gain first (volume / normalize), then Enhanced Audio: the same order as the preview. */

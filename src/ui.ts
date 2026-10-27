@@ -1,3 +1,4 @@
+import logoUrl from './assets/logo.png';
 type Child = Node | string | null | undefined | false;
 
 export function h<K extends keyof HTMLElementTagNameMap>(
@@ -268,11 +269,12 @@ export function iconButton(name: keyof typeof ICON, label: string, onclick: () =
   return h('button', { class: `btn iconbtn ${extra}`, 'aria-label': label, title: label, onclick }, icon(name));
 }
 
-export type TabName = 'edit' | 'projects' | 'me';
+export type TabName = 'edit' | 'projects' | 'agent' | 'me';
 
-/** Bottom tab bar (Edit / Projects / Me), same place and shape as CapCut. */
+/** Bottom tab bar (Edit / Projects / AI Agent / Me), same place and shape as CapCut. */
 export function tabBar(active: TabName, go: (t: TabName) => void): HTMLElement {
-  const tab = (name: TabName, label: string, ic: keyof typeof ICON) =>
-    h('button', { class: 'tab' + (active === name ? ' on' : ''), 'aria-label': label, onclick: () => go(name) }, icon(ic, 26), h('span', {}, label));
-  return h('nav', { class: 'tabbar' }, tab('edit', 'Edit', 'scissors'), tab('projects', 'Projects', 'folder'), tab('me', 'Me', 'user'));
+  const brandLogo = h('img', { class: 'tab-logo', src: logoUrl, alt: '', width: 26, height: 26, draggable: false });
+  const tab = (name: TabName, label: string, ic: keyof typeof ICON | HTMLElement) =>
+    h('button', { class: 'tab' + (active === name ? ' on' : ''), 'aria-label': label, onclick: () => go(name) }, typeof ic === 'string' ? icon(ic, 26) : ic, h('span', {}, label));
+  return h('nav', { class: 'tabbar' }, tab('edit', 'Edit', 'scissors'), tab('projects', 'Projects', 'folder'), tab('agent', 'AI Agent', brandLogo), tab('me', 'Me', 'user'));
 }

@@ -5,6 +5,7 @@ import { attachProjectMedia, isLoaded, removeProjectMedia } from '../core/media'
 import { profileMenu, avatar } from '../profileMenu';
 import { EditorrNative, fileSrc, isNative } from '../core/native';
 import { pickVideosCapcut } from './mediaPicker';
+import { agentScreen } from './agentScreen';
 import { probeVideo } from '../core/audio';
 import { saveMedia } from '../core/store';
 import type { VideoRef } from '../core/types';
@@ -213,16 +214,24 @@ export function homeScreen() {
 
   function renderContent() { content.replaceChildren(...((app.homeTab === 'projects' ? projectsTab() : editTab()).filter(Boolean) as Node[])); }
 
+  /** AI Agent tab: created once so the chat stays when you switch tabs. */
+  let agent: ReturnType<typeof agentScreen> | undefined;
+
   function render() {
-    renderContent();
     const tab = (t: TabName) => {
       if (t === 'me') { app.go('profile'); return; }
       app.homeTab = t; searching = false; query = ''; render();
     };
+    if (app.homeTab === 'agent') {
+      agent ??= agentScreen();
+      body.replaceChildren(agent.el, tabBar('agent', tab));
+      return;
+    }
+    renderContent();
     body.replaceChildren(topBar(), content, tabBar(app.homeTab, tab));
   }
 
   render();
   reload();
-  return { el: h('div', { class: 'screen' }, body) };
+  return { el: h('div', { class: 'screen' }, body), destroy: () => agent?.destroy() };
 }

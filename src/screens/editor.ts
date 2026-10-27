@@ -746,6 +746,9 @@ export function editorScreen() {
     }
   }
 
+  /** Speed of the clip under the playhead (AI Agent fast-paced mode). 1 = normal. */
+  function rateAt(): number { return segmentAt(p.segments, playMs)?.speed || 1; }
+
   let lastConstSeek = 0;
   /** Keep the Constant video on its sync position with Master-Slave Virtual Clock (playbackRate micro-adjustments). */
   function syncConst(force = false) {
@@ -762,9 +765,10 @@ export function editorScreen() {
     }
     const drift = constV.currentTime - ct; // positive = ahead, negative = behind
     const absDrift = Math.abs(drift);
+    const base = rateAt();
 
     if (force || !playing) {
-      constV.playbackRate = 1.0;
+      constV.playbackRate = base;
       if (force || absDrift > 0.033) {
         seekVideo(constV, ct);
       }
@@ -779,12 +783,12 @@ export function editorScreen() {
         }
       } else if (absDrift > 0.03) {
         // Micro-adjust playback rate to gently resync within ±30ms
-        if (drift < -0.3) constV.playbackRate = 1.10;
-        else if (drift < -0.05) constV.playbackRate = 1.05;
-        else if (drift > 0.3) constV.playbackRate = 0.90;
-        else if (drift > 0.05) constV.playbackRate = 0.95;
+        if (drift < -0.3) constV.playbackRate = base * 1.10;
+        else if (drift < -0.05) constV.playbackRate = base * 1.05;
+        else if (drift > 0.3) constV.playbackRate = base * 0.90;
+        else if (drift > 0.05) constV.playbackRate = base * 0.95;
       } else {
-        if (constV.playbackRate !== 1.0) constV.playbackRate = 1.0;
+        if (constV.playbackRate !== base) constV.playbackRate = base;
       }
     }
     if (playing && constV.paused && ready.constant && inRange) constV.play().catch(() => {});
@@ -3380,6 +3384,11 @@ export function editorScreen() {
           const nx = nextKeptStart(p.segments, playMs);
           if (nx !== null) { playMs = nx; syncHost(true); syncConst(true); }
         }
+        // clips can play faster (AI Agent): the Host video, the saved music track and the cleaned voice follow the same speed
+        const rate = rateAt();
+        if (hostV.playbackRate !== rate) hostV.playbackRate = rate;
+        if (bgmSource && bgmSource.playbackRate.value !== rate) bgmSource.playbackRate.value = rate;
+        if (cleanSource && cleanSource.playbackRate.value !== rate) cleanSource.playbackRate.value = rate;
         syncConst(false);
         refresh();
       }

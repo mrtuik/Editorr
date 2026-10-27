@@ -45,6 +45,8 @@ export interface ExportRequest {
     startMs: number; endMs: number; style: string; main: string; corner: string; size: string;
     /** Own crop of this clip (missing = use cropHost / cropConst above). */
     cropHost?: CropState; cropConst?: CropState;
+    /** Playback speed of this clip (missing = 1). */
+    speed?: number;
   }[];
 }
 
@@ -161,6 +163,7 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     segments: [...p.segments].sort((a, b) => a.startMs - b.startMs).map((s) => ({
       startMs: Math.round(s.startMs), endMs: Math.round(s.endMs), style: s.style, main: s.main, corner: s.corner, size: s.size,
       ...(s.cropHost ? { cropHost: s.cropHost } : {}), ...(s.cropConst ? { cropConst: s.cropConst } : {}),
+      ...(s.speed && Math.abs(s.speed - 1) > 0.01 ? { speed: Math.max(0.5, Math.min(2, s.speed)) } : {}),
     })),
   };
 }

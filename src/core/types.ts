@@ -69,6 +69,8 @@ export interface Segment {
   cropConst?: CropState;
   /** A cutaway to the listener made by the Reaction tool. */
   reaction?: boolean;
+  /** Playback speed of this clip (1 = normal, 1.1 = 10% faster). Set by the AI Agent's fast-paced mode. Preview and export both use it. */
+  speed?: number;
 }
 
 export interface Settings {
@@ -187,6 +189,8 @@ export interface Project {
   bgm?: { path: string; names: string[]; levelDb: number; duckDb: number; fadeMs: number; sfx: { name: string; startMs: number }[]; items?: { name: string; startMs: number; endMs: number; kind: 'bgm' | 'music' | 'sfx'; mood?: string }[] };
   /** Enhanced Audio: EQ, de-esser, compressor and limiter for the Host mic, the Guest (Constant) mic and the whole mix. */
   fx?: import('./fx').FxState;
+  /** Words with times found by the AI Agent when the project has no captions (kept apart so no captions show up on the video). */
+  agentWords?: import('./captions').CaptionData;
   /** the sound designer already ran on this project */
   autoSoundDone?: boolean;
   /** small jpeg data URL for Home */

@@ -23,7 +23,7 @@ export function mergeEqual(segs: Segment[]): Segment[] {
   const out: Segment[] = [];
   for (const s of segs) {
     const l = out[out.length - 1];
-    if (l && !l.reaction && !s.reaction && l.style === s.style && l.main === s.main && l.corner === s.corner && l.size === s.size
+    if (l && !l.reaction && !s.reaction && (l.speed ?? 1) === (s.speed ?? 1) && l.style === s.style && l.main === s.main && l.corner === s.corner && l.size === s.size
       && sameCrop(l.cropHost, s.cropHost) && sameCrop(l.cropConst, s.cropConst) && Math.abs(l.endMs - s.startMs) < 2) l.endMs = s.endMs;
     else out.push(dup(s, {}));
   }
