@@ -1435,3 +1435,6 @@ input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-webkit-s
 .ag-sheet { max-height: 70vh; overflow-y: auto; }
 .ag-sheet-title { font-weight: 700; padding: 6px 4px 10px; color: #f2f2f5; }
 .ag-pick { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 4px; background: none; border: 0; color: inherit; font: inherit; text-align: left; }
+.ag-agyrow { display: flex; justify-content: flex-end; padding-bottom: 6px; }
+.ag-agy { height: 28px; font-size: 12px; color: #8a8a98; }
+.ag-agy.on { color: var(--accent); border-color: #3a4a22; }

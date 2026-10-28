@@ -67,9 +67,33 @@ export interface PickedVideo {
 
 export interface GalleryVideo { id: number; name: string; durationMs: number; albumId: string; album: string }
 
-export type NativeEvent = 'audioProgress' | 'denoiseProgress' | 'exportProgress' | 'proxyProgress' | 'copyProgress' | 'thumb' | 'ytProgress';
+export type NativeEvent = 'audioProgress' | 'denoiseProgress' | 'exportProgress' | 'proxyProgress' | 'copyProgress' | 'thumb' | 'ytProgress' | 'agyInstall' | 'agyAuth';
+
+export interface AgyStatus {
+  supported: boolean;
+  installed: boolean;
+  installing: boolean;
+  signedIn: boolean;
+  /** signed_out | starting | awaiting_code | completing | signed_in | error */
+  auth: string;
+  email: string;
+  version: string;
+}
 
 export interface EditorrNativePlugin {
+  /** Built-in Antigravity (runs inside Editorr, no other app). Current setup + sign-in state. */
+  antigravityStatus(): Promise<AgyStatus>;
+  /** One-time setup (downloads the Linux base + Google's Antigravity CLI). Emits 'agyInstall' {message, fraction}. */
+  antigravityInstall(): Promise<AgyStatus>;
+  /** Starts Google sign-in. Emits 'agyAuth' {status, message, url?, email}. */
+  antigravityLogin(): Promise<AgyStatus>;
+  antigravitySubmitCode(opts: { code: string }): Promise<AgyStatus>;
+  antigravityCancelLogin(): Promise<AgyStatus>;
+  antigravityLogout(): Promise<AgyStatus>;
+  /** Opens an https link in the phone's browser. */
+  openUrl(opts: { url: string }): Promise<void>;
+  /** Asks Antigravity one question. Rejects with a readable message. */
+  askAntigravity(opts: { prompt: string }): Promise<{ response: string }>;
   /**
    * Opens the system picker, copies the chosen video(s) into the app files folder and returns path + metadata.
    * With multiple = true the user may pick two videos at once (extra ones are ignored).

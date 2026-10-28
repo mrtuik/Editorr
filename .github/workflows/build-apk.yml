@@ -13,9 +13,13 @@ jobs:
     env:
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
       VERSION_CODE: ${{ github.run_number }}
-      VERSION_NAME: 16.10.0
+      VERSION_NAME: 16.11.0
       # YouTube music module: ALWAYS ON. Nothing to tick, no variable to set.
       EDITORR_YOUTUBE: '1'
+      # Built-in Antigravity. Where the Linux base bundle is downloaded from on the phone (set your own release URL if you host a copy).
+      EDITORR_RUNTIME_BASE_URL: https://github.com/techjarves/Mobile-Harness/releases/download/runtime-2026.09.4
+      # PRoot can only run its Linux programs when targetSdk is 28 (same as Rlaude Harness). Raise it only if you test that it still works.
+      EDITORR_TARGET_SDK: '28'
       VITE_YOUTUBE: '1'
     steps:
       - uses: actions/checkout@v4
@@ -72,6 +76,27 @@ jobs:
           name: Editorr-keystore-BACKUP
           path: .ci-keystore/release.jks
           retention-days: 90
+
+      # Antigravity is built into Editorr: PRoot is compiled from source with the NDK (arm64 only).
+      - name: Install NDK + CMake (for the built-in Antigravity runtime)
+        run: |
+          ANDROID_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$ANDROID_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKMANAGER" ] || SDKMANAGER="$(command -v sdkmanager)"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "ndk;26.1.10909125" "cmake;3.22.1"
+
+      - name: Fetch native sources (PRoot, libandroid-shmem)
+        run: |
+          mkdir -p native/android/third_party
+          if [ ! -f native/android/third_party/proot/src/cli/proot.c ]; then
+            rm -rf native/android/third_party/proot
+            git clone --depth 1 https://github.com/termux/proot.git native/android/third_party/proot
+          fi
+          if [ ! -f native/android/third_party/libandroid-shmem/shmem.c ]; then
+            rm -rf native/android/third_party/libandroid-shmem
+            git clone --depth 1 https://github.com/termux/libandroid-shmem.git native/android/third_party/libandroid-shmem
+          fi
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund

@@ -14,6 +14,8 @@ export interface TranscribeJob { promise: Promise<CaptionData>; cancel: () => vo
 export function transcribe(
   pcm: Float32Array, model: WhisperModel, language: string,
   onStatus: (text: string, percent?: number) => void,
+  /** Fallback options: another model id (e.g. 'Xenova/whisper-tiny') and/or sentence timing instead of word timing (more reliable, words are spread inside each sentence). */
+  opts: { modelId?: string; segments?: boolean } = {},
 ): TranscribeJob {
   const worker = new Worker(new URL('./whisper.worker.ts', import.meta.url), { type: 'module' });
   let settled = false;
@@ -29,11 +31,19 @@ export function transcribe(
         settled = true; worker.terminate();
         const words: CapWord[] = [];
         for (const c of m.chunks as { text: string; timestamp: [number, number | null] }[]) {
-          const orig = (c.text ?? '').trim();
-          if (!orig) continue;
+          const text = (c.text ?? '').trim();
+          if (!text) continue;
           const s = Math.round((c.timestamp?.[0] ?? 0) * 1000);
           const e = Math.round(((c.timestamp?.[1] ?? (c.timestamp?.[0] ?? 0) + 0.4)) * 1000);
-          words.push({ orig, w: needsRoman(orig) ? romanize(orig) : orig, s, e: Math.max(e, s + 80) });
+          // sentence timing: spread the words over the sentence by their length
+          const parts = opts.segments ? text.split(/\s+/).filter(Boolean) : [text];
+          const total = parts.reduce((a, x) => a + x.length + 1, 0);
+          let at = s;
+          for (const orig of parts) {
+            const span = Math.max(80, Math.round(((e - s) * (orig.length + 1)) / total));
+            words.push({ orig, w: needsRoman(orig) ? romanize(orig) : orig, s: at, e: Math.max(at + 80, at + span - 20) });
+            at += span;
+          }
         }
         resolve({ lang: language || 'auto', words });
       } else if (m.type === 'error') { settled = true; worker.terminate(); rej(new Error(m.error || 'Transcription failed.')); }
@@ -41,7 +51,7 @@ export function transcribe(
     worker.onerror = (e) => { settled = true; worker.terminate(); rej(new Error(e.message || 'Transcription worker failed.')); };
     const copy = pcm.slice();
     const buf = copy.buffer as ArrayBuffer;
-    worker.postMessage({ pcm: buf, model: WHISPER_IDS[model], language: language || null, totalChunks: Math.max(1, Math.ceil(pcm.length / 16000 / 20)) }, [buf]);
+    worker.postMessage({ pcm: buf, model: opts.modelId ?? WHISPER_IDS[model], timestamps: opts.segments ? 'segment' : 'word', language: language || null, totalChunks: Math.max(1, Math.ceil(pcm.length / 16000 / 20)) }, [buf]);
   });
   return { promise, cancel: () => { if (settled) return; settled = true; worker.terminate(); reject(new Error('cancelled')); } };
 }

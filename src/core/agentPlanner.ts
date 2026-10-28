@@ -3,7 +3,7 @@
  * into timeline edits. Everything runs on the phone with the existing tools:
  *   silence.ts  -> silent pauses        sfxPlan.ts -> where meme sounds go
  *   mood.ts     -> background music     timeline.ts -> cutting segments
- * An optional LLM (Gemini or Claude, when an API key is given) only DECIDES the plan; the edit itself is always done here,
+ * Antigravity (built in, no API key) can DECIDE the plan for free-typed instructions; the edit itself is always done here,
  * so preview and export stay identical to every other Editorr edit.
  */
 import { SAMPLE_RATE } from './audio';
@@ -11,6 +11,7 @@ import { renderMix, toBase64, toBuffer, toWav } from './bgm';
 import type { CapWord } from './captions';
 import { analyzeMood, MOOD_LABEL } from './mood';
 import { EditorrNative, isNative } from './native';
+import { acousticRetakes } from './retakeAcoustic';
 import { ensureAudio, runAutoSwitch, runSync } from './pipeline';
 import { detectSilence } from './silence';
 import { AUTO_INFO, planSfx, type AutoKind } from './sfxPlan';
@@ -68,8 +69,8 @@ export interface AgentInput {
   /** Mono 16 kHz audio of the Host video. Missing = read from runtime / the video. */
   pcm?: Float32Array;
   settings?: Settings;
-  /** Gemini (AIza...) or Claude (sk-ant-...) key. Empty = local rules only. */
-  apiKey?: string;
+  /** Ask Antigravity to decide the plan. False / not installed = built-in rules only. */
+  useAntigravity?: boolean;
   /** Called with the step index (0..3) when it starts and again with done=true when it ends. */
   onStep?: (step: number, state: 'run' | 'done' | 'skip', detail?: string) => void;
 }
@@ -105,7 +106,6 @@ export function localPlan(prompt: string): { plan: AgentPlan; understood: boolea
   return { plan, understood };
 }
 
-// ------------------------------------------------------------------ optional LLM
 
 const clamp = (v: unknown, lo: number, hi: number, def: number) => (typeof v === 'number' && isFinite(v) ? Math.max(lo, Math.min(hi, v)) : def);
 
@@ -122,60 +122,45 @@ function transcriptText(words: CapWord[], maxWords = 5000): string {
   return out.join('\n');
 }
 
-const SYSTEM = `You plan edits for a podcast/video editor. Reply with ONE JSON object only, no markdown:
+const SYSTEM = `You plan edits for a podcast/video editor. Do NOT use any tools, do NOT read or write files. Reply with ONE JSON object only, no markdown, no other text:
 {"speed":1.0-1.3,"silenceMinMs":0 or 300-1500,"retakes":bool,"fillers":bool,"meme":bool,"memeMax":0-20,"bgm":bool,"bgmLevelDb":-30..-12,"normalize":bool,
 "dropRanges":[{"startMs":int,"endMs":int}],"reply":"one short sentence on what you will do"}
-speed 1.1 = fast paced. silenceMinMs 400 = very tight. dropRanges = parts of the transcript to delete (failed takes, rambling the user asked to cut). Times are in milliseconds from the transcript's seconds.`;
+speed 1.1 = fast paced. silenceMinMs 400 = very tight. dropRanges = parts of the transcript to delete (failed takes, rambling the user asked to cut). Times are in milliseconds (the transcript shows seconds).`;
+
+/** Reads the JSON plan out of the AI's answer. Null if it is not a usable plan. */
+export function parsePlanJson(text: string, durationMs: number): Partial<AgentPlan> | null {
+  const m = text.replace(/```json|```/g, '').match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let o: any;
+  try { o = JSON.parse(m[0]); } catch { return null; }
+  const drops: Range[] = Array.isArray(o.dropRanges)
+    ? o.dropRanges.map((r: { startMs?: number; endMs?: number }) => ({ startMs: Number(r.startMs), endMs: Number(r.endMs) }))
+        .filter((r: Range) => isFinite(r.startMs) && isFinite(r.endMs) && r.endMs - r.startMs >= 200 && r.endMs <= durationMs + 1000).slice(0, 40)
+    : [];
+  return {
+    speed: clamp(o.speed, 1, 1.3, 1),
+    silenceMinMs: o.silenceMinMs ? clamp(o.silenceMinMs, 300, 1500, 700) : 0,
+    retakes: !!o.retakes, fillers: !!o.fillers, meme: !!o.meme,
+    memeMax: Math.round(clamp(o.memeMax, 0, 20, 8)), bgm: !!o.bgm,
+    bgmLevelDb: clamp(o.bgmLevelDb, -30, -12, -20), normalize: !!o.normalize,
+    dropRanges: drops, reply: typeof o.reply === 'string' ? o.reply.slice(0, 200) : '', source: 'llm',
+  };
+}
 
 /**
- * Ask an external LLM for a custom plan. Returns null on any problem (no key, offline, bad answer) so the caller falls back to the local rules.
- * Key starting with "sk-ant" = Claude, otherwise Gemini.
+ * Asks Antigravity for a custom plan with the Antigravity CLI built into Editorr. No API key:
+ * the user signs in with Google once inside Editorr. Throws a readable message when it cannot answer, so the caller falls back to the local rules.
  */
-export async function planWithLLM(transcript: string, prompt: string, apiKey: string, durationMs = 0): Promise<Partial<AgentPlan> | null> {
-  if (!apiKey || !apiKey.trim()) return null;
-  const key = apiKey.trim();
-  const user = `Instruction: ${prompt}\nVideo length: ${Math.round(durationMs / 1000)}s\nTranscript:\n${transcript || '(no transcript)'}`;
-  try {
-    let text = '';
-    if (key.startsWith('sk-ant')) {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 1200, system: SYSTEM, messages: [{ role: 'user', content: user }] }),
-      });
-      if (!res.ok) return null;
-      const j = await res.json();
-      text = (j.content ?? []).map((c: { text?: string }) => c.text ?? '').join('');
-    } else {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: SYSTEM }] },
-          contents: [{ role: 'user', parts: [{ text: user }] }],
-          generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
-        }),
-      });
-      if (!res.ok) return null;
-      const j = await res.json();
-      text = j.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('') ?? '';
-    }
-    const m = text.replace(/```json|```/g, '').match(/\{[\s\S]*\}/);
-    if (!m) return null;
-    const o = JSON.parse(m[0]);
-    const drops: Range[] = Array.isArray(o.dropRanges)
-      ? o.dropRanges.map((r: { startMs?: number; endMs?: number }) => ({ startMs: Number(r.startMs), endMs: Number(r.endMs) }))
-          .filter((r: Range) => isFinite(r.startMs) && isFinite(r.endMs) && r.endMs - r.startMs >= 200 && r.endMs <= durationMs + 1000).slice(0, 40)
-      : [];
-    return {
-      speed: clamp(o.speed, 1, 1.3, 1),
-      silenceMinMs: o.silenceMinMs ? clamp(o.silenceMinMs, 300, 1500, 700) : 0,
-      retakes: !!o.retakes, fillers: !!o.fillers, meme: !!o.meme,
-      memeMax: Math.round(clamp(o.memeMax, 0, 20, 8)), bgm: !!o.bgm,
-      bgmLevelDb: clamp(o.bgmLevelDb, -30, -12, -20), normalize: !!o.normalize,
-      dropRanges: drops, reply: typeof o.reply === 'string' ? o.reply.slice(0, 200) : '', source: 'llm',
-    };
-  } catch { return null; }
+export async function planWithAntigravity(transcript: string, prompt: string, durationMs = 0): Promise<Partial<AgentPlan>> {
+  if (!isNative()) throw new Error('Antigravity works in the Android app only');
+  const st = await EditorrNative.antigravityStatus();
+  if (!st.installed) throw new Error('Antigravity is not set up yet (open the AI Agent screen and tap Set up)');
+  if (!st.signedIn) throw new Error('Antigravity is not signed in');
+  const user = `${SYSTEM}\n\nInstruction: ${prompt}\nVideo length: ${Math.round(durationMs / 1000)}s\nTranscript:\n${transcript || '(no transcript)'}`;
+  const { response } = await EditorrNative.askAntigravity({ prompt: user });
+  const plan = parsePlanJson(response, durationMs);
+  if (!plan) throw new Error('Antigravity did not return a usable plan');
+  return plan;
 }
 
 // ------------------------------------------------------------------ retakes, stutters, fillers (word level)
@@ -310,6 +295,40 @@ async function writeTrack(name: string, wav: Uint8Array): Promise<string> {
 const MEME_KINDS = new Set<AutoKind>((Object.keys(AUTO_INFO) as AutoKind[]).filter((k) => AUTO_INFO[k].meme));
 const tick = () => new Promise<void>((r) => setTimeout(r, 30));
 
+// ------------------------------------------------------------------ speech to words, with fallbacks
+
+interface Tier { label: string; opts: { modelId?: string; segments?: boolean } }
+const TIERS: Tier[] = [
+  { label: 'Whisper', opts: {} },
+  { label: 'Whisper (sentence timing)', opts: { segments: true } },
+  { label: 'Whisper tiny', opts: { modelId: 'Xenova/whisper-tiny', segments: true } },
+];
+const STALL_MS = 240_000;
+
+/** Runs the tiers in order until one gives words. `data` with no words = it ran fine but heard no speech. */
+async function transcribeTiered(voice: Float32Array, settings: Settings, status: (t: string) => void): Promise<{ data?: import('./captions').CaptionData; used: number; errors: string[] }> {
+  const errors: string[] = [];
+  for (let i = 0; i < TIERS.length; i++) {
+    const tier = TIERS[i]!;
+    try {
+      const data = await new Promise<import('./captions').CaptionData>((resolve, reject) => {
+        let last = Date.now();
+        const job = transcribe(voice, settings.whisperModel ?? 'base', settings.captionLang ?? '', (t, pct) => {
+          last = Date.now();
+          status(`${i ? tier.label + ': ' : ''}${t}${pct !== undefined ? ` ${pct}%` : ''}`);
+        }, tier.opts);
+        const iv = setInterval(() => { if (Date.now() - last > STALL_MS) { clearInterval(iv); job.cancel(); reject(new Error('stopped answering')); } }, 5000);
+        job.promise.then((d) => { clearInterval(iv); resolve(d); }, (e) => { clearInterval(iv); reject(e); });
+      });
+      return { data: data, used: i, errors };
+    } catch (e) {
+      errors.push((e as Error).message || 'failed');
+      status(`${tier.label} failed, trying the next way...`);
+    }
+  }
+  return { used: -1, errors };
+}
+
 // ------------------------------------------------------------------ the agent
 
 /**
@@ -336,23 +355,32 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
   const lp = localPlan(input.prompt);
   let plan = lp.plan;
   let words: CapWord[] = p.captions?.words?.length ? p.captions.words : p.agentWords?.words ?? [];
-  const wantsWords = plan.retakes || plan.meme || !!input.apiKey;
-  if (!words.length && wantsWords && voice.length > SAMPLE_RATE * 2) {
-    step(0, 'run', 'Transcribing speech (first time downloads the model)...');
-    try {
-      const job = transcribe(voice, settings.whisperModel ?? 'base', settings.captionLang ?? '', (t, pct) => step(0, 'run', pct !== undefined ? `${t} ${pct}%` : t));
-      const data = await job.promise;
-      if (data.words.length) { words = data.words; p.agentWords = data; }
-      else warnings.push('No speech was found, so retakes and word-based sounds were skipped.');
-    } catch (e) {
-      warnings.push(`Transcript unavailable (${(e as Error).message || 'failed'}). Retakes and word-based sounds were skipped; silence and speed still applied.`);
+  let wordsFailed = false, wordsTried = false;
+  /** Speech to words, with fallbacks: Whisper -> Whisper with sentence timing -> small Whisper -> (later) sound matching. */
+  const ensureWords = async () => {
+    if (words.length || wordsTried || voice.length <= SAMPLE_RATE * 2) return;
+    wordsTried = true;
+    const r = await transcribeTiered(voice, settings, (t) => step(0, 'run', t));
+    if (r.data && r.data.words.length) {
+      words = r.data.words; p.agentWords = r.data;
+      if (r.used > 0) warnings.push(`Whisper had a problem (${r.errors[0] ?? 'failed'}), so "${TIERS[r.used]!.label}" was used instead.`);
+    } else if (r.data) {
+      warnings.push('No speech was found, so retakes and word-based sounds were skipped.');
+    } else {
+      wordsFailed = true;
+      warnings.push(`Whisper could not run (${r.errors[0] ?? 'failed'}).`);
     }
-  }
-  if (input.apiKey) {
-    step(0, 'run', 'Asking the AI for a plan...');
-    const llm = await planWithLLM(transcriptText(words), input.prompt, input.apiKey, p.durationMs);
-    if (llm) plan = { ...plan, ...llm, source: 'llm' };
-    else warnings.push('The AI could not be reached, so the built-in rules were used.');
+  };
+  if (plan.retakes || plan.meme || input.useAntigravity) await ensureWords();
+
+  if (input.useAntigravity) {
+    step(0, 'run', 'Asking Antigravity...');
+    try {
+      plan = { ...plan, ...(await planWithAntigravity(transcriptText(words), input.prompt, p.durationMs)), source: 'llm' };
+    } catch (e) {
+      warnings.push(`Antigravity: ${(e as Error).message || 'no answer'}. The built-in rules were used instead.`);
+    }
+    if (plan.retakes || plan.meme) await ensureWords();
   }
   if (!plan.reply) {
     const bits: string[] = [];
@@ -384,6 +412,17 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
   if ((plan.retakes || plan.fillers) && words.length) {
     const r = findRetakes(words, { retakes: plan.retakes, fillers: plan.fillers });
     retakeCuts = r.cuts; retakeN = r.retakes; fillerN = r.fillers;
+  }
+  if (plan.retakes && !words.length && wordsFailed && voice.length > SAMPLE_RATE * 4) {
+    step(1, 'run', 'No transcript, matching repeated phrases by sound...');
+    await tick();
+    try {
+      const ac = acousticRetakes(voice);
+      retakeCuts = ac.cuts; retakeN = ac.count;
+      warnings.push(ac.count
+        ? `Retakes were found by sound only (no transcript), so please check the cuts in the timeline.`
+        : 'No clear retakes were found by sound (no transcript).');
+    } catch { /* silence cutting still runs */ }
   }
   retakeCuts = mergeRanges([...retakeCuts, ...plan.dropRanges.map((d) => ({ startMs: Math.max(0, d.startMs), endMs: Math.min(total, d.endMs) }))]);
   let segs = p.segments;

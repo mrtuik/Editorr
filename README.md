@@ -184,3 +184,12 @@ How preview and export stay the same: `src/core/fx.ts` (settings + biquad maths)
 
 ### Audio tools (v16.11.1)
 Tap the audio row (or the Audio tool): the bottom bar shows the sound tools of the mic that is the audio source: Volume, Split, Denoise, Enhanced, Silence, Delete. Back returns to the main tools.
+
+## Built-in Antigravity (AI Agent)
+
+The AI Agent tab uses Google's Antigravity CLI **inside Editorr**. No other app is needed.
+
+- First use: AI Agent > Antigravity > Set up (about 115 MB, Wi-Fi recommended), then Sign in with Google (open the link, paste the one-time code).
+- Under the hood: PRoot (compiled by CI from termux/proot) runs a small private Ubuntu; Google's official `agy` binary is downloaded from Google and checksum-verified. The Google sign-in token stays in Editorr's private storage and is never read by the app.
+- Arm64 phones only. The APK is built with targetSdk 28 (`EDITORR_TARGET_SDK` in the workflow) because Android blocks PRoot's Linux programs for newer targets.
+- The Linux base bundle URL is `EDITORR_RUNTIME_BASE_URL` in the workflow. It points at the Mobile Harness release; copy `pocketdev-core-arm64-2026.09.5.tar.zst` to your own release and change the URL if you want full independence.

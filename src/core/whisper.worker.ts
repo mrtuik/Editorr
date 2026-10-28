@@ -3,8 +3,8 @@
 let asr: any = null;
 let loaded = '';
 
-self.onmessage = async (event: MessageEvent<{ pcm: ArrayBuffer; model: string; language: string | null; totalChunks: number }>) => {
-  const { pcm, model, language, totalChunks } = event.data;
+self.onmessage = async (event: MessageEvent<{ pcm: ArrayBuffer; model: string; timestamps?: 'word' | 'segment'; language: string | null; totalChunks: number }>) => {
+  const { pcm, model, language, totalChunks, timestamps } = event.data;
   try {
     // @ts-ignore - resolved after `npm install`
     const tf: any = await import('@xenova/transformers');
@@ -22,7 +22,7 @@ self.onmessage = async (event: MessageEvent<{ pcm: ArrayBuffer; model: string; l
     (self as any).postMessage({ type: 'status', text: 'Listening' });
     let done = 0;
     const out = await asr(new Float32Array(pcm), {
-      chunk_length_s: 30, stride_length_s: 5, return_timestamps: 'word',
+      chunk_length_s: 30, stride_length_s: 5, return_timestamps: timestamps === 'segment' ? true : 'word',
       ...(language ? { language, task: 'transcribe' } : { task: 'transcribe' }),
       chunk_callback: () => { done++; (self as any).postMessage({ type: 'progress', percent: Math.min(99, Math.round((done / Math.max(1, totalChunks)) * 100)) }); },
     });

@@ -117,7 +117,8 @@ if "signingConfigs.editorr" not in txt:
 txt = manifest.read_text()
 if "<queries>" not in txt:
     pkgs = ["com.instagram.android", "com.google.android.youtube", "com.whatsapp", "com.whatsapp.w4b",
-            "com.facebook.katana", "com.zhiliaoapp.musically", "com.ss.android.ugc.trill"]
+            "com.facebook.katana", "com.zhiliaoapp.musically", "com.ss.android.ugc.trill",
+            ]
     q = "    <queries>\n" + "".join(f'        <package android:name="{x}" />\n' for x in pkgs) + "    </queries>\n\n    "
     txt = txt.replace("<application", q + "<application", 1)
     manifest.write_text(txt)
@@ -148,3 +149,58 @@ if icon_res.exists():
             f.unlink()
     shutil.copytree(icon_res, dest, dirs_exist_ok=True)
     print("icons installed")
+
+
+# 6. Built-in Antigravity (Google's official CLI inside a private PRoot Linux). No other app needed.
+agy_on = (ROOT / "native/android/agy").exists()
+if agy_on:
+    base_url = os.environ.get("EDITORR_RUNTIME_BASE_URL", "https://github.com/techjarves/Mobile-Harness/releases/download/runtime-2026.09.4")
+    target_sdk = os.environ.get("EDITORR_TARGET_SDK", "28")
+    agy_dir = ANDROID / "app/src/main/java/com/tuik/editorr/agy"
+    agy_dir.mkdir(parents=True, exist_ok=True)
+    for f in (ROOT / "native/android/agy").glob("*.java"):
+        t = f.read_text().replace("@RUNTIME_BASE_URL@", base_url)
+        (agy_dir / f.name).write_text(t)
+    cpp_dest = ANDROID / "app/src/main/cpp"
+    shutil.copytree(ROOT / "native/android/cpp", cpp_dest, dirs_exist_ok=True)
+    tp_src = ROOT / "native/android/third_party"
+    tp_dest = ANDROID / "app/third_party"
+    if tp_dest.exists():
+        shutil.rmtree(tp_dest)
+    shutil.copytree(tp_src, tp_dest, ignore=shutil.ignore_patterns(".git"))
+    if not (tp_dest / "proot/src/cli/proot.c").exists():
+        sys.exit("PRoot sources missing: run the 'Fetch native sources' step (git clone termux/proot into native/android/third_party/proot)")
+
+    txt = app_gradle.read_text()
+    if "externalNativeBuild" not in txt:
+        block = (
+            "    ndkVersion '26.1.10909125'\n"
+            "    externalNativeBuild {\n"
+            "        cmake {\n"
+            "            path file('src/main/cpp/CMakeLists.txt')\n"
+            "            version '3.22.1'\n"
+            "        }\n"
+            "    }\n"
+            "    packagingOptions {\n"
+            "        jniLibs {\n"
+            "            useLegacyPackaging = true\n"
+            "        }\n"
+            "    }\n"
+            "    lint {\n"
+            "        abortOnError false\n"
+            "        checkReleaseBuilds false\n"
+            "    }\n"
+        )
+        txt = re.sub(r"(\nandroid\s*\{\n)", lambda m: m.group(1) + block, txt, count=1)
+        # arm64 only: PRoot is built for arm64-v8a
+        txt = re.sub(r"(defaultConfig\s*\{\n)", lambda m: m.group(1) + "        ndk { abiFilters 'arm64-v8a' }\n", txt, count=1)
+        txt = re.sub(r"(dependencies\s*\{\n)", lambda m: m.group(1) +
+                     "    implementation 'org.apache.commons:commons-compress:1.27.1'\n"
+                     "    implementation 'com.github.luben:zstd-jni:1.5.6-9@aar'\n", txt, count=1)
+        app_gradle.write_text(txt)
+
+    # PRoot needs targetSdk 28 to run Linux programs from app storage (Android blocks it for newer targets).
+    vtxt = vars_gradle.read_text()
+    vtxt = re.sub(r"targetSdkVersion\s*=\s*\d+", f"targetSdkVersion = {target_sdk}", vtxt)
+    vars_gradle.write_text(vtxt)
+    print("Antigravity runtime: ON (targetSdk %s, arm64 only)" % target_sdk)

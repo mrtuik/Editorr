@@ -3,9 +3,9 @@ import { AGENT_STEPS, runAgent, type AgentResult } from '../core/agentPlanner';
 import { attachProjectMedia, isLoaded } from '../core/media';
 import { listProjects, runtime, saveProject } from '../core/store';
 import type { Project } from '../core/types';
-import { fmtClock, h, icon, promptDialog, spinner, toast } from '../ui';
+import { fmtClock, h, icon, spinner, toast } from '../ui';
+import { agyOn, antigravityReady, openAntigravityPanel } from './antigravitySetup';
 
-const KEY_STORE = 'editorr_agent_key';
 const PRESETS: { label: string; prompt: string }[] = [
   { label: '⚡ Viral Fast Paced', prompt: 'Make it viral and fast paced: tight pauses, no dead air, slightly faster speech.' },
   { label: '😂 Auto Meme SFX', prompt: 'Add funny meme sound effects on the punchlines, shouts and awkward silences.' },
@@ -13,8 +13,7 @@ const PRESETS: { label: string; prompt: string }[] = [
   { label: '🎙️ Studio Podcast Clean', prompt: 'Make it a clean studio podcast: trim long pauses, remove retakes, add soft background music.' },
 ];
 
-const getKey = () => { try { return localStorage.getItem(KEY_STORE) ?? ''; } catch { return ''; } };
-const setKey = (v: string) => { try { v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); } catch { /* storage unavailable */ } };
+/** Antigravity (built into Editorr) plans free-typed instructions. On by default. */
 const secs = (ms: number) => (ms >= 60_000 ? fmtClock(ms) : `${Math.max(0, Math.round(ms / 1000))}s`);
 
 /**
@@ -34,16 +33,17 @@ export function agentScreen() {
   const nameEl = h('div', { class: 'ag-name' }, 'No project');
   const subEl = h('div', { class: 'ag-sub' }, 'Pick a project to start');
   const changeBtn = h('button', { class: 'ag-change', onclick: () => void chooseProject() }, 'Change Project');
-  const keyBtn = h('button', {
-    class: 'circbtn', 'aria-label': 'AI key', title: 'AI key (optional)',
-    onclick: async () => {
-      const v = await promptDialog('Gemini or Claude API key (optional)', getKey());
-      if (v === null) return;
-      setKey(v.trim());
-      toast(v.trim() ? 'AI key saved on this phone. The agent will ask the AI for a plan.' : 'AI key removed. Built-in rules are used.');
-    },
-  }, icon('wand', 20));
-  const top = h('div', { class: 'ag-top' }, thumb, h('div', { class: 'ag-who' }, nameEl, subEl), changeBtn, keyBtn);
+  const agyBtn = h('button', { class: 'ag-change ag-agy', 'aria-label': 'Antigravity', onclick: () => {
+    openAntigravityPanel(() => void paintAgy());
+  } });
+  let agyReady = false;
+  const paintAgy = async () => {
+    agyReady = await antigravityReady();
+    agyBtn.textContent = agyReady && agyOn() ? 'Antigravity: On' : agyReady ? 'Antigravity: Off' : 'Antigravity: Set up';
+    agyBtn.classList.toggle('on', agyReady && agyOn());
+  };
+  void paintAgy();
+  const top = h('div', { class: 'ag-top' }, thumb, h('div', { class: 'ag-who' }, nameEl, subEl), changeBtn);
 
   // ---------- chat
   const chat = h('div', { class: 'ag-chat' });
@@ -103,6 +103,7 @@ export function agentScreen() {
     input.value = '';
 
     // live progress card
+    const isPreset = PRESETS.some((c) => c.prompt === text);
     const rows = AGENT_STEPS.map((label) => {
       const mark = h('span', { class: 'ag-mark' });
       const txt = h('span', {}, label);
@@ -122,7 +123,8 @@ export function agentScreen() {
     try {
       const base = working ?? original;
       const res = await runAgent({
-        project: base, prompt: text, settings: app.settings, apiKey: getKey(),
+        project: base, prompt: text, settings: app.settings,
+        useAntigravity: agyReady && agyOn() && !isPreset, // the presets are fixed recipes, no need to leave the app for them
         onStep: (i, state, detail) => { setRow(i, state === 'run' ? 'run' : state, state === 'run' ? detail : undefined); scroll(); },
       });
       if (destroyed) return;
@@ -176,7 +178,7 @@ export function agentScreen() {
   const sendBtn = h('button', { class: 'ag-send', 'aria-label': 'Send', onclick: () => void send(input.value) }, icon('back', 20));
   sendBtn.firstElementChild?.setAttribute('style', 'transform:rotate(90deg)');
   function setBusy(on: boolean) { sendBtn.disabled = on; chips.classList.toggle('off', on); changeBtn.disabled = on; }
-  const bar = h('div', { class: 'ag-bar' }, chips, h('div', { class: 'ag-row' }, input, sendBtn));
+  const bar = h('div', { class: 'ag-bar' }, h('div', { class: 'ag-agyrow' }, agyBtn), chips, h('div', { class: 'ag-row' }, input, sendBtn));
 
   const el = h('div', { class: 'ag' }, top, chat, bar);
   paintProject(); welcome();
