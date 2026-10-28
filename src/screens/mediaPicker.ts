@@ -50,7 +50,7 @@ export async function pickVideosCapcut(opts: { max: number }): Promise<PickResul
 
     // ---- thumbnails: a few at a time, only for cells that scroll into view
     function pump() {
-      while (running < 3 && queue.length) { const job = queue.shift()!; running++; job(); }
+      while (running < 4 && queue.length) { const job = queue.shift()!; running++; job(); }
     }
     const io = new IntersectionObserver((entries) => {
       for (const en of entries) {
@@ -58,12 +58,13 @@ export async function pickVideosCapcut(opts: { max: number }): Promise<PickResul
         const el = en.target as HTMLElement;
         io.unobserve(el);
         const id = Number(el.dataset.id);
-        queue.push(() => {
+        const load = (tries: number) => {
           EditorrNative.videoThumb({ id })
             .then((r) => { el.style.backgroundImage = `url("${fileSrc(r.path)}")`; })
-            .catch(() => { /* stays dark */ })
+            .catch(() => { if (tries > 0) { setTimeout(() => queue.push(() => load(tries - 1)), 400); } /* else stays dark */ })
             .finally(() => { running--; pump(); });
-        });
+        };
+        queue.push(() => load(1));
         pump();
       }
     }, { rootMargin: '300px' });

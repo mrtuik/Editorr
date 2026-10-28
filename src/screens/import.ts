@@ -1,7 +1,7 @@
 import { app } from '../app';
 import { probeVideo } from '../core/audio';
 import { runtime, saveMedia, saveProject } from '../core/store';
-import type { Role, VideoRef } from '../core/types';
+import { aspectForVideo, type Role, type VideoRef } from '../core/types';
 import { EditorrNative, fileSrc, isNative, type PickedVideo } from '../core/native';
 import { projectVideoPaths } from '../core/media';
 import { pickVideosCapcut } from './mediaPicker';
@@ -41,9 +41,7 @@ export function importScreen() {
       p.proxyHost = p.proxyConst = false; p.thumb = undefined;
       const primary = hm ?? cm;
       if (primary && primary.width && primary.height) {
-        if (primary.height > primary.width) p.aspect = '9:16';
-        else if (primary.width > primary.height) p.aspect = '16:9';
-        else p.aspect = '1:1';
+        p.aspect = aspectForVideo(primary.width, primary.height);
       }
     }
     runtime.projectId = p.id;

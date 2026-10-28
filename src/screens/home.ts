@@ -8,7 +8,7 @@ import { pickVideosCapcut } from './mediaPicker';
 import { agentScreen } from './agentScreen';
 import { probeVideo } from '../core/audio';
 import { saveMedia } from '../core/store';
-import type { VideoRef } from '../core/types';
+import { aspectForVideo, type VideoRef } from '../core/types';
 import { actionSheet, confirmDialog, fmtTime, h, ICON, icon, projectActionSheet, promptDialog, spinner, tabBar, TabName, toast } from '../ui';
 
 /**
@@ -73,7 +73,7 @@ export function homeScreen() {
       p.single = true;
       p.mainAudio = 'host';
       p.offsetMs = 0; p.durationMs = ref.durationMs; p.segments = [];
-      if (ref.width && ref.height) p.aspect = ref.height > ref.width ? '9:16' : ref.width > ref.height ? '16:9' : '1:1';
+      if (ref.width && ref.height) p.aspect = aspectForVideo(ref.width, ref.height);
       runtime.projectId = p.id;
       runtime.hostUrl = runtime.constUrl = ref.url;
       runtime.hostPath = runtime.constPath = path;

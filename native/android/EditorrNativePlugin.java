@@ -350,10 +350,26 @@ public class EditorrNativePlugin extends Plugin {
         call.resolve(agyStatusObject());
     }
 
+    /** Name, email and photo of the Google account signed in to Antigravity (for the profile, home header and tab bar). */
+    @PluginMethod
+    public void antigravityProfile(final PluginCall call) {
+        new Thread(() -> {
+            org.json.JSONObject p = (agy().isInstalled() && agy().isSignedIn())
+                    ? com.tuik.editorr.agy.AgyProfile.load(getContext(), agy(), agyAuth().email()) : null;
+            if (p == null) { call.reject("No profile."); return; }
+            JSObject r = new JSObject();
+            r.put("name", p.optString("name", ""));
+            r.put("email", p.optString("email", ""));
+            r.put("picture", p.optString("picture", ""));
+            call.resolve(r);
+        }, "editorr-agy-profile").start();
+    }
+
     @PluginMethod
     public void antigravityLogout(PluginCall call) {
         try {
             agyAuth().logout();
+            com.tuik.editorr.agy.AgyProfile.clear(getContext());
             call.resolve(agyStatusObject());
         } catch (Exception e) {
             call.reject(e.getMessage() == null ? "Could not sign out." : e.getMessage());
@@ -1977,9 +1993,24 @@ public class EditorrNativePlugin extends Plugin {
                     .build());
         }
         if (crop != null) {
-            // Same math as the preview: uniform scale without stretching distortion.
+            // Same math as the preview (applyCrop in editor.ts): uniform scale without stretching distortion.
             float zoom = Math.max(0.2f, Math.min(6.0f, crop.zoom));
-            if (Math.abs(zoom - 1f) > 0.001f || Math.abs(crop.x) > 0.001f || Math.abs(crop.y) > 0.001f) {
+            // The crop frame: a picked ratio (9:16, 1:1 ...) or the custom frame the user drew. Different from the slot = "shaped" frame:
+            // the preview clips the picture to that frame and leaves black around it, so the export must do the same.
+            float ratio = crop.ratio > 0f ? crop.ratio : (crop.frameRatio > 0f ? crop.frameRatio : aspect);
+            boolean shaped = zoom >= 1f && Math.abs(ratio / aspect - 1f) > 0.01f;
+            if (shaped) {
+                // units: slot width = aspect, slot height = 1
+                float maxW = Math.min(aspect, ratio);
+                float fw = Math.min(aspect, maxW / zoom);
+                float fh = fw / ratio;
+                float halfX = Math.min(1f, fw / aspect), halfY = Math.min(1f, fh);
+                float cx = -crop.x * (1f - halfX);
+                float cy = crop.y * (1f - halfY); // picture moves down -> window moves up (NDC y is up)
+                video.add(new Crop(cx - halfX, cx + halfX, cy - halfY, cy + halfY));
+                // fit the whole frame inside the slot (black bars around it), exactly like the preview
+                video.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT));
+            } else if (Math.abs(zoom - 1f) > 0.001f || Math.abs(crop.x) > 0.001f || Math.abs(crop.y) > 0.001f) {
                 float half = 1f / zoom;
                 float cx = -crop.x * (zoom > 1f ? (1f - half) : 1f);
                 float cy = crop.y * (zoom > 1f ? (1f - half) : 1f); // picture moves down -> window moves up (NDC y is up)
