@@ -1,4 +1,5 @@
 import logoUrl from './assets/logo.png';
+import { firstName, getAccount, onAccountChange } from './core/account';
 type Child = Node | string | null | undefined | false;
 
 export function h<K extends keyof HTMLElementTagNameMap>(
@@ -168,7 +169,7 @@ export const ICON = {
   wand: '<path d="M5 19L17 7M14 4l1.2 2.3L17.5 7.5l-2.3 1.2L14 11l-1.2-2.3L10.5 7.5l2.3-1.2zM19 13l.7 1.3 1.3.7-1.3.7-.7 1.3-.7-1.3-1.3-.7 1.3-.7z" />',
   lips: '<path d="M2.5 12c3-4.5 6-4.5 9.5-2.5 3.500-2 6.500-2 9.500 2.500-3 5-6 6.500-9.500 6.500S5.500 17 2.500 12.500zM2.500 12.500h19" />',
   scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.5 8l11.500 9M8.500 16L20 7" />',
-  layout: '<rect x="3" y="3" width="8" height="8" rx="1.500"/><rect x="13" y="3" width="8" height="8" rx="1.500"/><rect x="3" y="13" width="8" height="8" rx="1.500"/><rect x="13" y="13" width="8" height="8" rx="1.500"/>',
+  layout: '<path fill="currentColor" stroke="none" d="M19.5 3h-5c-.83 0-1.5.67-1.5 1.5v5c0 .83.67 1.5 1.5 1.5h5c.83 0 1.5-.67 1.5-1.5v-5c0-.83-.67-1.5-1.5-1.5M19 9h-4V5h4zM9.5 3h-5C3.67 3 3 3.67 3 4.5v15c0 .83.67 1.5 1.5 1.5h5c.83 0 1.5-.67 1.5-1.5v-15c0-.83-.67-1.5-1.5-1.5M9 19H5V5h4zm10.5-6h-5c-.83 0-1.5.67-1.5 1.5v5c0 .83.67 1.5 1.5 1.5h5c.83 0 1.5-.67 1.5-1.5v-5c0-.83-.67-1.5-1.5-1.5m-.5 6h-4v-4h4z"/>',
   face: '<path d="M4 8V5a1 1 0 011-1h3M16 4h3a1 1 0 011 1v3M20 16v3a1 1 0 01-1 1h-3M8 20H5a1 1 0 01-1-1v-3" /><circle cx="9.500" cy="10" r="0.800" fill="currentColor"/><circle cx="14.500" cy="10" r="0.800" fill="currentColor"/><path d="M9 14.500c1.500 1.500 4.500 1.500 6 0" />',
   autoframe: '<path d="M4 8V5a1 1 0 011-1h3M16 4h3a1 1 0 011 1v3M20 16v3a1 1 0 01-1 1h-3M8 20H5a1 1 0 01-1-1v-3" /><path d="M13 7l-3 5h4l-3 5" />',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.500 3.500-7 8-7s8 2.500 8 7" />',
@@ -276,5 +277,21 @@ export function tabBar(active: TabName, go: (t: TabName) => void): HTMLElement {
   const brandLogo = h('img', { class: 'tab-logo', src: logoUrl, alt: '', width: 26, height: 26, draggable: false });
   const tab = (name: TabName, label: string, ic: keyof typeof ICON | HTMLElement) =>
     h('button', { class: 'tab' + (active === name ? ' on' : ''), 'aria-label': label, onclick: () => go(name) }, typeof ic === 'string' ? icon(ic, 26) : ic, h('span', {}, label));
-  return h('nav', { class: 'tabbar' }, tab('edit', 'Edit', 'scissors'), tab('projects', 'Projects', 'folder'), tab('agent', 'AI Agent', brandLogo), tab('me', 'Me', 'user'));
+  // "Me": the signed-in Google account's photo and first name (Antigravity sign-in); plain icon + "Me" when nobody is signed in
+  const meBtn = tab('me', 'Me', 'user');
+  const paintMe = () => {
+    const a = getAccount();
+    const label = meBtn.querySelector('span') as HTMLElement;
+    meBtn.firstElementChild?.remove();
+    const face = a?.picture
+      ? h('img', { class: 'tab-face', src: a.picture, alt: '', width: 26, height: 26, draggable: false })
+      : a ? h('span', { class: 'tab-face tab-initial' }, (a.name || a.email || '?').trim().charAt(0).toUpperCase())
+      : icon('user', 26);
+    meBtn.insertBefore(face, label);
+    label.textContent = a ? (firstName(a).slice(0, 9) || 'Me') : 'Me';
+    meBtn.setAttribute('aria-label', a ? `Profile: ${a.name || a.email}` : 'Me');
+  };
+  paintMe();
+  const offMe = onAccountChange(() => { if (!meBtn.isConnected) { offMe(); return; } paintMe(); });
+  return h('nav', { class: 'tabbar' }, tab('edit', 'Edit', 'scissors'), tab('projects', 'Projects', 'folder'), tab('agent', 'AI Agent', brandLogo), meBtn);
 }

@@ -90,6 +90,8 @@ export interface EditorrNativePlugin {
   antigravitySubmitCode(opts: { code: string }): Promise<AgyStatus>;
   antigravityCancelLogin(): Promise<AgyStatus>;
   antigravityLogout(): Promise<AgyStatus>;
+  /** Name, email and small photo (data URL) of the Google account signed in to Antigravity. Rejects when nobody is signed in. */
+  antigravityProfile(): Promise<{ name: string; email: string; picture: string }>;
   /** Opens an https link in the phone's browser. */
   openUrl(opts: { url: string }): Promise<void>;
   /** Asks Antigravity one question. Rejects with a readable message. */

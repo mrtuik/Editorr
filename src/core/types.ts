@@ -4,7 +4,7 @@ export type Corner = 'tl' | 'tr' | 'bl' | 'br';
 export type PopupSize = 'S' | 'M' | 'L';
 export type Sensitivity = 'low' | 'medium' | 'high';
 export type Confidence = 'High' | 'Medium' | 'Low';
-export type Aspect = '16:9' | '9:16' | '1:1' | '4:5' | '3:4' | '4:3';
+export type Aspect = '16:9' | '9:16' | '1:1' | '4:5' | '3:4' | '4:3' | '3:2' | '2:3' | '21:9' | '9:21';
 export type SilenceSens = 'low' | 'medium' | 'high';
 export type CropRatio = 'custom' | '9:16' | '16:9' | '1:1' | '4:3' | '2:3';
 
@@ -28,8 +28,21 @@ export const NO_CROP: CropState = { zoom: 1, x: 0, y: 0, rotate: 0, ratio: 'cust
 
 export const ASPECTS: Record<Aspect, [number, number]> = {
   '16:9': [16, 9], '9:16': [9, 16], '1:1': [1, 1], '4:5': [4, 5], '3:4': [3, 4], '4:3': [4, 3],
+  '3:2': [3, 2], '2:3': [2, 3], '21:9': [21, 9], '9:21': [9, 21],
 };
 export const aspectValue = (a: Aspect) => ASPECTS[a][0] / ASPECTS[a][1];
+
+/** The project ratio that matches a video's own shape best (9:16 stays 9:16, 4:5 stays 4:5, a wide 21:9 clip stays wide...). */
+export function aspectForVideo(width: number, height: number): Aspect {
+  if (!(width > 0) || !(height > 0)) return '16:9';
+  const r = width / height;
+  let best: Aspect = '16:9', bestD = Infinity;
+  for (const a of Object.keys(ASPECTS) as Aspect[]) {
+    const d = Math.abs(Math.log(r / aspectValue(a)));
+    if (d < bestD) { bestD = d; best = a; }
+  }
+  return best;
+}
 
 /** Output pixel size. `short` (720/1080) is the short side, like phone editors do. Always even numbers. */
 export function outputSize(a: Aspect, short: number): { w: number; h: number } {
