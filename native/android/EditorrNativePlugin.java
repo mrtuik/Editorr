@@ -262,6 +262,135 @@ public class EditorrNativePlugin extends Plugin {
         }).start();
     }
 
+    // ---- Antigravity, built in. Editorr runs Google's official Antigravity CLI inside its own private Linux (PRoot).
+    // No other app and no API key: the user signs in with Google once, inside Editorr.
+    private com.tuik.editorr.agy.AgyRuntime agyRuntime;
+    private com.tuik.editorr.agy.AgyAuth agyAuth;
+    private volatile boolean agyInstalling = false;
+
+    private synchronized com.tuik.editorr.agy.AgyRuntime agy() {
+        if (agyRuntime == null) agyRuntime = new com.tuik.editorr.agy.AgyRuntime(getContext());
+        return agyRuntime;
+    }
+
+    private synchronized com.tuik.editorr.agy.AgyAuth agyAuth() {
+        if (agyAuth == null) {
+            agyAuth = new com.tuik.editorr.agy.AgyAuth(getContext(), agy(), (status, message, url, email) -> {
+                JSObject e = new JSObject();
+                e.put("status", status);
+                e.put("message", message == null ? "" : message);
+                if (url != null) e.put("url", url);
+                e.put("email", email == null ? "" : email);
+                notifyListeners("agyAuth", e);
+            });
+        }
+        return agyAuth;
+    }
+
+    private JSObject agyStatusObject() {
+        com.tuik.editorr.agy.AgyRuntime rt = agy();
+        JSObject r = new JSObject();
+        r.put("supported", rt.isSupportedDevice());
+        r.put("installed", rt.isInstalled());
+        r.put("installing", agyInstalling);
+        r.put("signedIn", rt.isInstalled() && rt.isSignedIn());
+        r.put("auth", agyAuth().status());
+        r.put("email", agyAuth().email());
+        r.put("version", rt.agyVersion());
+        return r;
+    }
+
+    @PluginMethod
+    public void antigravityStatus(PluginCall call) {
+        call.resolve(agyStatusObject());
+    }
+
+    /** One-time setup: downloads the Linux base + Google's Antigravity CLI. Progress arrives as "agyInstall" events. */
+    @PluginMethod
+    public void antigravityInstall(final PluginCall call) {
+        if (agyInstalling) { call.reject("Setup is already running."); return; }
+        agyInstalling = true;
+        new Thread(() -> {
+            try {
+                agy().install((message, fraction) -> {
+                    JSObject e = new JSObject();
+                    e.put("message", message);
+                    e.put("fraction", fraction);
+                    notifyListeners("agyInstall", e);
+                });
+                agyInstalling = false;
+                call.resolve(agyStatusObject());
+            } catch (Throwable t) {
+                agyInstalling = false;
+                call.reject(t.getMessage() == null ? "Antigravity setup failed." : t.getMessage());
+            }
+        }, "editorr-agy-install").start();
+    }
+
+    /** Starts Google sign-in. State changes arrive as "agyAuth" events (awaiting_code carries the Google link). */
+    @PluginMethod
+    public void antigravityLogin(PluginCall call) {
+        agyAuth().begin();
+        call.resolve(agyStatusObject());
+    }
+
+    @PluginMethod
+    public void antigravitySubmitCode(PluginCall call) {
+        try {
+            agyAuth().submitCode(call.getString("code", ""));
+            call.resolve(agyStatusObject());
+        } catch (Exception e) {
+            call.reject(e.getMessage() == null ? "Could not send the code." : e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void antigravityCancelLogin(PluginCall call) {
+        agyAuth().cancel();
+        call.resolve(agyStatusObject());
+    }
+
+    @PluginMethod
+    public void antigravityLogout(PluginCall call) {
+        try {
+            agyAuth().logout();
+            call.resolve(agyStatusObject());
+        } catch (Exception e) {
+            call.reject(e.getMessage() == null ? "Could not sign out." : e.getMessage());
+        }
+    }
+
+    /** Opens a web link (the Google sign-in page) in the phone's browser. */
+    @PluginMethod
+    public void openUrl(PluginCall call) {
+        String url = call.getString("url", "");
+        if (url == null || !url.startsWith("https://")) { call.reject("Bad link."); return; }
+        try {
+            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("No browser found.");
+        }
+    }
+
+    @PluginMethod
+    public void askAntigravity(final PluginCall call) {
+        final String prompt = call.getString("prompt", "");
+        if (prompt == null || prompt.trim().isEmpty()) { call.reject("Nothing to ask."); return; }
+        new Thread(() -> {
+            try {
+                String resp = com.tuik.editorr.agy.AgyAsk.ask(getContext(), agy(), prompt, 4 * 60 * 1000L);
+                JSObject r = new JSObject();
+                r.put("response", resp);
+                call.resolve(r);
+            } catch (Throwable t) {
+                call.reject(t.getMessage() == null ? "Antigravity did not answer." : t.getMessage());
+            }
+        }, "editorr-agy-ask").start();
+    }
+
     @ActivityCallback
     private void pickResult(PluginCall call, ActivityResult result) {
         if (call == null) return;
