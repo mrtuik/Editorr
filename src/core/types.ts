@@ -71,6 +71,8 @@ export interface Segment {
   reaction?: boolean;
   /** Playback speed of this clip (1 = normal, 1.1 = 10% faster). Set by the AI Agent's fast-paced mode. Preview and export both use it. */
   speed?: number;
+  /** Tiny piece made by an auto zoom (not a real cut). The timeline draws no cut handle on it. */
+  zs?: boolean;
 }
 
 export interface Settings {
@@ -117,6 +119,8 @@ export interface Settings {
   zoomHoldMs?: number;
   zoomOutMs?: number;
   zoomEase?: number[];
+  /** Silence cut: also zoom in at every cut (uses the zoom shape above). */
+  silenceZoom?: boolean;
   /** Music: level under the voice (dB), drop while talking (dB), fade in/out (ms). */
   musicLevelDb?: number;
   musicDuckDb?: number;

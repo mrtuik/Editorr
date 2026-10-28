@@ -24,19 +24,19 @@ export function transcribe(
     reject = rej;
     worker.onmessage = (ev: MessageEvent<any>) => {
       const m = ev.data;
-      if (m.type === 'status') onStatus(m.text);
-      else if (m.type === 'download') onStatus(`Downloading model ${m.percent}%`, m.percent);
+      if (m.type === 'status') onStatus(m.text, 0);
+      else if (m.type === 'download') onStatus('Downloading model', m.percent);
       else if (m.type === 'progress') onStatus('Listening', m.percent);
       else if (m.type === 'done') {
         settled = true; worker.terminate();
         const words: CapWord[] = [];
-        for (const c of m.chunks as { text: string; timestamp: [number, number | null] }[]) {
+        for (const c of m.chunks as { text: string; timestamp: [number, number | null]; seg?: boolean }[]) {
           const text = (c.text ?? '').trim();
           if (!text) continue;
           const s = Math.round((c.timestamp?.[0] ?? 0) * 1000);
           const e = Math.round(((c.timestamp?.[1] ?? (c.timestamp?.[0] ?? 0) + 0.4)) * 1000);
           // sentence timing: spread the words over the sentence by their length
-          const parts = opts.segments ? text.split(/\s+/).filter(Boolean) : [text];
+          const parts = opts.segments || c.seg ? text.split(/\s+/).filter(Boolean) : [text];
           const total = parts.reduce((a, x) => a + x.length + 1, 0);
           let at = s;
           for (const orig of parts) {
@@ -51,7 +51,7 @@ export function transcribe(
     worker.onerror = (e) => { settled = true; worker.terminate(); rej(new Error(e.message || 'Transcription worker failed.')); };
     const copy = pcm.slice();
     const buf = copy.buffer as ArrayBuffer;
-    worker.postMessage({ pcm: buf, model: opts.modelId ?? WHISPER_IDS[model], timestamps: opts.segments ? 'segment' : 'word', language: language || null, totalChunks: Math.max(1, Math.ceil(pcm.length / 16000 / 20)) }, [buf]);
+    worker.postMessage({ pcm: buf, model: opts.modelId ?? WHISPER_IDS[model], timestamps: opts.segments ? 'segment' : 'word', language: language || null }, [buf]);
   });
   return { promise, cancel: () => { if (settled) return; settled = true; worker.terminate(); reject(new Error('cancelled')); } };
 }

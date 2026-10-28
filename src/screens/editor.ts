@@ -9,7 +9,7 @@ import { askFaceOptions } from './faceOptions';
 import { openCaptionSheet } from './captionSheet';
 import { openTextItemsSheet } from './textSheet';
 import { openReactionSheet } from './reactionSheet';
-import { askAutoZoom } from './zoomSheet';
+import { askAutoZoom, zoomShapeFrom } from './zoomSheet';
 import { openMusicSheet, type AutoPlan } from './musicSheet';
 import { BGM_RATE, decodeFile, decodeUrl, renderMix, toBase64, toBuffer, toWav } from '../core/bgm';
 import { MOOD_LABEL, analyzeMood, moodQuery, type MusicLang } from '../core/mood';
@@ -17,7 +17,7 @@ import { synthLoop, synthSfx } from '../core/synth';
 import { AUTO_INFO, planSfx, type AutoKind } from '../core/sfxPlan';
 import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, pageAt, type CapPage, textPage, textStyleOf } from '../core/captions';
 import { transcribe, type WhisperModel } from '../core/transcribe';
-import { addPunchZooms, addReactions, findPeaks, removeAllReactions, removeReaction } from '../core/autocut';
+import { addCutZooms, addPunchZooms, addReactions, findPeaks, removeAllReactions, removeReaction } from '../core/autocut';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
 import { detectSilence } from '../core/silence';
 import { EditorrNative, fileSrc, isNative, tick, youtubeAvailable } from '../core/native';
@@ -1249,6 +1249,26 @@ export function editorScreen() {
     g.lineWidth = 1;
     rrect(g, bx1 + 0.5, MAIN_Y + 0.5, bw - 1, LANE - 1, 4);
     g.stroke();
+
+    // Cut handles (like CapCut): a white "I" button on every real cut, so two neighbouring cuts are easy to tell apart.
+    // Zoom steps (tiny pieces made by Auto zoom) get none. Over a removed part the handle sits in the middle of the gap.
+    const sorted = [...p.segments].sort((a, b) => a.startMs - b.startMs);
+    let lastX = -999;
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1]!, cur = sorted[i]!;
+      if (cur.zs) continue;
+      const gapMs = cur.startMs - prev.endMs;
+      const hx = gapMs > 1 ? (xOf(prev.endMs) + xOf(cur.startMs)) / 2 : xOf(cur.startMs);
+      if (hx < G + 6 || hx > W - 6 || hx - lastX < 20) continue;
+      lastX = hx;
+      g.fillStyle = '#000000';
+      g.fillRect(hx - 1, MAIN_Y, 2, LANE);
+      const bwd = 18, bh = Math.min(26, LANE - 14);
+      g.fillStyle = '#FFFFFF';
+      rrect(g, hx - bwd / 2, MAIN_Y + (LANE - bh) / 2, bwd, bh, 5); g.fill();
+      g.fillStyle = '#16161a';
+      g.fillRect(hx - 1, MAIN_Y + (LANE - bh) / 2 + 6, 2, bh - 12);
+    }
   }
 
   /** Single audio waveform row for the selected sound (p.mainAudio). Centered mirrored bars. */
@@ -2765,8 +2785,6 @@ export function editorScreen() {
         tool('mask', 'Mask', () => openPanel('mask')),
         tool('mirror', 'Mirror', toggleMirrorForScreen),
         tool('ratio', 'Ratio', () => openPanel('ratio')),
-        tool('zoomOut', 'Zoom out', () => { pxPerSec = Math.max(minPx(), pxPerSec / 1.5); draw(); }),
-        tool('zoomIn', 'Zoom in', () => { pxPerSec = Math.min(300, pxPerSec * 1.5); draw(); }),
       );
     } else if (hasClipSel) {
       // a video clip is selected: clip tools with back chevron and reset crop
@@ -2863,8 +2881,13 @@ export function editorScreen() {
     if (!pendingCuts.length) return;
     const removed = pendingCuts.reduce((a, r) => a + (r.endMs - r.startMs), 0);
     const count = pendingCuts.length;
-    const next = dropSlivers(subtractRanges(p.segments, pendingCuts));
+    let next = dropSlivers(subtractRanges(p.segments, pendingCuts));
     if (!next.length) { toast('That would remove everything. Pick a longer silence time.'); return; }
+    // optional: zoom in right at every cut (same amount, speed and graph as Auto zoom)
+    if (app.settings.silenceZoom) {
+      const joins = pendingCuts.map((c) => c.endMs);
+      next = addCutZooms(next, joins, zoomShapeFrom(app.settings), (sg, role) => sg[CK(role)] ?? p[CK(role)]);
+    }
     pendingCuts = [];
     edit(next);
     if (!isKept(p.segments, playMs)) seek(nextKeptStart(p.segments, playMs) ?? firstStart());
@@ -3167,6 +3190,11 @@ export function editorScreen() {
         h('div', { class: 'prow', style: 'margin-top:10px' },
           h('div', { class: 'plabel' }, 'Sensitivity'),
           chipRow<SilenceSens>([['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], s.silenceSens, (v) => go({ silenceSens: v }))),
+        h('div', { class: 'prow', style: 'margin-top:10px' },
+          h('div', { class: 'plabel' }, 'Zoom at cuts'),
+          h('div', { class: 'chips' },
+            h('button', { class: 'chip' + (s.silenceZoom ? ' on' : ''), onclick: () => go({ silenceZoom: !s.silenceZoom }) }, s.silenceZoom ? 'On' : 'Off'),
+            s.silenceZoom ? h('button', { class: 'chip', onclick: () => { void askAutoZoom(app.settings, { title: 'Zoom at cuts', hint: 'At every silence cut the picture zooms in, holds, and eases out. Set the amount, timing and the graph here.', cta: 'Save zoom' }).then(() => renderPanel()); } }, 'Zoom graph') : null)),
         applyBtn);
     }
   }
@@ -3372,6 +3400,17 @@ export function editorScreen() {
     draw();
   }
 
+  // How long this phone needs to finish a seek. Jumping over a silence cut a little EARLY by that time hides the stuck picture.
+  let seekT0 = 0;
+  let seekEma = 90;
+  hostV.addEventListener('seeking', () => { seekT0 = performance.now(); });
+  hostV.addEventListener('seeked', () => {
+    if (!seekT0) return;
+    const dt = performance.now() - seekT0;
+    seekT0 = 0;
+    if (dt > 5 && dt < 1500) seekEma = seekEma * 0.6 + dt * 0.4;
+  });
+
   function loop() {
     if (playing) {
       // the Host video is the clock: the timeline follows it, so a slow decoder never makes the picture "stand still"
@@ -3383,6 +3422,14 @@ export function editorScreen() {
           // jump over a part that was cut out
           const nx = nextKeptStart(p.segments, playMs);
           if (nx !== null) { playMs = nx; syncHost(true); syncConst(true); }
+        } else if (p.segments.length && !hostV.seeking) {
+          // a cut part is coming up: start the jump a little before it, so the new picture is ready right at the cut
+          const lead = Math.max(30, Math.min(220, seekEma));
+          const run = coverage(p.segments).find((r) => playMs >= r.startMs && playMs < r.endMs);
+          if (run && run.endMs - playMs <= lead) {
+            const nx = nextKeptStart(p.segments, run.endMs + 1);
+            if (nx !== null && nx > run.endMs + 1) { playMs = nx; syncHost(true); syncConst(true); }
+          }
         }
         // clips can play faster (AI Agent): the Host video, the saved music track and the cleaned voice follow the same speed
         const rate = rateAt();

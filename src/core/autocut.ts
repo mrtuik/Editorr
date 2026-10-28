@@ -200,6 +200,48 @@ export function addPunchZooms(
       const a = Math.round(pc.a), b = Math.round(pc.b);
       if (b - a < 20) return;
       const n = dup(sg, { id: i === 0 ? sg.id : uid(), startMs: a, endMs: b });
+      if (i > 0) n.zs = true; // a zoom step, not a real cut
+      n[key] = Math.abs(pc.f - 1) < 0.002 ? { ...base } : zoomCrop(base, pc.f);
+      out.push(n);
+    });
+  }
+  return out;
+}
+
+/**
+ * Zoom at every silence cut: right where a cut joins two parts, the picture zooms in (graph shaped), holds, and eases back out.
+ * `joins` are the timeline times where a kept part starts after a removed part. Only one-person clips are zoomed.
+ * A zoom that does not fit inside the clip is shortened to fit (at least 250 ms).
+ */
+export function addCutZooms(
+  segs: Segment[], joins: number[], shape: ZoomShape,
+  baseCrop: (sg: Segment, role: Role) => CropState,
+): Segment[] {
+  const A = Math.max(1.01, shape.amount);
+  const f = (e: number) => 1 + (A - 1) * e;
+  const out: Segment[] = [];
+  for (const sg of segs) {
+    const join = joins.find((t) => Math.abs(t - sg.startMs) <= 2);
+    if (join === undefined || sg.style !== 'one' || sg.endMs - sg.startMs < 250) { out.push(sg); continue; }
+    const room = sg.endMs - sg.startMs - 60;
+    const want = Math.max(80, shape.inMs) + Math.max(0, shape.holdMs) + Math.max(80, shape.outMs);
+    const k = Math.min(1, room / want);
+    const inMs = Math.max(80, shape.inMs) * k, holdMs = Math.max(0, shape.holdMs) * k, outMs = Math.max(80, shape.outMs) * k;
+    const nIn = Math.max(3, Math.min(12, Math.round(inMs / 60))), nOut = Math.max(3, Math.min(12, Math.round(outMs / 60)));
+    const key = (sg.main === 'host' ? 'cropHost' : 'cropConst') as 'cropHost' | 'cropConst';
+    const base = baseCrop(sg, sg.main);
+    const pieces: { a: number; b: number; f: number }[] = [];
+    const start = sg.startMs;
+    for (let i = 0; i < nIn; i++) pieces.push({ a: start + (i * inMs) / nIn, b: start + ((i + 1) * inMs) / nIn, f: f(bezier(shape.ease, (i + 0.5) / nIn)) });
+    const holdEnd = start + inMs + holdMs;
+    if (holdMs > 0) pieces.push({ a: start + inMs, b: holdEnd, f: A });
+    for (let i = 0; i < nOut; i++) pieces.push({ a: holdEnd + (i * outMs) / nOut, b: holdEnd + ((i + 1) * outMs) / nOut, f: f(1 - bezier(shape.ease, (i + 0.5) / nOut)) });
+    pieces.push({ a: holdEnd + outMs, b: sg.endMs, f: 1 });
+    pieces.forEach((pc, i) => {
+      const x = i === 0 ? sg.startMs : Math.round(pc.a), y = i === pieces.length - 1 ? sg.endMs : Math.round(pc.b);
+      if (y - x < 20) return;
+      const n = dup(sg, { id: i === 0 ? sg.id : uid(), startMs: x, endMs: y });
+      if (i > 0) n.zs = true;
       n[key] = Math.abs(pc.f - 1) < 0.002 ? { ...base } : zoomCrop(base, pc.f);
       out.push(n);
     });

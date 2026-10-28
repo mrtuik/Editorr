@@ -23,7 +23,14 @@ function slider(label: string, min: number, max: number, step: number, value: nu
 }
 
 /** Auto zoom: amount, speed in / out, hold, and a graph editor for the easing curve. Resolves with the shape, or null when closed. */
-export function askAutoZoom(s: Settings): Promise<ZoomShape | null> {
+export function zoomShapeFrom(s: Settings): ZoomShape {
+  return {
+    amount: s.zoomAmount ?? 1.15, inMs: s.zoomInMs ?? 300, holdMs: s.zoomHoldMs ?? 1200, outMs: s.zoomOutMs ?? 300,
+    ease: s.zoomEase && s.zoomEase.length === 4 ? [...s.zoomEase] : [0.42, 0, 0.58, 1],
+  };
+}
+
+export function askAutoZoom(s: Settings, o: { title?: string; hint?: string; cta?: string } = {}): Promise<ZoomShape | null> {
   const save = () => { void saveSettings(s); };
   s.zoomEase = s.zoomEase && s.zoomEase.length === 4 ? s.zoomEase : [0.42, 0, 0.58, 1];
   return new Promise((resolve) => {
@@ -82,9 +89,9 @@ export function askAutoZoom(s: Settings): Promise<ZoomShape | null> {
       [['soft', 'Soft'], ['medium', 'Medium'], ['strong', 'Strong']], s.zoomStrength ?? 'medium', (v) => { s.zoomStrength = v; s.zoomAmount = v === 'soft' ? 1.08 : v === 'strong' ? 1.25 : 1.15; save(); });
     const sheet = h('div', { class: 'at-sheet', role: 'dialog' },
       h('div', { class: 'at-handle' }),
-      h('div', { class: 'at-head' }, h('button', { class: 'at-back', 'aria-label': 'Close', onclick: () => done(null) }, icon('back', 20)), h('div', { class: 'at-title' }, 'Auto zoom'), h('span', { class: 'at-head-gap' })),
+      h('div', { class: 'at-head' }, h('button', { class: 'at-back', 'aria-label': 'Close', onclick: () => done(null) }, icon('back', 20)), h('div', { class: 'at-title' }, o.title ?? 'Auto zoom'), h('span', { class: 'at-head-gap' })),
       h('div', { class: 'at-body' },
-        h('div', { class: 'at-hint' }, 'A zoom-in on loud, strong moments (big words, laughs), on the person who is on screen.'),
+        h('div', { class: 'at-hint' }, o.hint ?? 'A zoom-in on loud, strong moments (big words, laughs), on the person who is on screen.'),
         strengthRow,
         slider('Zoom amount', 1.03, 1.5, 0.01, s.zoomAmount ?? 1.15, (v) => `${Math.round((v - 1) * 100)}%`, (v) => { s.zoomAmount = v; save(); }),
         slider('Zoom in time', 100, 1000, 50, s.zoomInMs ?? 300, ms, (v) => { s.zoomInMs = v; save(); }),
@@ -95,7 +102,7 @@ export function askAutoZoom(s: Settings): Promise<ZoomShape | null> {
           cv, presetRow)),
       h('div', { class: 'at-foot' }, h('button', { class: 'btn primary at-go', onclick: () => done({
         amount: s.zoomAmount ?? 1.15, inMs: s.zoomInMs ?? 300, holdMs: s.zoomHoldMs ?? 1200, outMs: s.zoomOutMs ?? 300, ease: [...(s.zoomEase as number[])],
-      }) }, icon('wand', 20), 'Apply')));
+      }) }, icon('wand', 20), o.cta ?? 'Apply')));
     const box = h('div', { class: 'at-scrim', onclick: (e: Event) => { if (e.target === box) done(null); } }, sheet);
     document.body.append(box);
     draw(); drawPresets();
