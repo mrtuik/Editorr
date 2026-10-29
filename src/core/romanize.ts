@@ -22,7 +22,7 @@ const HI_CONS: Record<string, string> = {
   'क़': 'q', 'ख़': 'kh', 'ग़': 'g', 'ज़': 'z', 'ड़': 'r', 'ढ़': 'rh', 'फ़': 'f',
 };
 const HI_VOW: Record<string, string> = { 'अ': 'a', 'आ': 'aa', 'इ': 'i', 'ई': 'ee', 'उ': 'u', 'ऊ': 'oo', 'ऋ': 'ri', 'ए': 'e', 'ऐ': 'ai', 'ओ': 'o', 'औ': 'au', 'ऑ': 'o' };
-const HI_MATRA: Record<string, string> = { 'ा': 'a', 'ि': 'i', 'ी': 'ee', 'ु': 'u', 'ू': 'oo', 'ृ': 'ri', 'े': 'e', 'ै': 'ai', 'ो': 'o', 'ौ': 'au', 'ॉ': 'o', 'ॆ': 'e', 'ॊ': 'o' };
+const HI_MATRA: Record<string, string> = { 'ा': 'a', 'ि': 'i', 'ी': 'i', 'ु': 'u', 'ू': 'oo', 'ृ': 'ri', 'े': 'e', 'ै': 'ai', 'ो': 'o', 'ौ': 'au', 'ॉ': 'o', 'ॆ': 'e', 'ॊ': 'o' };
 const HI_DIGIT = '०१२३४५६७८९';
 
 interface Script {
@@ -32,6 +32,46 @@ interface Script {
 }
 const BN: Script = { cons: BN_CONS, vow: BN_VOW, matra: BN_MATRA, virama: '্', nukta: '়', nasal: { 'ং': 'ng', 'ঃ': 'h', 'ঁ': 'n' }, digits: BN_DIGIT, schwa: 'o', hindi: false, range: /[\u0980-\u09FF]/ };
 const HI: Script = { cons: HI_CONS, vow: HI_VOW, matra: HI_MATRA, virama: '्', nukta: '़', nasal: { 'ं': 'n', 'ः': 'h', 'ँ': 'n' }, digits: HI_DIGIT, schwa: 'a', hindi: true, range: /[\u0900-\u097F]/ };
+
+
+/**
+ * Social-media spellings (how Blink / Reels captions write them). Looked up first, whole word, punctuation ignored.
+ * Anything not listed falls back to the phonetic rules below.
+ */
+const SLANG: Record<string, string> = {
+  // Hindi
+  'नहीं': 'Nahi', 'नही': 'Nahi', 'क्या': 'Kya', 'हाँ': 'Haan', 'हां': 'Haan', 'भाई': 'Bhai', 'लेकिन': 'Lekin', 'अच्छा': 'Achha', 'अच्छी': 'Achhi',
+  'अच्छे': 'Achhe', 'है': 'Hai', 'हैं': 'Hain', 'था': 'Tha', 'थी': 'Thi', 'थे': 'The', 'और': 'Aur', 'में': 'Mein', 'मैं': 'Main', 'मै': 'Main',
+  'मेरा': 'Mera', 'मेरी': 'Meri', 'मेरे': 'Mere', 'तुम': 'Tum', 'तू': 'Tu', 'तुझे': 'Tujhe', 'तेरा': 'Tera', 'तेरी': 'Teri', 'आप': 'Aap',
+  'हम': 'Hum', 'हमें': 'Humein', 'यह': 'Yeh', 'ये': 'Ye', 'वो': 'Wo', 'वह': 'Woh', 'यहाँ': 'Yahan', 'यहां': 'Yahan', 'वहाँ': 'Wahan', 'वहां': 'Wahan',
+  'कैसे': 'Kaise', 'कैसा': 'Kaisa', 'कैसी': 'Kaisi', 'क्यों': 'Kyun', 'क्यूँ': 'Kyun', 'कब': 'Kab', 'कहाँ': 'Kahan', 'कहां': 'Kahan', 'कौन': 'Kaun',
+  'कुछ': 'Kuch', 'सब': 'Sab', 'सबको': 'Sabko', 'बहुत': 'Bahut', 'बस': 'Bas', 'बात': 'Baat', 'बातें': 'Baatein', 'लोग': 'Log', 'दोस्त': 'Dost',
+  'यार': 'Yaar', 'चल': 'Chal', 'चलो': 'Chalo', 'देख': 'Dekh', 'देखो': 'Dekho', 'सुनो': 'Suno', 'सुन': 'Sun', 'बोल': 'Bol', 'बोलो': 'Bolo',
+  'करो': 'Karo', 'करना': 'Karna', 'करते': 'Karte', 'करता': 'Karta', 'करती': 'Karti', 'करें': 'Karein', 'कर': 'Kar', 'किया': 'Kiya', 'हो': 'Ho',
+  'होगा': 'Hoga', 'होगी': 'Hogi', 'होता': 'Hota', 'हुआ': 'Hua', 'हुई': 'Hui', 'गया': 'Gaya', 'गई': 'Gayi', 'गयी': 'Gayi', 'जाना': 'Jaana', 'जा': 'Ja',
+  'आना': 'Aana', 'आ': 'Aa', 'आओ': 'Aao', 'आज': 'Aaj', 'कल': 'Kal', 'अभी': 'Abhi', 'फिर': 'Phir', 'तो': 'Toh', 'भी': 'Bhi', 'ही': 'Hi', 'से': 'Se',
+  'को': 'Ko', 'का': 'Ka', 'की': 'Ki', 'के': 'Ke', 'पर': 'Par', 'ना': 'Na', 'न': 'Na', 'जी': 'Ji', 'सच': 'Sach', 'झूठ': 'Jhooth', 'पैसा': 'Paisa',
+  'पैसे': 'Paise', 'प्यार': 'Pyaar', 'दिल': 'Dil', 'ज़िंदगी': 'Zindagi', 'जिंदगी': 'Zindagi', 'वीडियो': 'Video', 'सही': 'Sahi', 'गलत': 'Galat',
+  'मज़ा': 'Maza', 'मजा': 'Maza', 'ज़्यादा': 'Zyada', 'ज्यादा': 'Zyada', 'थोड़ा': 'Thoda', 'थोड़ी': 'Thodi', 'पता': 'Pata', 'समझ': 'Samajh',
+  'मतलब': 'Matlab', 'ठीक': 'Theek', 'एक': 'Ek', 'दो': 'Do', 'तीन': 'Teen', 'चार': 'Chaar', 'पांच': 'Paanch', 'दिन': 'Din', 'रात': 'Raat',
+  'अरे': 'Arre', 'ओए': 'Oye', 'वाह': 'Wah', 'चलिए': 'Chaliye', 'शुक्रिया': 'Shukriya', 'धन्यवाद': 'Dhanyavaad', 'नमस्ते': 'Namaste',
+  // Bengali
+  'কেন': 'Keno', 'করছি': 'Korchi', 'করছ': 'Korcho', 'করছে': 'Korche', 'ভালো': 'Bhalo', 'ভাল': 'Bhalo', 'হবে': 'Hobe', 'বলছি': 'Bolchi',
+  'বলছে': 'Bolche', 'আমি': 'Ami', 'আমার': 'Amar', 'আমরা': 'Amra', 'তুমি': 'Tumi', 'তোমার': 'Tomar', 'তুই': 'Tui', 'তোর': 'Tor', 'সে': 'Se',
+  'তার': 'Tar', 'তারা': 'Tara', 'এই': 'Ei', 'ওই': 'Oi', 'এটা': 'Eta', 'ওটা': 'Ota', 'এখন': 'Ekhon', 'তখন': 'Tokhon', 'কখন': 'Kokhon',
+  'কি': 'Ki', 'কী': 'Ki', 'কোথায়': 'Kothay', 'কোথাও': 'Kothao', 'কেমন': 'Kemon', 'কে': 'Ke', 'কত': 'Koto', 'কিন্তু': 'Kintu', 'আর': 'Ar',
+  'এবং': 'Ebong', 'না': 'Na', 'নাই': 'Nai', 'নেই': 'Nei', 'হ্যাঁ': 'Hya', 'হা': 'Ha', 'আছে': 'Ache', 'আছি': 'Achi', 'ছিল': 'Chilo',
+  'হয়': 'Hoy', 'হয়েছে': 'Hoyeche', 'হল': 'Holo', 'হলো': 'Holo', 'হচ্ছে': 'Hochhe', 'যাব': 'Jabo', 'যাবো': 'Jabo', 'যাচ্ছি': 'Jachhi',
+  'আসবো': 'Asbo', 'আসছি': 'Aschi', 'দেখ': 'Dekh', 'দেখো': 'Dekho', 'দেখুন': 'Dekhun', 'শোনো': 'Shono', 'শুনুন': 'Shunun', 'বলো': 'Bolo',
+  'বল': 'Bol', 'বলে': 'Bole', 'করো': 'Koro', 'কর': 'Kor', 'করে': 'Kore', 'করবো': 'Korbo', 'করব': 'Korbo', 'করতে': 'Korte', 'পারি': 'Pari',
+  'পারো': 'Paro', 'পারবো': 'Parbo', 'পারবে': 'Parbe', 'অনেক': 'Onek', 'একটু': 'Ektu', 'একটা': 'Ekta', 'এক': 'Ek', 'দুই': 'Dui', 'তিন': 'Tin',
+  'ভাই': 'Bhai', 'বন্ধু': 'Bondhu', 'দাদা': 'Dada', 'দিদি': 'Didi', 'ভিডিও': 'Video', 'টাকা': 'Taka', 'পয়সা': 'Poisha', 'সত্যি': 'Sotti',
+  'মিথ্যা': 'Mithya', 'ঠিক': 'Thik', 'খুব': 'Khub', 'খুবই': 'Khubi', 'সব': 'Sob', 'সবাই': 'Sobai', 'আজ': 'Aaj', 'কাল': 'Kal', 'দিন': 'Din',
+  'রাত': 'Raat', 'ভালোবাসা': 'Bhalobasha', 'জীবন': 'Jibon', 'মানুষ': 'Manush', 'কথা': 'Kotha', 'জানি': 'Jani', 'জানো': 'Jano', 'জানি না': 'Jani Na',
+  'চলো': 'Cholo', 'চল': 'Chol', 'এসো': 'Esho', 'যাও': 'Jao', 'নিয়ে': 'Niye', 'দিয়ে': 'Diye', 'থেকে': 'Theke', 'জন্য': 'Jonno', 'মধ্যে': 'Moddhe',
+  'সাথে': 'Sathe', 'সঙ্গে': 'Songe', 'ধন্যবাদ': 'Dhonnobad', 'নমস্কার': 'Nomoskar', 'বাহ': 'Wah', 'আরে': 'Arre', 'ওরে': 'Ore',
+};
+const EDGE = /^([\s"'“”‘’(\[{«]*)(.*?)([\s"'“”‘’)\]}».,!?;:।॥…-]*)$/u;
 
 function word(w: string, sc: Script): string {
   const chars = Array.from(w);
@@ -69,11 +109,19 @@ function word(w: string, sc: Script): string {
   return pieces.map((x) => x.s + (x.schwa ? sc.schwa : '')).join('');
 }
 
+/** Phonetic clean-up after the rules: no tripled letters. */
+function tidy(t: string): string { return t.replace(/([a-z])\1{2,}/g, '$1$1'); }
+
 /** Convert text in Bengali or Devanagari script to Latin letters. Text in other scripts is returned unchanged. */
 export function romanize(text: string): string {
   const sc = BN.range.test(text) ? BN : HI.range.test(text) ? HI : null;
   if (!sc) return text;
-  return text.split(/(\s+)/).map((part) => (sc.range.test(part) ? word(part, sc) : part)).join('');
+  return text.split(/(\s+)/).map((part) => {
+    if (!sc.range.test(part)) return part;
+    const m = EDGE.exec(part);
+    const pre = m ? m[1] : '', core = m ? m[2] : part, post = m ? m[3] : '';
+    return pre + (SLANG[core.normalize('NFC')] ?? SLANG[core] ?? tidy(word(core, sc))) + post;
+  }).join('');
 }
 
 /** True when the text uses a script this file can romanize. */

@@ -2369,6 +2369,7 @@ export function editorScreen() {
       changed: () => { capVersion++; drawCaptionsPreview(); scheduleSave(); },
       remove: () => { delete p.captions; capVersion++; drawCaptionsPreview(); scheduleSave(); },
       seek: (ms) => seek(ms),
+      cut: (a, b) => { edit(dropSlivers(subtractRanges(p.segments, [{ startMs: a, endMs: b }]), 1)); capVersion++; drawCaptionsPreview(); },
     });
   }
 

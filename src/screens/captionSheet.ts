@@ -3,6 +3,7 @@ import { needsRoman } from '../core/romanize';
 import { LANGS, type WhisperModel } from '../core/transcribe';
 import type { Project, Settings } from '../core/types';
 import { saveSettings } from '../core/store';
+import { isKept } from '../core/timeline';
 import { h, icon } from '../ui';
 import { chips } from './faceOptions';
 
@@ -15,6 +16,8 @@ export interface CaptionCtx {
   changed: () => void;
   remove: () => void;
   seek: (ms: number) => void;
+  /** Descript-style: cut this time range (ms, source time) out of the video. */
+  cut: (startMs: number, endMs: number) => void;
 }
 
 const COLORS = ['#FFFFFF', '#FFD60A', '#FF453A', '#30D158', '#0A84FF', '#FF9F0A', '#BF5AF2', '#000000'];
@@ -75,6 +78,18 @@ export function openCaptionSheet(ctx: CaptionCtx): void {
     }));
     drawLooks();
 
+    // Descript-style transcript: tap a word to cut that part out of the video.
+    const trans = h('div', { class: 'cap-trans' });
+    const drawTrans = () => {
+      const c = p.captions; if (!c) return;
+      trans.replaceChildren(...c.words.map((w) => {
+        const gone = !isKept(p.segments, (w.s + w.e) / 2);
+        const t = st.roman ? w.w : (w.orig || w.w);
+        return h('button', { class: 'cap-tw' + (gone ? ' gone' : ''), style: gone ? 'text-decoration:line-through;opacity:.4' : '',
+          onclick: () => { if (gone) { ctx.seek(w.s); return; } ctx.cut(w.s, w.e); drawTrans(); drawList(); } }, t);
+      }));
+    };
+    trans.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;max-height:220px;overflow:auto';
     const list = h('div', { class: 'cap-pages' });
     const drawList = () => {
       const pages = buildPages(p.captions, st);
@@ -93,7 +108,7 @@ export function openCaptionSheet(ctx: CaptionCtx): void {
         return h('div', { class: 'cap-row' }, h('button', { class: 'cap-time', onclick: () => ctx.seek(pg.s) }, `${Math.floor(pg.s / 60000)}:${String(Math.floor(pg.s / 1000) % 60).padStart(2, '0')}`), input);
       }));
     };
-    drawList();
+    drawList(); drawTrans();
 
     body.replaceChildren(
       h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Style'), looks),
@@ -104,6 +119,7 @@ export function openCaptionSheet(ctx: CaptionCtx): void {
       chips<string>('Letters', '', [['n', 'Normal'], ['u', 'CAPITALS']], st.upper ? 'u' : 'n', (v) => { st.upper = v === 'u'; ctx.changed(); drawList(); }),
       swatches('Text colour', st.color, (c) => { st.color = c; ctx.changed(); drawLooks(); }),
       swatches('Highlight colour', st.highlight, (c) => { st.highlight = c; ctx.changed(); drawLooks(); }),
+      h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Cut by text'), h('div', { class: 'at-hint' }, 'Tap a word to remove it from the video. Use Undo to bring it back.'), trans),
       h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Edit words'), h('div', { class: 'at-hint' }, 'Tap the time to jump there. Change a line to fix a word.'), list));
     foot.replaceChildren(
       h('button', { class: 'btn at-go', onclick: () => { ctx.remove(); renderMake(); } }, icon('trash', 20), 'Remove captions'));
