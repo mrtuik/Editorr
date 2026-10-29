@@ -67,7 +67,7 @@ export interface PickedVideo {
 
 export interface GalleryVideo { id: number; name: string; durationMs: number; albumId: string; album: string }
 
-export type NativeEvent = 'audioProgress' | 'denoiseProgress' | 'exportProgress' | 'proxyProgress' | 'copyProgress' | 'thumb' | 'ytProgress' | 'agyInstall' | 'agyAuth';
+export type NativeEvent = 'audioProgress' | 'denoiseProgress' | 'exportProgress' | 'proxyProgress' | 'copyProgress' | 'thumb' | 'ytProgress' | 'agyInstall' | 'agyAuth' | 'whisperDownload' | 'whisperProgress';
 
 export interface AgyStatus {
   supported: boolean;
@@ -90,6 +90,16 @@ export interface EditorrNativePlugin {
   antigravitySubmitCode(opts: { code: string }): Promise<AgyStatus>;
   antigravityCancelLogin(): Promise<AgyStatus>;
   antigravityLogout(): Promise<AgyStatus>;
+  /** Native Whisper (whisper.cpp): is it in this build, and which models are downloaded. */
+  whisperStatus(): Promise<{ available: boolean; tiny: boolean; base: boolean; small: boolean }>;
+  /** Downloads a model once. Emits 'whisperDownload' {percent}. */
+  whisperDownloadModel(opts: { model: string }): Promise<void>;
+  whisperBegin(): Promise<void>;
+  /** A piece of 16 kHz mono 16-bit little-endian audio as base64. */
+  whisperPush(opts: { data: string }): Promise<void>;
+  /** Runs Whisper on the audio pushed so far. Emits 'whisperProgress' {percent}. segments = JSON [{t0,t1,text}] in ms. */
+  whisperRun(opts: { model: string; language: string; words: boolean }): Promise<{ segments: string }>;
+  whisperCancel(): Promise<void>;
   /** Name, email and small photo (data URL) of the Google account signed in to Antigravity. Rejects when nobody is signed in. */
   antigravityProfile(): Promise<{ name: string; email: string; picture: string }>;
   /** Opens an https link in the phone's browser. */

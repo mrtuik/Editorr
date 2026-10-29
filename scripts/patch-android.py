@@ -167,7 +167,7 @@ if agy_on:
     tp_dest = ANDROID / "app/third_party"
     if tp_dest.exists():
         shutil.rmtree(tp_dest)
-    shutil.copytree(tp_src, tp_dest, ignore=shutil.ignore_patterns(".git"))
+    shutil.copytree(tp_src, tp_dest, ignore=shutil.ignore_patterns(".git", "samples", "bindings", "models"))
     if not (tp_dest / "proot/src/cli/proot.c").exists():
         sys.exit("PRoot sources missing: run the 'Fetch native sources' step (git clone termux/proot into native/android/third_party/proot)")
 

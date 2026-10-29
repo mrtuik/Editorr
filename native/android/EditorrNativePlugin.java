@@ -350,6 +350,72 @@ public class EditorrNativePlugin extends Plugin {
         call.resolve(agyStatusObject());
     }
 
+    // ---- Whisper (whisper.cpp) running natively: no WebView memory limit, so captions stop crashing the app.
+    private com.tuik.editorr.agy.WhisperEngine whisper;
+
+    private synchronized com.tuik.editorr.agy.WhisperEngine whisper() {
+        if (whisper == null) whisper = new com.tuik.editorr.agy.WhisperEngine(getContext());
+        return whisper;
+    }
+
+    @PluginMethod
+    public void whisperStatus(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("available", com.tuik.editorr.agy.WhisperEngine.available());
+        r.put("tiny", whisper().modelReady("tiny"));
+        r.put("base", whisper().modelReady("base"));
+        r.put("small", whisper().modelReady("small"));
+        call.resolve(r);
+    }
+
+    /** Downloads a Whisper model once. Progress: "whisperDownload" {percent}. */
+    @PluginMethod
+    public void whisperDownloadModel(final PluginCall call) {
+        final String model = call.getString("model", "base");
+        new Thread(() -> {
+            try {
+                whisper().downloadModel(model, p -> { JSObject e = new JSObject(); e.put("percent", p); notifyListeners("whisperDownload", e); });
+                call.resolve();
+            } catch (Throwable t) {
+                call.reject(t.getMessage() == null ? "Model download failed." : t.getMessage());
+            }
+        }, "editorr-whisper-download").start();
+    }
+
+    @PluginMethod
+    public void whisperBegin(PluginCall call) {
+        try { whisper().begin(); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    }
+
+    @PluginMethod
+    public void whisperPush(PluginCall call) {
+        try { whisper().push(call.getString("data", "")); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    }
+
+    /** Runs Whisper. Progress: "whisperProgress" {percent}. Resolves {segments: "<json>"}. */
+    @PluginMethod
+    public void whisperRun(final PluginCall call) {
+        final String model = call.getString("model", "base");
+        final String lang = call.getString("language", "");
+        final boolean words = Boolean.TRUE.equals(call.getBoolean("words", true));
+        new Thread(() -> {
+            try {
+                String json = whisper().run(model, lang, words, p -> { JSObject e = new JSObject(); e.put("percent", p); notifyListeners("whisperProgress", e); });
+                JSObject r = new JSObject();
+                r.put("segments", json);
+                call.resolve(r);
+            } catch (Throwable t) {
+                call.reject(t.getMessage() == null ? "Whisper failed." : t.getMessage());
+            }
+        }, "editorr-whisper-run").start();
+    }
+
+    @PluginMethod
+    public void whisperCancel(PluginCall call) {
+        whisper().cancel();
+        call.resolve();
+    }
+
     /** Name, email and photo of the Google account signed in to Antigravity (for the profile, home header and tab bar). */
     @PluginMethod
     public void antigravityProfile(final PluginCall call) {

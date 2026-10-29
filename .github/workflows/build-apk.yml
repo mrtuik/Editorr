@@ -13,7 +13,7 @@ jobs:
     env:
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
       VERSION_CODE: ${{ github.run_number }}
-      VERSION_NAME: 16.13.0
+      VERSION_NAME: 16.14.0
       # YouTube music module: ALWAYS ON. Nothing to tick, no variable to set.
       EDITORR_YOUTUBE: '1'
       # Built-in Antigravity. Where the Linux base bundle is downloaded from on the phone (set your own release URL if you host a copy).
@@ -96,6 +96,13 @@ jobs:
           if [ ! -f native/android/third_party/libandroid-shmem/shmem.c ]; then
             rm -rf native/android/third_party/libandroid-shmem
             git clone --depth 1 https://github.com/termux/libandroid-shmem.git native/android/third_party/libandroid-shmem
+          fi
+
+      - name: Fetch whisper.cpp (native Whisper for captions)
+        run: |
+          if [ ! -f native/android/third_party/whisper.cpp/CMakeLists.txt ]; then
+            rm -rf native/android/third_party/whisper.cpp
+            git clone --depth 1 --branch v1.7.5 https://github.com/ggml-org/whisper.cpp.git native/android/third_party/whisper.cpp
           fi
 
       - name: Install dependencies

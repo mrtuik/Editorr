@@ -1,0 +1,140 @@
+// JNI bridge to whisper.cpp for Editorr. Audio comes from a raw 16 kHz mono 16-bit file written by the app.
+#include <jni.h>
+#include <android/log.h>
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <vector>
+
+#include "whisper.h"
+
+#define TAG "EditorrWhisper"
+
+static std::atomic<bool> g_cancel(false);
+
+struct Ctx {
+    JNIEnv *env;
+    jobject cb;
+    jmethodID on;
+    int last;
+};
+
+static void on_progress(struct whisper_context *, struct whisper_state *, int progress, void *user) {
+    Ctx *c = static_cast<Ctx *>(user);
+    if (!c->cb || progress == c->last) return;
+    c->last = progress;
+    c->env->CallVoidMethod(c->cb, c->on, (jint) progress);
+}
+
+static bool should_abort(void *) { return g_cancel.load(); }
+
+static void json_escape(std::string &out, const char *s) {
+    for (; *s; ++s) {
+        unsigned char ch = (unsigned char) *s;
+        switch (ch) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (ch < 0x20) { char b[8]; snprintf(b, sizeof b, "\\u%04x", ch); out += b; }
+                else out += (char) ch;
+        }
+    }
+}
+
+extern "C" {
+
+JNIEXPORT jlong JNICALL Java_com_tuik_editorr_agy_WhisperNative_nativeInit(JNIEnv *env, jclass, jstring path) {
+    const char *p = env->GetStringUTFChars(path, nullptr);
+    struct whisper_context_params cp = whisper_context_default_params();
+    cp.use_gpu = false;
+    struct whisper_context *ctx = whisper_init_from_file_with_params(p, cp);
+    env->ReleaseStringUTFChars(path, p);
+    return reinterpret_cast<jlong>(ctx);
+}
+
+JNIEXPORT void JNICALL Java_com_tuik_editorr_agy_WhisperNative_nativeFree(JNIEnv *, jclass, jlong h) {
+    if (h) whisper_free(reinterpret_cast<struct whisper_context *>(h));
+}
+
+JNIEXPORT void JNICALL Java_com_tuik_editorr_agy_WhisperNative_nativeCancel(JNIEnv *, jclass) { g_cancel.store(true); }
+
+// Returns a JSON array [{"t0":ms,"t1":ms,"text":"..."}], or null when it failed / was cancelled.
+JNIEXPORT jstring JNICALL Java_com_tuik_editorr_agy_WhisperNative_nativeRun(JNIEnv *env, jclass, jlong h, jstring pcmPath,
+                                                                         jstring lang, jboolean words, jint threads, jobject cb) {
+    g_cancel.store(false);
+    struct whisper_context *ctx = reinterpret_cast<struct whisper_context *>(h);
+    if (!ctx) return nullptr;
+
+    const char *pp = env->GetStringUTFChars(pcmPath, nullptr);
+    FILE *f = fopen(pp, "rb");
+    env->ReleaseStringUTFChars(pcmPath, pp);
+    if (!f) return nullptr;
+    fseek(f, 0, SEEK_END);
+    long bytes = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    size_t n = (size_t) (bytes / 2);
+    std::vector<int16_t> raw(n);
+    size_t got = n ? fread(raw.data(), 2, n, f) : 0;
+    fclose(f);
+    std::vector<float> pcm(got);
+    for (size_t i = 0; i < got; i++) pcm[i] = raw[i] / 32768.0f;
+    raw.clear();
+    raw.shrink_to_fit();
+    if (pcm.empty()) return env->NewStringUTF("[]");
+
+    const char *lg = env->GetStringUTFChars(lang, nullptr);
+    std::string language = lg ? lg : "";
+    env->ReleaseStringUTFChars(lang, lg);
+
+    struct whisper_full_params wp = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    wp.print_progress = false;
+    wp.print_realtime = false;
+    wp.print_timestamps = false;
+    wp.print_special = false;
+    wp.translate = false;
+    wp.language = language.empty() ? "auto" : language.c_str();
+    wp.detect_language = false;
+    wp.n_threads = threads > 0 ? threads : 4;
+    wp.no_context = true;
+    wp.suppress_blank = true;
+    wp.token_timestamps = words == JNI_TRUE;
+    wp.split_on_word = words == JNI_TRUE;
+    wp.max_len = words == JNI_TRUE ? 1 : 0;   // one word per segment = word timing
+    wp.abort_callback = should_abort;
+    wp.abort_callback_user_data = nullptr;
+
+    Ctx c{env, cb, nullptr, -1};
+    if (cb) {
+        jclass k = env->GetObjectClass(cb);
+        c.on = env->GetMethodID(k, "on", "(I)V");
+        wp.progress_callback = on_progress;
+        wp.progress_callback_user_data = &c;
+    }
+
+    int rc = whisper_full(ctx, wp, pcm.data(), (int) pcm.size());
+    if (rc != 0 || g_cancel.load()) return nullptr;
+
+    std::string out = "[";
+    int segs = whisper_full_n_segments(ctx);
+    bool first = true;
+    for (int i = 0; i < segs; i++) {
+        const char *text = whisper_full_get_segment_text(ctx, i);
+        if (!text) continue;
+        if (!first) out += ',';
+        first = false;
+        char head[96];
+        snprintf(head, sizeof head, "{\"t0\":%lld,\"t1\":%lld,\"text\":\"",
+                 (long long) whisper_full_get_segment_t0(ctx, i) * 10, (long long) whisper_full_get_segment_t1(ctx, i) * 10);
+        out += head;
+        json_escape(out, text);
+        out += "\"}";
+    }
+    out += "]";
+    return env->NewStringUTF(out.c_str());
+}
+
+}
