@@ -1564,13 +1564,13 @@ public class EditorrNativePlugin extends Plugin {
             if (key >= 0 && wi >= 0 && activeScale > 1.0 && bounceMs > 0) key = key * 16 + (int) Math.min(15, Math.max(0, (tc - ws[pi][wi]) / 16));
             if (key == lastKey && lastBmp != null) return lastBmp;
             Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-            if (pi >= 0) drawPage(new Canvas(bmp), pi, wi);
+            if (pi >= 0) drawPage(new Canvas(bmp), pi, wi, tc);
             lastKey = key;
             lastBmp = bmp;
             return bmp;
         }
 
-        private void drawPage(Canvas c, int pi, int active) {
+        private void drawPage(Canvas c, int pi, int active, long tc) {
             String[] t = words[pi];
             float fs = (float) Math.max(8, size * h);
             Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
