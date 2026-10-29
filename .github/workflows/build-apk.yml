@@ -13,7 +13,7 @@ jobs:
     env:
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
       VERSION_CODE: ${{ github.run_number }}
-      VERSION_NAME: 16.14.0
+      VERSION_NAME: 16.14.1
       # YouTube music module: ALWAYS ON. Nothing to tick, no variable to set.
       EDITORR_YOUTUBE: '1'
       # Built-in Antigravity. Where the Linux base bundle is downloaded from on the phone (set your own release URL if you host a copy).
