@@ -49,11 +49,12 @@ export function profileMenu(current: MenuPage, close: () => void = () => {}): HT
     h('div', { class: 'pm-head' },
       h('div', { class: 'pm-who' }, nameEl, subEl),
       avatar(48)),
-    row('badgeCheck', 'Profile', () => app.go('profile'), undefined, current === 'profile'),
-    row('community', 'Community', soon('Community'), h('span', { class: 'pm-plus' }, icon('plus', 14))),
-    row('card', 'Subscription', soon('Subscription'), h('span', { class: 'pm-pro' }, icon('bolt', 12), 'PRO')),
-    row('toggle', 'Settings', () => app.go('settings'), undefined, current === 'settings'),
-    h('div', { class: 'pm-sep' }),
-    row('helpInfo', 'Help center', soon('Help center')),
-    signRow);
+    h('div', { class: 'pm-list' },
+      row('badgeCheck', 'Profile', () => app.go('profile'), undefined, current === 'profile'),
+      row('community', 'Community', soon('Community'), h('span', { class: 'pm-plus' }, icon('plus', 14))),
+      row('card', 'Subscription', soon('Subscription'), h('span', { class: 'pm-pro' }, icon('bolt', 12), 'PRO')),
+      row('toggle', 'Settings', () => app.go('settings'), undefined, current === 'settings'),
+      h('div', { class: 'pm-sep' }),
+      row('helpInfo', 'Help center', soon('Help center')),
+      signRow));
 }

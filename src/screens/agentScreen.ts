@@ -4,6 +4,8 @@ import { attachProjectMedia, isLoaded } from '../core/media';
 import { listProjects, runtime, saveProject } from '../core/store';
 import type { Project } from '../core/types';
 import { fmtClock, h, icon, spinner, toast } from '../ui';
+import logoUrl from '../assets/logo.png';
+import { firstName, getAccount } from '../core/account';
 import { agyOn, antigravityReady, openAntigravityPanel } from './antigravitySetup';
 
 const PRESETS: { label: string; prompt: string }[] = [
@@ -29,40 +31,52 @@ export function agentScreen() {
   let destroyed = false;
 
   // ---------- top bar
-  const thumb = h('div', { class: 'ag-thumb' });
-  const nameEl = h('div', { class: 'ag-name' }, 'No project');
-  const subEl = h('div', { class: 'ag-sub' }, 'Pick a project to start');
-  const changeBtn = h('button', { class: 'ag-change', onclick: () => void chooseProject() }, 'Change Project');
-  const agyBtn = h('button', { class: 'ag-change ag-agy', 'aria-label': 'Antigravity', onclick: () => {
+  const thumb = h('div', { class: 'ag-thumb' }); // only used in the project picker now
+  const nameEl = h('span', { class: 'ag-name' }, 'No project');
+  const subEl = h('span', { class: 'ag-sub' }, '');
+  const changeBtn = h('button', { class: 'ag-pill', 'aria-label': 'Change project', onclick: () => void chooseProject() }, nameEl, subEl);
+  const menuBtn = h('button', { class: 'ag-ibtn', 'aria-label': 'Projects', onclick: () => void chooseProject() }, icon('folder', 20));
+  const dot = h('span', { class: 'ag-dot' });
+  // top right: the profile button opens the Antigravity setup
+  const agyBtn = h('button', { class: 'ag-ibtn ag-agy', 'aria-label': 'Antigravity', onclick: () => {
     openAntigravityPanel(() => void paintAgy());
-  } });
+  } }, icon('user', 20), dot);
   let agyReady = false;
   const paintAgy = async () => {
     agyReady = await antigravityReady();
-    agyBtn.textContent = agyReady && agyOn() ? 'Antigravity: On' : agyReady ? 'Antigravity: Off' : 'Antigravity: Set up';
-    agyBtn.classList.toggle('on', agyReady && agyOn());
+    const on = agyReady && agyOn();
+    agyBtn.classList.toggle('on', on);
+    agyBtn.classList.toggle('setup', !agyReady);
+    agyBtn.title = on ? 'Antigravity: On' : agyReady ? 'Antigravity: Off' : 'Antigravity: Set up';
   };
   void paintAgy();
-  const top = h('div', { class: 'ag-top' }, thumb, h('div', { class: 'ag-who' }, nameEl, subEl), changeBtn);
+  const top = h('div', { class: 'ag-top' }, menuBtn, changeBtn, agyBtn);
 
   // ---------- chat
   const chat = h('div', { class: 'ag-chat' });
   const scroll = () => requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; });
-  const say = (text: string) => { const b = h('div', { class: 'ag-msg bot' }, h('div', { class: 'ag-av' }, icon('wand', 14)), h('div', { class: 'ag-bub' }, text)); chat.append(b); scroll(); return b; };
-  const me = (text: string) => { chat.append(h('div', { class: 'ag-msg me' }, h('div', { class: 'ag-bub' }, text))); scroll(); };
+  const clearEmpty = () => { chat.classList.remove('empty'); chat.querySelector('.ag-empty')?.remove(); };
+  const say = (text: string) => { clearEmpty(); const b = h('div', { class: 'ag-msg bot' }, h('div', { class: 'ag-bub' }, text)); chat.append(b); scroll(); return b; };
+  const me = (text: string) => { clearEmpty(); chat.append(h('div', { class: 'ag-msg me' }, h('div', { class: 'ag-bub' }, text))); scroll(); };
 
   function welcome() {
-    chat.replaceChildren();
-    say(original
-      ? `Hi! I'm ready to edit "${original.name}". Tell me what you want, or tap a preset: pacing, retakes, meme sounds, music.`
-      : 'Hi! Pick a project with "Change Project", then tell me how to edit it.');
+    const hr = new Date().getHours();
+    const hello = hr < 12 ? 'Good Morning' : hr < 17 ? 'Good Afternoon' : 'Good Evening';
+    const who = firstName(getAccount());
+    chat.replaceChildren(h('div', { class: 'ag-empty' },
+      h('img', { class: 'ag-logo', src: logoUrl, alt: '', draggable: false }),
+      h('div', { class: 'ag-hello' }, who ? `${hello}, ${who}` : hello),
+      h('div', { class: 'ag-hello-sub' }, original
+        ? `Ready to edit "${original.name}". Tell me what you want, or tap a preset.`
+        : 'Pick a project, then tell me how to edit it.')));
+    chat.classList.add('empty');
   }
 
   // ---------- project
   function paintProject() {
     const p = original;
-    nameEl.textContent = p ? p.name : 'No project';
-    subEl.textContent = p ? `${fmtClock(p.durationMs)} · ${p.aspect}${working && working !== original ? ' · edited in chat' : ''}` : 'Pick a project to start';
+    nameEl.textContent = p ? p.name : 'Choose project';
+    subEl.textContent = p ? ` · ${fmtClock(p.durationMs)}${working && working !== original ? ' · edited' : ''}` : '';
     thumb.style.backgroundImage = p?.thumb ? `url(${p.thumb})` : '';
     thumb.replaceChildren(...(p?.thumb ? [] : [icon('play', 18)]));
   }
@@ -177,8 +191,10 @@ export function agentScreen() {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(input.value); } });
   const sendBtn = h('button', { class: 'ag-send', 'aria-label': 'Send', onclick: () => void send(input.value) }, icon('back', 20));
   sendBtn.firstElementChild?.setAttribute('style', 'transform:rotate(90deg)');
-  function setBusy(on: boolean) { sendBtn.disabled = on; chips.classList.toggle('off', on); changeBtn.disabled = on; }
-  const bar = h('div', { class: 'ag-bar' }, h('div', { class: 'ag-agyrow' }, agyBtn), chips, h('div', { class: 'ag-row' }, input, sendBtn));
+  const plusBtn = h('button', { class: 'ag-plus', 'aria-label': 'Presets', onclick: () => chips.classList.toggle('hide') }, icon('plus', 20));
+  function setBusy(on: boolean) { sendBtn.disabled = on; chips.classList.toggle('off', on); changeBtn.disabled = on; menuBtn.disabled = on; }
+  const bar = h('div', { class: 'ag-bar' }, chips,
+    h('div', { class: 'ag-card-in' }, input, h('div', { class: 'ag-tools' }, plusBtn, h('span', { class: 'ag-grow' }), sendBtn)));
 
   const el = h('div', { class: 'ag' }, top, chat, bar);
   paintProject(); welcome();
