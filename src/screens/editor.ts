@@ -1374,7 +1374,6 @@ export function editorScreen() {
       if (b < G || a > W) continue;
       const w = Math.max(10, b - a - 1);
       rrect(g, a, R.cap.y, w, R.cap.h, 6); g.fillStyle = '#1b2a14'; g.fill();
-      g.strokeStyle = CYAN; g.lineWidth = 1; rrect(g, a + 0.5, R.cap.y + 0.5, w - 1, R.cap.h - 1, 6); g.stroke();
       g.save();
       g.beginPath(); g.rect(Math.max(a, G), R.cap.y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), R.cap.h); g.clip();
       g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
@@ -2321,13 +2320,24 @@ export function editorScreen() {
   async function generateCaptions(lang: string, model: WhisperModel): Promise<boolean> {
     if (!needAudio()) return false;
     const role = p.mainAudio;
-    const src = cleanedPcm(role) ?? sourcePcm(role);
+    // Whisper hears best on the original voice (denoised audio can sound robotic and make it write "aa, aa, aa").
+    const src = sourcePcm(role) ?? cleanedPcm(role);
     if (!src) { toast('Audio is still being read. Try again in a moment.'); return false; }
     const per = SAMPLE_RATE / 1000;
     const shiftS = role === 'host' ? 0 : Math.round(p.offsetMs * per);
     let pcm: Float32Array;
     if (shiftS >= 0) pcm = src.subarray(shiftS, shiftS + Math.ceil(p.durationMs * per));
     else { pcm = new Float32Array(Math.ceil(p.durationMs * per)); pcm.set(src.subarray(0, Math.max(0, pcm.length + shiftS)), -shiftS); }
+    // quiet voice -> lift it, so Whisper does not mistake it for silence
+    {
+      let peak = 0;
+      for (let i = 0; i < pcm.length; i += 7) { const v = Math.abs(pcm[i]!); if (v > peak) peak = v; }
+      if (peak > 0.0005 && peak < 0.7) {
+        const gain = Math.min(8, 0.9 / peak), out = new Float32Array(pcm.length);
+        for (let i = 0; i < pcm.length; i++) out[i] = Math.max(-1, Math.min(1, pcm[i]! * gain));
+        pcm = out;
+      }
+    }
     setPlaying(false);
     const job = transcribe(pcm, model, lang, (text, pct) => updateTask('captions', text, pct ?? undefined));
     startTask('captions', 'Making captions', 0, { modal: true, cancel: () => job.cancel() });

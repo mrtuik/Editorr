@@ -6,6 +6,26 @@ export type WhisperModel = 'base' | 'small';
 export const WHISPER_IDS: Record<WhisperModel, string> = { base: 'Xenova/whisper-base', small: 'Xenova/whisper-small' };
 export const LANGS: [string, string][] = [['', 'Auto'], ['bengali', 'Bangla'], ['hindi', 'Hindi'], ['english', 'English'], ['urdu', 'Urdu']];
 
+
+/**
+ * Whisper sometimes "hears" a voice it cannot read and repeats one sound ("aa, aa, aa, aa").
+ * Any word repeated 3+ times in a row is that loop, so the whole run is dropped.
+ */
+export function dropLoops(words: CapWord[]): CapWord[] {
+  const norm = (x: CapWord) => (x.orig || x.w).toLowerCase().replace(/[\p{P}\p{S}\s]+/gu, '');
+  const out: CapWord[] = [];
+  let i = 0;
+  while (i < words.length) {
+    let j = i + 1;
+    while (j < words.length && norm(words[j]!) === norm(words[i]!)) j++;
+    const run = j - i, key = norm(words[i]!);
+    const junk = key.length === 0 || (key.length <= 2 && run >= 2);
+    if (run < 3 && !(junk && run >= 2) && key.length > 0) for (let k = i; k < j; k++) out.push(words[k]!);
+    i = j;
+  }
+  return out;
+}
+
 export interface TranscribeJob { promise: Promise<CaptionData>; cancel: () => void }
 
 /**
@@ -102,7 +122,7 @@ function transcribeNative(
         at += span;
       }
     }
-    return { lang: language || 'auto', words };
+    return { lang: language || 'auto', words: dropLoops(words) };
   })();
 
   const promise = Promise.race([work, stallPromise]).finally(() => { clearInterval(ticker); stop(); });
@@ -209,7 +229,7 @@ function transcribeWeb(
             at += span;
           }
         }
-        resolve({ lang: language || 'auto', words });
+        resolve({ lang: language || 'auto', words: dropLoops(words) });
       } else if (m.type === 'error') { settled = true; worker.terminate(); rej(new Error(m.error || 'Transcription failed.')); }
     };
     worker.onerror = (e) => { settled = true; worker.terminate(); rej(new Error(e.message || 'Transcription worker failed.')); };
