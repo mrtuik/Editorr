@@ -1291,15 +1291,17 @@ export function editorScreen() {
     const mus = items.filter((i) => i.kind !== 'sfx'), sfx = items.filter((i) => i.kind === 'sfx'), txt = p.texts ?? [];
     const pm = pack(mus.map((i) => [i.startMs, i.endMs])), ps = pack(sfx.map((i) => [i.startMs, i.endMs])), pt = pack(txt.map((t) => [t.s, t.e]));
     let y = AUD_Y + AUD + GAP;
+    const hasCap = !!p.captions?.words.length;
+    const cap = hasCap ? { y, h: SUB_T } : null; if (cap) y += cap.h + GAP;
     const text = txt.length ? { y, h: pt.n * SUB_T + (pt.n - 1) * 3 } : null; if (text) y += text.h + GAP;
     const music = { y, h: pm.n * SUB_M + (pm.n - 1) * 3 }; y += music.h + GAP;
     const fx = sfx.length ? { y, h: ps.n * SUB_S + (ps.n - 1) * 3 } : null; if (fx) y += fx.h + GAP;
-    return { mus, sfx, txt, pm, ps, pt, music, fx, text, tlH: y + 10 };
+    return { mus, sfx, txt, pm, ps, pt, music, fx, text, cap, tlH: y + 10 };
   }
   let rowsNow = tlRows();
   let minTlH = TL_H;
   function pill(g: CanvasRenderingContext2D, a: number, y: number, w: number, hh: number, color: string, label: string) {
-    rrect(g, a, y, w, hh, 5); g.fillStyle = color; g.fill();
+    rrect(g, a, y, w, hh, 6); g.fillStyle = color; g.fill();
     if (label && w > 28) {
       g.save();
       g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), hh); g.clip();
@@ -1367,6 +1369,27 @@ export function editorScreen() {
     });
     g.restore();
   }
+  function drawCaptionRow(g: CanvasRenderingContext2D) {
+    const R = rowsNow; if (!R.cap || !p.captions) return;
+    const st = p.captionStyle ?? DEFAULT_CAPTION_STYLE;
+    const key = `${p.captions.words.length}|${JSON.stringify(st)}|${p.captions.words[0]!.w}|${p.captions.words[p.captions.words.length - 1]!.w}|${capVersion}`;
+    if (key !== capKey) { capKey = key; capPages = buildPages(p.captions, st); }
+    g.save();
+    g.beginPath(); g.rect(G, R.cap.y - 1, W - G, R.cap.h + 2); g.clip();
+    for (const pg of capPages) {
+      const a = xOf(pg.s), b = xOf(pg.e);
+      if (b < G || a > W) continue;
+      const w = Math.max(10, b - a - 1);
+      rrect(g, a, R.cap.y, w, R.cap.h, 6); g.fillStyle = '#1b2a14'; g.fill();
+      g.strokeStyle = CYAN; g.lineWidth = 1; rrect(g, a + 0.5, R.cap.y + 0.5, w - 1, R.cap.h - 1, 6); g.stroke();
+      g.save();
+      g.beginPath(); g.rect(Math.max(a, G), R.cap.y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), R.cap.h); g.clip();
+      g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+      g.fillText(pg.words.map((x) => x.t).join(' '), Math.max(a, G) + 6, R.cap.y + R.cap.h / 2 + 0.5);
+      g.restore();
+    }
+    g.restore();
+  }
   function drawTextRow(g: CanvasRenderingContext2D) {
     const R = rowsNow; if (!R.text) return;
     g.save();
@@ -1376,7 +1399,7 @@ export function editorScreen() {
       if (b < G || a > W) return;
       {
         const y = R.text!.y + R.pt.line[n]! * (SUB_T + 3), w = Math.max(16, b - a);
-        rrect(g, a + 0.5, y + 0.5, w - 1, SUB_T - 1, 5); g.fillStyle = '#17131f'; g.fill();
+        rrect(g, a + 0.5, y + 0.5, w - 1, SUB_T - 1, 6); g.fillStyle = '#17131f'; g.fill();
         g.strokeStyle = '#8b5fd6'; g.lineWidth = 1; g.stroke();
         g.save();
         g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
@@ -1556,6 +1579,7 @@ export function editorScreen() {
     if (rowsNow.tlH !== minTlH) { minTlH = rowsNow.tlH; tl.style.height = `${Math.max(minTlH, tl.parentElement?.clientHeight ?? 0)}px`; requestDraw(); }
     drawMusicRow(g);
     drawSfxRow(g);
+    drawCaptionRow(g);
     drawTextRow(g);
 
     // silence found but not cut yet
@@ -1595,7 +1619,7 @@ export function editorScreen() {
     // row badges: a small square icon just before the start of each row (slides with the timeline). No text labels in the left column.
     {
       const R = rowsNow;
-      const badge = (y: number, h: number, glyph: 'note' | 'bolt' | 'text', on: boolean) => {
+      const badge = (y: number, h: number, glyph: 'note' | 'bolt' | 'text' | 'cc', on: boolean) => {
         const sz = 26, bx = xOf(0) - sz - 6, by = y + (h - sz) / 2;
         if (bx + sz < G || bx > W) return;
         g.save();
@@ -1608,12 +1632,15 @@ export function editorScreen() {
           g.beginPath(); g.moveTo(cx + 0.5 * k, cy + 5 * k); g.lineTo(cx + 0.5 * k, cy - 6 * k); g.lineTo(cx + 5 * k, cy - 3.5 * k); g.stroke();
         } else if (glyph === 'bolt') {
           g.beginPath(); g.moveTo(cx + 2 * k, cy - 6 * k); g.lineTo(cx - 4 * k, cy + 1 * k); g.lineTo(cx - 0.5 * k, cy + 1 * k); g.lineTo(cx - 2 * k, cy + 6 * k); g.lineTo(cx + 4 * k, cy - 1.5 * k); g.lineTo(cx + 0.5 * k, cy - 1.5 * k); g.closePath(); g.fill();
+        } else if (glyph === 'cc') {
+          g.font = `700 ${Math.round(10 * k + 1)}px Roboto, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('CC', cx, cy + 0.5);
         } else {
           g.font = `700 ${Math.round(13 * k + 1)}px Roboto, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('T', cx, cy + 0.5);
         }
         g.restore();
       };
       badge(AUD_Y, AUD, 'note', true);
+      if (R.cap) badge(R.cap.y, R.cap.h, 'cc', true);
       if (R.text) badge(R.text.y, Math.min(R.text.h, SUB_T), 'text', true);
       badge(R.music.y, Math.min(R.music.h, SUB_M), 'note', R.mus.length > 0);
       if (R.fx) badge(R.fx.y, Math.min(R.fx.h, SUB_S), 'bolt', true);
@@ -1673,12 +1700,13 @@ export function editorScreen() {
   let lastClientY = 0;
   const localX = (e: PointerEvent) => e.clientX - canvas.getBoundingClientRect().left;
   const localY = (e: PointerEvent) => e.clientY - canvas.getBoundingClientRect().top;
-  type Lane = 'ruler' | 'main' | 'audio' | 'music' | 'sfx' | 'text' | 'none';
+  type Lane = 'ruler' | 'main' | 'audio' | 'music' | 'sfx' | 'text' | 'caption' | 'none';
   function laneAt(y: number): Lane {
     if (y < RULER) return 'ruler';
     if (y < MAIN_Y + LANE + GAP / 2) return 'main';
     if (y < AUD_Y + AUD + GAP / 2) return 'audio';
     const R = rowsNow;
+    if (R.cap && y < R.cap.y + R.cap.h + GAP / 2) return 'caption';
     if (R.text && y < R.text.y + R.text.h + GAP / 2) return 'text';
     if (y < R.music.y + R.music.h + GAP / 2) return 'music';
     if (R.fx && y < R.fx.y + R.fx.h + GAP / 2) return 'sfx';
@@ -1792,6 +1820,7 @@ export function editorScreen() {
     const lane = laneAt(y);
     if (lane === 'music') { openMusic(rowsNow.mus.length ? 'bgm' : 'home'); return; }
     if (lane === 'sfx') { openMusic('sfx'); return; }
+    if (lane === 'caption') { openCaptions(); return; }
     if (lane === 'text') { openTexts(); return; }
     if (x < G) {
       if (lane === 'audio') {
@@ -2314,6 +2343,11 @@ export function editorScreen() {
       if (!data.words.length) { toast('No speech found.'); return false; }
       p.captions = data;
       p.captionStyle ??= { ...DEFAULT_CAPTION_STYLE };
+      const allText = data.words.map((x) => x.orig).join('');
+      const arab = (allText.match(/[\u0600-\u06FF]/g) ?? []).length;
+      if (lang !== 'urdu' && arab > allText.length * 0.4) {
+        toast('Whisper Arabic/Urdu script e likhlo. Audio Bangla na hole Urdu chip dao; Bangla hole Small model + clear voice try koro.', 9000);
+      }
       capVersion++;
       scheduleSave(); drawCaptionsPreview();
       toast(`Captions ready: ${data.words.length} words. Style them in Text.`);
@@ -3166,10 +3200,10 @@ export function editorScreen() {
     } else {
       const total = pendingCuts.reduce((a, r) => a + (r.endMs - r.startMs), 0);
       const info = pendingCuts.length
-        ? h('div', { class: 'pinfo', style: 'background:rgba(198,242,119,0.08);border:1px solid rgba(198,242,119,0.2);border-radius:10px;padding:10px 12px;margin:8px 0 14px;color:#e0e0e0' },
+        ? h('div', { class: 'pinfo', style: 'background:rgba(198,242,119,0.08);border:1px solid rgba(198,242,119,0.2);border-radius:8px;padding:10px 12px;margin:8px 0 14px;color:#e0e0e0' },
             'Found ', h('b', { style: 'color:#C6F277' }, `${pendingCuts.length} silent ${pendingCuts.length === 1 ? 'part' : 'parts'}`),
             ' (', h('b', { style: 'color:#fff' }, secText(total)), ') to remove. Marked red on the timeline.')
-        : h('div', { class: 'pinfo', style: 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 12px;margin:8px 0 14px;color:#8a8a8a' },
+        : h('div', { class: 'pinfo', style: 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 12px;margin:8px 0 14px;color:#8a8a8a' },
             'No silence found matching current settings. Try shorter duration or higher sensitivity.');
       const go = (pt: Partial<typeof s>) => { Object.assign(s, pt); saveSettings(s); runDetect(); renderPanel(); draw(); };
       const applyBtn = h('button', {

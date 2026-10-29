@@ -145,6 +145,9 @@ if(EXISTS "${WHISPER_ROOT}/CMakeLists.txt")
     set(WHISPER_CURL OFF CACHE BOOL "" FORCE)
     set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
     set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+    # 2-3x faster quantized matmul on phones from ~2018 on. WhisperNative checks the CPU flags (asimddp, asimdhp) before loading,
+    # so an older phone never runs these instructions and quietly uses the web version instead.
+    set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod+fp16" CACHE STRING "" FORCE)
     set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
     cmake_policy(SET CMP0077 NEW)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)  # the whisper static libs get linked into a shared library (only targets created after this line)

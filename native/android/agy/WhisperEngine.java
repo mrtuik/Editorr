@@ -17,7 +17,9 @@ public final class WhisperEngine {
     private static final String BASE = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
     private final Context context;
     private final File dir;
-    private final File pcmFile;
+    private final Object runLock = new Object();
+    private File pcmFile;
+    private int pcmSeq = 0;
     private FileOutputStream pcmOut;
     private long ctx;
     private String ctxModel = "";
@@ -25,7 +27,7 @@ public final class WhisperEngine {
     public WhisperEngine(Context context) {
         this.context = context.getApplicationContext();
         dir = new File(this.context.getFilesDir(), "whisper");
-        pcmFile = new File(this.context.getCacheDir(), "whisper-pcm.raw");
+        pcmFile = new File(this.context.getCacheDir(), "whisper-pcm-0.raw");
     }
 
     public static boolean available() { return WhisperNative.AVAILABLE; }
@@ -92,6 +94,8 @@ public final class WhisperEngine {
 
     public synchronized void begin() throws Exception {
         if (pcmOut != null) { try { pcmOut.close(); } catch (Exception ignored) { } }
+        // a fresh file per hand-over: a cancelled run that is still winding down must not touch the next run's audio
+        pcmFile = new File(context.getCacheDir(), "whisper-pcm-" + (++pcmSeq) + ".raw");
         pcmFile.delete();
         pcmOut = new FileOutputStream(pcmFile);
     }
@@ -103,26 +107,33 @@ public final class WhisperEngine {
 
     /** Runs Whisper on the audio sent so far. Returns the JSON segment list. */
     public String run(String model, String lang, boolean words, Percent cb) throws Exception {
+        final File audio;
         synchronized (this) {
             if (pcmOut != null) { pcmOut.flush(); pcmOut.close(); pcmOut = null; }
+            audio = pcmFile;
         }
-        if (!WhisperNative.AVAILABLE) throw new IllegalStateException("Native Whisper is not part of this build.");
+        if (!WhisperNative.AVAILABLE) throw new IllegalStateException("native-unavailable");
         if (!modelReady(model)) throw new IllegalStateException("The Whisper model is not downloaded yet.");
-        long handle;
-        synchronized (this) {
-            if (ctx == 0 || !ctxModel.equals(model)) {
-                if (ctx != 0) WhisperNative.nativeFree(ctx);
-                ctx = WhisperNative.nativeInit(modelFile(model).getAbsolutePath());
-                ctxModel = model;
-                if (ctx == 0) throw new IllegalStateException("The Whisper model could not be loaded.");
+        // one run at a time: a cancelled run may still be stopping; the next one waits for it
+        synchronized (runLock) {
+            long handle;
+            synchronized (this) {
+                if (ctx == 0 || !ctxModel.equals(model)) {
+                    if (ctx != 0) WhisperNative.nativeFree(ctx);
+                    ctx = WhisperNative.nativeInit(modelFile(model).getAbsolutePath());
+                    ctxModel = model;
+                    if (ctx == 0) throw new IllegalStateException("The Whisper model could not be loaded.");
+                }
+                handle = ctx;
             }
-            handle = ctx;
+            int cores = Runtime.getRuntime().availableProcessors();
+            String json;
+            try {
+                json = WhisperNative.nativeRun(handle, audio.getAbsolutePath(), lang == null ? "" : lang, words, Math.max(2, Math.min(4, cores - 1)), cb::on);
+            } finally { audio.delete(); }
+            if (json == null) throw new IllegalStateException("cancelled");
+            return json;
         }
-        int cores = Runtime.getRuntime().availableProcessors();
-        String json = WhisperNative.nativeRun(handle, pcmFile.getAbsolutePath(), lang == null ? "" : lang, words, Math.max(2, Math.min(4, cores - 1)), cb::on);
-        pcmFile.delete();
-        if (json == null) throw new IllegalStateException("cancelled");
-        return json;
     }
 
     public void cancel() { if (WhisperNative.AVAILABLE) WhisperNative.nativeCancel(); }

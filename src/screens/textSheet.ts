@@ -57,7 +57,7 @@ export function openTextItemsSheet(ctx: TextCtx): void {
       const input = h('input', { type: 'text', class: 'cap-input', value: it.text }) as HTMLInputElement;
       input.addEventListener('change', () => { it.text = input.value; ctx.changed(); });
       input.addEventListener('focus', () => { if (sel !== it.id) { sel = it.id; render(); } });
-      const row = h('div', { class: 'cap-row', style: it.id === sel ? 'outline:1px solid var(--accent, #C6F277);border-radius:10px' : '' },
+      const row = h('div', { class: 'cap-row', style: it.id === sel ? 'outline:1px solid var(--accent, #C6F277);border-radius:8px' : '' },
         h('button', { class: 'cap-time', onclick: () => { sel = it.id; ctx.seek(it.s); render(); } }, fmtClock(it.s)),
         input,
         h('button', { class: 'rx-del', 'aria-label': 'Remove', onclick: () => { ctx.p.texts = items().filter((x) => x.id !== it.id); if (sel === it.id) sel = null; ctx.changed(); render(); } }, icon('trash', 18)));

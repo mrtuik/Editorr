@@ -6,9 +6,24 @@ final class WhisperNative {
 
     static final boolean AVAILABLE;
 
+    /** The native library is built for armv8.2 (dot product + fp16). Only load it when this CPU really has those instructions. */
+    private static boolean cpuSupportsBuild() {
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader("/proc/cpuinfo"))) {
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (line.startsWith("Features")) return (line + " ").contains(" asimddp ") && (line + " ").contains(" asimdhp ");
+            }
+        } catch (Exception ignored) { }
+        return false;
+    }
+
     static {
         boolean ok;
-        try { System.loadLibrary("editorrwhisper"); ok = true; } catch (Throwable t) { ok = false; }
+        try {
+            if (!cpuSupportsBuild()) throw new UnsatisfiedLinkError("cpu");
+            System.loadLibrary("editorrwhisper");
+            ok = true;
+        } catch (Throwable t) { ok = false; }
         AVAILABLE = ok;
     }
 

@@ -18,13 +18,29 @@ struct Ctx {
     jobject cb;
     jmethodID on;
     int last;
+    struct whisper_context *wctx;
+    long long total_ms;
 };
 
-static void on_progress(struct whisper_context *, struct whisper_state *, int progress, void *user) {
+static void report(Ctx *c, int p) {
+    if (!c->cb || !c->on) return;
+    if (p > 99) p = 99;
+    if (p <= c->last) return;
+    c->last = p;
+    c->env->CallVoidMethod(c->cb, c->on, (jint) p);
+}
+
+// called after every new piece of text: smooth progress from the time the text has reached
+static void on_new_segment(struct whisper_context *ctx, struct whisper_state *, int, void *user) {
     Ctx *c = static_cast<Ctx *>(user);
-    if (!c->cb || progress == c->last) return;
-    c->last = progress;
-    c->env->CallVoidMethod(c->cb, c->on, (jint) progress);
+    int n = whisper_full_n_segments(ctx);
+    if (n <= 0 || c->total_ms <= 0) return;
+    long long t1 = (long long) whisper_full_get_segment_t1(ctx, n - 1) * 10;
+    report(c, (int) (t1 * 100 / c->total_ms));
+}
+
+static void on_progress(struct whisper_context *, struct whisper_state *, int progress, void *user) {
+    report(static_cast<Ctx *>(user), progress);
 }
 
 static bool should_abort(void *) { return g_cancel.load(); }
@@ -107,12 +123,19 @@ JNIEXPORT jstring JNICALL Java_com_tuik_editorr_agy_WhisperNative_nativeRun(JNIE
     wp.abort_callback = should_abort;
     wp.abort_callback_user_data = nullptr;
 
-    Ctx c{env, cb, nullptr, -1};
+    // Speed: no re-decoding at higher temperatures (that can multiply the time by 5 on hard audio), no 5-way greedy search.
+    wp.temperature_inc = 0.0f;
+    wp.greedy.best_of = 1;
+
+    Ctx c{env, cb, nullptr, -1, ctx, (long long) pcm.size() * 1000LL / 16000LL};
     if (cb) {
         jclass k = env->GetObjectClass(cb);
         c.on = env->GetMethodID(k, "on", "(I)V");
         wp.progress_callback = on_progress;
         wp.progress_callback_user_data = &c;
+        wp.new_segment_callback = on_new_segment;
+        wp.new_segment_callback_user_data = &c;
+        env->CallVoidMethod(cb, c.on, (jint) 0);
     }
 
     int rc = whisper_full(ctx, wp, pcm.data(), (int) pcm.size());
