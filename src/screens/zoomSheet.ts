@@ -57,7 +57,7 @@ export function askAutoZoom(s: Settings, o: { title?: string; hint?: string; cta
       for (let i = 0; i <= 60; i++) { const u = i / 60, v = bezier(e, u); if (i === 0) g.moveTo(px(u), py(v)); else g.lineTo(px(u), py(v)); }
       g.stroke();
       g.fillStyle = '#fff';
-      for (const [x, y] of [[e[0], e[1]], [e[2], e[3]]]) { g.beginPath(); g.arc(px(x), py(y), 12, 0, 6.3); g.fill(); }
+      for (const [x, y] of [[e[0], e[1]], [e[2], e[3]]]) { g.beginPath(); g.roundRect(px(x) - 11, py(y) - 11, 22, 22, 2); g.fill(); }
       g.fillStyle = '#8a8a8c'; g.font = '20px Roboto, sans-serif'; g.fillText('time', W - 64, H - 6); g.fillText('zoom', 6, 22);
     };
     const drawPresets = () => {

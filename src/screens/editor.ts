@@ -54,7 +54,7 @@ const VOICE_ICON = new Path2D('M2 1.625A.375.375 0 0 0 1.625 2v2a.625.625 0 1 1-
 const SUB_M = AUD;       // music row height: the same as the audio waveform row
 const SUB_S = AUD;       // sound-effect row height: the same
 const SUB_T = AUD;       // text row height: the same
-const TL_H = AUD_Y + AUD + GAP + SUB_M + 10;   // smallest timeline (only the Add music row)
+const TL_H = AUD_Y + AUD + GAP + 10;   // smallest timeline (video + waveform only; Music row appears once music is added)
 const CYAN = '#C6F277';
 const CROP_RATIOS: [CropRatio, string][] = [
   ['custom', 'Custom'], ['9:16', '9:16'], ['16:9', '16:9'], ['1:1', '1:1'], ['4:3', '4:3'], ['2:3', '2:3'],
@@ -1119,7 +1119,7 @@ export function editorScreen() {
   const minPx = () => Math.max(0.4, ((W || 360) * 0.9) / Math.max(1, p.durationMs / 1000));
 
   function rrect(g: CanvasRenderingContext2D, x: number, y: number, w: number, hh: number, r: number) {
-    g.beginPath(); g.roundRect(x, y, Math.max(1, w), hh, r);
+    g.beginPath(); g.roundRect(x, y, Math.max(1, w), hh, Math.min(r, 2));
   }
 
   const filmGlyph = (g: CanvasRenderingContext2D, cx: number, cy: number, color: string) => {
@@ -1294,7 +1294,7 @@ export function editorScreen() {
     const hasCap = !!p.captions?.words.length;
     const cap = hasCap ? { y, h: SUB_T } : null; if (cap) y += cap.h + GAP;
     const text = txt.length ? { y, h: pt.n * SUB_T + (pt.n - 1) * 3 } : null; if (text) y += text.h + GAP;
-    const music = { y, h: pm.n * SUB_M + (pm.n - 1) * 3 }; y += music.h + GAP;
+    const music = mus.length ? { y, h: pm.n * SUB_M + (pm.n - 1) * 3 } : null; if (music) y += music.h + GAP;
     const fx = sfx.length ? { y, h: ps.n * SUB_S + (ps.n - 1) * 3 } : null; if (fx) y += fx.h + GAP;
     return { mus, sfx, txt, pm, ps, pt, music, fx, text, cap, tlH: y + 10 };
   }
@@ -1312,17 +1312,10 @@ export function editorScreen() {
   }
   function drawMusicRow(g: CanvasRenderingContext2D) {
     const R = rowsNow, items = R.mus;
+    if (!R.music || !items.length) return; // no music yet: no row at all
     const MUS_Y = R.music.y;
-    const x0 = xOf(0), x1 = xOf(p.durationMs);
     g.save();
     g.beginPath(); g.rect(G, MUS_Y - 1, W - G, R.music.h + 2); g.clip();
-    if (!items.length) {
-      rrect(g, x0, MUS_Y, Math.max(0, x1 - x0), SUB_M, 6);
-      g.fillStyle = '#0d0d0d'; g.fill();
-      g.strokeStyle = 'rgba(255,255,255,0.14)'; g.lineWidth = 1; g.stroke();
-      g.fillStyle = '#8a8a8a'; g.font = '600 10px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-      g.fillText('+  Add music', Math.max(x0, G) + 10, MUS_Y + SUB_M / 2);
-    }
     items.forEach((it: MItem, n) => {
       const a = xOf(it.startMs), b = xOf(it.endMs);
       if (b < G || a > W) return;
@@ -1624,7 +1617,7 @@ export function editorScreen() {
         if (bx + sz < G || bx > W) return;
         g.save();
         g.beginPath(); g.rect(G, 0, W - G, H); g.clip();
-        g.fillStyle = '#262626'; g.beginPath(); g.roundRect(bx, by, sz, sz, 6); g.fill();
+        g.fillStyle = '#262626'; g.beginPath(); g.roundRect(bx, by, sz, sz, 2); g.fill();
         const cx = bx + sz / 2, cy = by + sz / 2, k = sz / 26;
         g.strokeStyle = on ? '#d0d0d0' : '#8a8a8a'; g.fillStyle = g.strokeStyle; g.lineWidth = 1.4; g.lineCap = 'round'; g.lineJoin = 'round';
         if (glyph === 'note') {
@@ -1642,7 +1635,7 @@ export function editorScreen() {
       badge(AUD_Y, AUD, 'note', true);
       if (R.cap) badge(R.cap.y, R.cap.h, 'cc', true);
       if (R.text) badge(R.text.y, Math.min(R.text.h, SUB_T), 'text', true);
-      badge(R.music.y, Math.min(R.music.h, SUB_M), 'note', R.mus.length > 0);
+      if (R.music) badge(R.music.y, Math.min(R.music.h, SUB_M), 'note', true);
       if (R.fx) badge(R.fx.y, Math.min(R.fx.h, SUB_S), 'bolt', true);
     }
 
@@ -1708,7 +1701,7 @@ export function editorScreen() {
     const R = rowsNow;
     if (R.cap && y < R.cap.y + R.cap.h + GAP / 2) return 'caption';
     if (R.text && y < R.text.y + R.text.h + GAP / 2) return 'text';
-    if (y < R.music.y + R.music.h + GAP / 2) return 'music';
+    if (R.music && y < R.music.y + R.music.h + GAP / 2) return 'music';
     if (R.fx && y < R.fx.y + R.fx.h + GAP / 2) return 'sfx';
     return 'none';
   }
@@ -2346,7 +2339,7 @@ export function editorScreen() {
       const allText = data.words.map((x) => x.orig).join('');
       const arab = (allText.match(/[\u0600-\u06FF]/g) ?? []).length;
       if (lang !== 'urdu' && arab > allText.length * 0.4) {
-        toast('Whisper Arabic/Urdu script e likhlo. Audio Bangla na hole Urdu chip dao; Bangla hole Small model + clear voice try koro.', 9000);
+        toast('Ekhono Urdu script ashche. Captions remove kore Small model diye abar generate koro (Bangla chip select thakle native build e Urdu letters block kora ache).', 9000);
       }
       capVersion++;
       scheduleSave(); drawCaptionsPreview();
@@ -3200,15 +3193,15 @@ export function editorScreen() {
     } else {
       const total = pendingCuts.reduce((a, r) => a + (r.endMs - r.startMs), 0);
       const info = pendingCuts.length
-        ? h('div', { class: 'pinfo', style: 'background:rgba(198,242,119,0.08);border:1px solid rgba(198,242,119,0.2);border-radius:8px;padding:10px 12px;margin:8px 0 14px;color:#e0e0e0' },
+        ? h('div', { class: 'pinfo', style: 'background:rgba(198,242,119,0.08);border:1px solid rgba(198,242,119,0.2);border-radius:2px;padding:10px 12px;margin:8px 0 14px;color:#e0e0e0' },
             'Found ', h('b', { style: 'color:#C6F277' }, `${pendingCuts.length} silent ${pendingCuts.length === 1 ? 'part' : 'parts'}`),
             ' (', h('b', { style: 'color:#fff' }, secText(total)), ') to remove. Marked red on the timeline.')
-        : h('div', { class: 'pinfo', style: 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 12px;margin:8px 0 14px;color:#8a8a8a' },
+        : h('div', { class: 'pinfo', style: 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:2px;padding:10px 12px;margin:8px 0 14px;color:#8a8a8a' },
             'No silence found matching current settings. Try shorter duration or higher sensitivity.');
       const go = (pt: Partial<typeof s>) => { Object.assign(s, pt); saveSettings(s); runDetect(); renderPanel(); draw(); };
       const applyBtn = h('button', {
         class: 'btn primary',
-        style: 'width:100%;min-height:48px;margin-top:16px;border-radius:12px;border:0;background:#C6F277;color:#10140a;font-size:15px;font-weight:600;cursor:pointer',
+        style: 'width:100%;min-height:48px;margin-top:16px;border-radius:2px;border:0;background:#C6F277;color:#10140a;font-size:15px;font-weight:600;cursor:pointer',
         disabled: !pendingCuts.length,
         onclick: applySilence
       }, pendingCuts.length ? `Apply Silence Cut (${pendingCuts.length} ${pendingCuts.length === 1 ? 'cut' : 'cuts'})` : 'No Silence to Cut');

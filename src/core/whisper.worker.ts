@@ -50,6 +50,18 @@ self.onmessage = async (event: MessageEvent<{ pcm: ArrayBuffer; model: string; t
     }
     post({ type: 'status', text: 'Listening' });
 
+    // Never write Urdu/Arabic letters unless that language was chosen (Whisper sometimes does it for Bangla/Hindi speech).
+    let bad: number[] | undefined;
+    if (language && !['urdu', 'arabic', 'persian'].includes(language)) {
+      try {
+        const tok = asr.tokenizer;
+        const n = tok.model?.vocab?.length ?? 0;
+        const arab = /[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
+        bad = [];
+        for (let id = 0; id < n; id++) { let t = ''; try { t = tok.decode([id]); } catch { continue; } if (arab.test(t)) bad.push(id); }
+      } catch { bad = undefined; }
+    }
+
     const wantWords = timestamps !== 'segment';
     const chunks: { text: string; timestamp: [number, number | null]; seg: boolean }[] = [];
     let from = 0;
@@ -62,18 +74,27 @@ self.onmessage = async (event: MessageEvent<{ pcm: ArrayBuffer; model: string; t
       for (let i = 0; i < piece.length; i += 8) rms += piece[i]! * piece[i]!;
       rms = Math.sqrt(rms / Math.max(1, piece.length / 8));
       if (rms > 0.002) { // skip dead silence: nothing to hear, and it saves time
-        const opts = (ts: boolean | 'word') => ({
+        const opts = (ts: boolean | 'word', sup = true) => ({
           return_timestamps: ts,
           ...(language ? { language, task: 'transcribe' } : { task: 'transcribe' }),
+          ...(sup && bad && bad.length ? { suppress_tokens: bad } : {}),
         });
+        // if this transformers.js build rejects suppress_tokens, silently go on without it
+        const ask = async (ts: boolean | 'word') => {
+          try { return await asr(piece, opts(ts)); } catch (err) {
+            if (!(bad && bad.length)) throw err;
+            bad = undefined;
+            return await asr(piece, opts(ts, false));
+          }
+        };
         let out: any;
         let seg = !wantWords;
         try {
-          out = await asr(piece, opts(wantWords ? 'word' : true));
+          out = await ask(wantWords ? 'word' : true);
         } catch {
           // word timing needs more memory; fall back to sentence timing for this window only
           seg = true;
-          out = await asr(piece, opts(true));
+          out = await ask(true);
         }
         for (const c of (out.chunks ?? []) as { text: string; timestamp: [number, number | null] }[]) {
           const a = (c.timestamp?.[0] ?? 0) + offS;

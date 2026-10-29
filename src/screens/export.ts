@@ -9,9 +9,9 @@ import { estimateMb, resolveExport } from '../core/exportOpts';
 /** Share targets on the done screen. Several package names per app (TikTok has regional builds). */
 const TARGETS: { label: string; pkgs: string[]; svg: string }[] = [
   { label: 'Instagram', pkgs: ['com.instagram.android'],
-    svg: '<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.2" cy="6.8" r="1" fill="currentColor"/>' },
+    svg: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="4"/><circle cx="17.2" cy="6.8" r="1" fill="currentColor"/>' },
   { label: 'YouTube', pkgs: ['com.google.android.youtube'],
-    svg: '<rect x="2.5" y="5.5" width="19" height="13" rx="4"/><path d="M10 9.2l5 2.8-5 2.8z" fill="currentColor"/>' },
+    svg: '<rect x="2.5" y="5.5" width="19" height="13" rx="2"/><path d="M10 9.2l5 2.8-5 2.8z" fill="currentColor"/>' },
   { label: 'WhatsApp', pkgs: ['com.whatsapp', 'com.whatsapp.w4b'],
     svg: '<path d="M4 20l1.2-4A8 8 0 1 1 8.200 18.800z"/><path d="M9 8.500c0 3 2.500 6 6 6.500l1.200-1.500-2-1-1 .8c-1-.4-2-1.400-2.400-2.400l.8-1-1-2z" fill="currentColor"/>' },
   { label: 'Facebook', pkgs: ['com.facebook.katana'],

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,24 @@ static void on_progress(struct whisper_context *, struct whisper_state *, int pr
 }
 
 static bool should_abort(void *) { return g_cancel.load(); }
+
+// Arabic / Urdu script is blocked when the chosen language is not Urdu/Arabic/Persian.
+// Whisper (esp. Tiny/Base) sometimes writes Bangla/Hindi speech in Urdu letters even when the language is forced.
+// Every Arabic-script letter is UTF-8 lead byte 0xD8-0xDB, which Bangla/Hindi/Latin text never contains.
+static std::vector<char> g_block;
+static void build_block(struct whisper_context *ctx) {
+    int nv = whisper_n_vocab(ctx);
+    g_block.assign((size_t) nv, 0);
+    for (int i = 0; i < nv; i++) {
+        const char *t = whisper_token_to_str(ctx, i);
+        if (!t) continue;
+        for (; *t; ++t) { unsigned char b = (unsigned char) *t; if (b >= 0xD8 && b <= 0xDB) { g_block[(size_t) i] = 1; break; } }
+    }
+}
+static void block_arabic_script(struct whisper_context *, struct whisper_state *, const whisper_token_data *, int, float *logits, void *) {
+    for (size_t i = 0; i < g_block.size(); i++) if (g_block[i]) logits[i] = -INFINITY;
+}
+
 
 static void json_escape(std::string &out, const char *s) {
     for (; *s; ++s) {
@@ -114,6 +133,11 @@ JNIEXPORT jstring JNICALL Java_com_tuik_editorr_agy_WhisperNative_nativeRun(JNIE
     wp.translate = false;
     wp.language = language.empty() ? "auto" : language.c_str();
     wp.detect_language = false;
+    if (!language.empty() && language != "auto" && language != "ur" && language != "ar" && language != "fa") {
+        build_block(ctx);
+        wp.logits_filter_callback = block_arabic_script;
+        wp.logits_filter_callback_user_data = nullptr;
+    }
     wp.n_threads = threads > 0 ? threads : 4;
     wp.no_context = true;
     wp.suppress_blank = true;

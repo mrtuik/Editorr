@@ -15,7 +15,7 @@ export function openAntigravityPanel(onChange: () => void): void {
 
   const title = h('div', { class: 'title' }, 'Antigravity');
   const info = h('p', { class: 'sec' }, 'Checking...');
-  const bar = h('div', { style: 'height:6px;border-radius:3px;background:#22222c;overflow:hidden;margin:10px 0;display:none' },
+  const bar = h('div', { style: 'height:6px;border-radius:2px;background:#22222c;overflow:hidden;margin:10px 0;display:none' },
     h('div', { style: 'height:100%;width:0;background:var(--accent,#c6f432)' }));
   const fill = bar.firstElementChild as HTMLElement;
   const codeInput = h('input', { type: 'text', placeholder: 'Paste the code from Google', autocapitalize: 'off', autocomplete: 'off' }) as HTMLInputElement;

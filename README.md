@@ -150,6 +150,10 @@ All bottom sheets share one look (end of `src/style.css`): flat black `#121212`,
 - **Music and YouTube sheets use the LoveMusic look:** flat black, pill buttons and pill tiles, rounded song rows with a round + / % / tick button.
 - Not compiled against Android and not run on a phone in this session (no network here).
 
+## v16.9.1: Bangla captions never in Urdu letters + square corners everywhere
+- Captions: when a language other than Urdu/Arabic/Persian is chosen, Arabic-script tokens are blocked in native Whisper (logits filter) and in the web worker.
+- Every corner in the app (CSS, inline styles, timeline layers, icons, handles) is now 0-2 px. The video "Corner radius" crop slider is a video effect and was left alone.
+
 ## v16.9.0: optional YouTube songs (Music > Auto BGM > Add from YouTube)
 
 Music sheet now has three tools (like CapCut's Audio menu): **Auto BGM** (songs under the whole video), **Music** (search YouTube or pick a song, it starts at the playhead, play once, can duck under the voice) and **SFX**. All three are mixed into one track by Apply.

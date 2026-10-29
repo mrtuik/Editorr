@@ -249,7 +249,7 @@ export function openFxSheet(ctx: FxCtx): void {
     for (const b of BANDS) {
       if (b.key === 'hpf' && !c.hpf.on) continue;
       const { x, y } = pointOf(b.key), sel = b.key === band;
-      g.beginPath(); g.arc(x, y, sel ? 16 : 12, 0, 6.3);
+      { const rr = sel ? 15 : 11; g.beginPath(); g.roundRect(x - rr, y - rr, rr * 2, rr * 2, 2); }
       g.fillStyle = b.color; g.globalAlpha = sel ? 1 : 0.8; g.fill(); g.globalAlpha = 1;
       if (sel) { g.lineWidth = 3; g.strokeStyle = '#fff'; g.stroke(); }
       g.fillStyle = '#000'; g.font = 'bold 15px Roboto, sans-serif'; g.fillText(b.short, x, y + 1); g.font = '18px Roboto, sans-serif';
