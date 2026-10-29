@@ -3513,7 +3513,10 @@ export function editorScreen() {
       startTask('audio', 'Reading audio', 0, { cancel: () => stopAudio() });
       const upd = () => updateTask('audio', 'Reading audio', (hp + cp) / 2);
       try {
-        const reading = Promise.all([ensureAudio('host', (n) => { hp = n; upd(); }), ensureAudio('constant', (n) => { cp = n; upd(); })]);
+        const reading = p.single
+          // one video: read its audio once and share it with the constant slot, so nothing waits for a second file
+          ? ensureAudio('host', (n) => { hp = n; cp = n; upd(); }).then((pcm) => { if (!runtime.constPcm) runtime.constPcm = pcm; })
+          : Promise.all([ensureAudio('host', (n) => { hp = n; upd(); }), ensureAudio('constant', (n) => { cp = n; upd(); })]);
         reading.catch(() => {});
         await Promise.race([reading, stopped]);
       } catch (e) {
@@ -3524,6 +3527,7 @@ export function editorScreen() {
     }
     if (destroyed) return;
     for (const role of ['host', 'constant'] as Role[]) {
+      if (p.single && role === 'constant') continue; // one video: the constant slot shares the host's audio
       if (noiseStrength(role) > 0) {
         await applyNoiseReduction(role, noiseStrength(role), { history: false, persist: false, resetOnFailure: true });
         if (destroyed) return;

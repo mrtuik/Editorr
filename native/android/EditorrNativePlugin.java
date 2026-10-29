@@ -1465,7 +1465,7 @@ public class EditorrNativePlugin extends Plugin {
         private final long[] ps, pe;
         private final String[][] words;
         private final long[][] ws;
-        private final double size, y, stroke, activeScale;
+        private final double size, y, stroke, activeScale, bounceMs;
         private final int weight, color, highlight, strokeColor, boxColor;
         private final boolean shadow, activeColor, hasBox;
         private int lastKey = -2;
@@ -1475,6 +1475,7 @@ public class EditorrNativePlugin extends Plugin {
             this.w = w; this.h = h; this.ps = ps; this.pe = pe; this.words = words; this.ws = ws;
             this.size = st.optDouble("size", 0.055); this.y = st.optDouble("y", 0.78);
             this.stroke = st.optDouble("stroke", 0); this.activeScale = st.optDouble("activeScale", 1);
+            this.bounceMs = st.optDouble("bounceMs", 0);
             this.weight = st.optInt("weight", 700);
             this.color = css(st.optString("color", "#FFFFFF"), Color.WHITE);
             this.highlight = css(st.optString("highlight", "#FFD60A"), Color.YELLOW);
@@ -1559,6 +1560,8 @@ public class EditorrNativePlugin extends Plugin {
             int wi = -1;
             if (pi >= 0) { for (int k = 0; k < ws[pi].length; k++) { if (tc >= ws[pi][k]) wi = k; } }
             int key = pi < 0 ? -1 : pi * 64 + (wi + 1);
+            // the spoken word bounces for a moment, so the cached bitmap must change until the pop settles
+            if (key >= 0 && wi >= 0 && activeScale > 1.0 && bounceMs > 0) key = key * 16 + (int) Math.min(15, Math.max(0, (tc - ws[pi][wi]) / 16));
             if (key == lastKey && lastBmp != null) return lastBmp;
             Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
             if (pi >= 0) drawPage(new Canvas(bmp), pi, wi);
@@ -1599,6 +1602,14 @@ public class EditorrNativePlugin extends Plugin {
             for (int i = 0; i < t.length; i++) {
                 boolean on = i == active;
                 float sc = (on ? (float) activeScale : 1f) * k;
+                // same word pop as captions.ts: 1.0 -> activeScale -> 1.0 over bounceMs, drawn centred on its slot
+                float popOff = 0f;
+                if (on && activeScale > 1.0 && bounceMs > 0) {
+                    double bt = Math.min(1, Math.max(0, (tc - ws[pi][i]) / (double) bounceMs));
+                    float pop = (float) (1 + (activeScale - 1) * Math.sin(Math.PI * bt));
+                    popOff = (wd[i] * k - wd[i] * k * ((float) pop / (float) activeScale)) / 2f;
+                    sc = pop * k;
+                }
                 p.setTextSize(fs * sc);
                 float tw = wd[i] * k;
                 float base = cy + fs * 0.34f;
@@ -1607,12 +1618,12 @@ public class EditorrNativePlugin extends Plugin {
                     p.setStyle(Paint.Style.STROKE);
                     p.setStrokeWidth((float) (fs * stroke));
                     p.setColor(strokeColor);
-                    c.drawText(t[i], x, base, p);
+                    c.drawText(t[i], x + popOff, base, p);
                 }
                 p.setStyle(Paint.Style.FILL);
                 if (shadow) p.setShadowLayer(fs * 0.25f, 0f, fs * 0.06f, 0xBF000000); else p.clearShadowLayer();
                 p.setColor(activeColor && on ? highlight : color);
-                c.drawText(t[i], x, base, p);
+                c.drawText(t[i], x + popOff, base, p);
                 p.clearShadowLayer();
                 x += tw + gap * k;
             }

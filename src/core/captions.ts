@@ -7,7 +7,7 @@ import { needsRoman, romanize } from './romanize';
 export interface CapWord { w: string; orig: string; s: number; e: number }
 export interface CaptionData { lang: string; words: CapWord[] }
 
-export type CapLook = 'classic' | 'bold' | 'karaoke' | 'box' | 'minimal' | 'pop';
+export type CapLook = 'classic' | 'bold' | 'karaoke' | 'box' | 'minimal' | 'pop' | 'blink';
 export interface CaptionStyle {
   look: CapLook;
   /** text height as a fraction of the video height */
@@ -35,7 +35,11 @@ export const LOOKS: LookDef[] = [
   { id: 'box', name: 'Box', weight: 700, stroke: 0, strokeColor: '#000000', shadow: false, box: 'rgba(0,0,0,0.72)', activeColor: false, activeScale: 1 },
   { id: 'minimal', name: 'Minimal', weight: 500, stroke: 0, strokeColor: '#000000', shadow: true, box: null, activeColor: false, activeScale: 1 },
   { id: 'pop', name: 'Pop', weight: 900, stroke: 0.18, strokeColor: '#000000', shadow: false, box: null, activeColor: true, activeScale: 1.18 },
+  // Blink: chunky neon pop — the word being spoken bounces 1.0 -> 1.25 -> 1.0 and lights up in the highlight colour.
+  { id: 'blink', name: 'Blink', weight: 900, stroke: 0.2, strokeColor: '#000000', shadow: true, box: null, activeColor: true, activeScale: 1.25 },
 ];
+/** How long the spoken word's pop-in bounce lasts (preview and export use the same number). */
+export const BOUNCE_MS = 220;
 export const lookOf = (id: CapLook) => LOOKS.find((l) => l.id === id) ?? LOOKS[0];
 
 export interface CapPage { s: number; e: number; from: number; to: number; words: { t: string; s: number; e: number }[] }
@@ -102,15 +106,23 @@ export function drawCaption(g: CanvasRenderingContext2D, w: number, h: number, p
   }
   for (let i = 0; i < page.words.length; i++) {
     const on = i === active;
-    const sc = (on ? look.activeScale : 1) * k;
-    g.font = font(sc);
+    // Word pop / bounce: the spoken word grows 1.0 -> activeScale -> 1.0 over BOUNCE_MS, then settles.
+    // Neighbours keep the peak width, so the layout does not reflow while the word bounces.
+    let sc = (on ? look.activeScale : 1);
+    let popAt = 0;
+    if (on && look.activeScale > 1) {
+      const t = Math.min(1, Math.max(0, (ms - page.words[i].s) / BOUNCE_MS));
+      sc = 1 + (look.activeScale - 1) * Math.sin(Math.PI * t);
+      popAt = (widths[i] * k * (1 - sc / look.activeScale)) / 2;
+    }
+    g.font = font(sc * k);
     const tw = widths[i] * k;
     const base = cy + fs * 0.34;
     if (look.shadow) { g.shadowColor = 'rgba(0,0,0,0.75)'; g.shadowBlur = fs * 0.25; g.shadowOffsetY = fs * 0.06; }
-    if (look.stroke > 0) { g.shadowColor = 'transparent'; g.lineWidth = fs * look.stroke; g.strokeStyle = look.strokeColor; g.strokeText(page.words[i].t, x, base); }
+    if (look.stroke > 0) { g.shadowColor = 'transparent'; g.lineWidth = fs * look.stroke; g.strokeStyle = look.strokeColor; g.strokeText(page.words[i].t, x + popAt, base); }
     if (look.shadow) { g.shadowColor = 'rgba(0,0,0,0.75)'; g.shadowBlur = fs * 0.25; g.shadowOffsetY = fs * 0.06; }
     g.fillStyle = look.activeColor && on ? st.highlight : st.color;
-    g.fillText(page.words[i].t, x, base);
+    g.fillText(page.words[i].t, x + popAt, base);
     g.shadowColor = 'transparent'; g.shadowBlur = 0; g.shadowOffsetY = 0;
     x += tw + gapW * k;
   }
@@ -128,6 +140,7 @@ export function exportCaptions(c: CaptionData | undefined, st: CaptionStyle | un
       size: st.size, y: st.y, color: st.color, highlight: st.highlight,
       weight: look.weight, stroke: look.stroke, strokeColor: look.strokeColor, shadow: look.shadow,
       box: look.box ?? '', activeColor: look.activeColor, activeScale: look.activeScale,
+      bounceMs: look.activeScale > 1 ? BOUNCE_MS : 0,
     },
   };
 }
