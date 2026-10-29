@@ -8,21 +8,30 @@ export const LANGS: [string, string][] = [['', 'Auto'], ['bengali', 'Bangla'], [
 
 
 /**
- * Whisper sometimes "hears" a voice it cannot read and repeats one sound ("aa, aa, aa, aa").
- * Any word repeated 3+ times in a row is that loop, so the whole run is dropped.
+ * Whisper sometimes "hears" a voice it cannot read and repeats one sound ("aa, aa, aa") or a short pattern
+ * ("AA, AAWW, AAWW, AA, AAWW, AAWW"). Any word or 2-4 word pattern repeated 3+ times in a row is that loop and is dropped.
+ * If almost every word is the same few sounds, the whole result is junk and nothing is returned.
  */
 export function dropLoops(words: CapWord[]): CapWord[] {
   const norm = (x: CapWord) => (x.orig || x.w).toLowerCase().replace(/[\p{P}\p{S}\s]+/gu, '');
-  const out: CapWord[] = [];
-  let i = 0;
-  while (i < words.length) {
-    let j = i + 1;
-    while (j < words.length && norm(words[j]!) === norm(words[i]!)) j++;
-    const run = j - i, key = norm(words[i]!);
-    const junk = key.length === 0 || (key.length <= 2 && run >= 2);
-    if (run < 3 && !(junk && run >= 2) && key.length > 0) for (let k = i; k < j; k++) out.push(words[k]!);
-    i = j;
+  const n = words.map(norm);
+  const kill = new Array<boolean>(words.length).fill(false);
+  for (let i = 0; i < words.length; i++) if (n[i]!.length === 0) kill[i] = true;
+  for (let per = 1; per <= 4; per++) {
+    let i = 0;
+    while (i + per * 3 <= words.length) {
+      let reps = 1;
+      while (i + (reps + 1) * per <= words.length) {
+        let same = true;
+        for (let k = 0; k < per; k++) if (n[i + k] !== n[i + reps * per + k]) { same = false; break; }
+        if (!same) break;
+        reps++;
+      }
+      if (reps >= 3) { for (let k = i; k < i + reps * per; k++) kill[k] = true; i += reps * per; } else i++;
+    }
   }
+  const out = words.filter((_, i) => !kill[i]);
+  if (out.length >= 8 && new Set(out.map(norm)).size / out.length < 0.2) return [];
   return out;
 }
 

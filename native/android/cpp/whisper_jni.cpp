@@ -141,6 +141,15 @@ JNIEXPORT jstring JNICALL Java_com_tuik_editorr_agy_WhisperNative_nativeRun(JNIE
     wp.n_threads = threads > 0 ? threads : 4;
     wp.no_context = true;
     wp.suppress_blank = true;
+    // Anchor the script and language so Whisper does not invent English sounds ("aww") on unclear audio.
+    static std::string g_prompt;
+    if (language == "hi") g_prompt = "नमस्ते, यह हिंदी में एक सामान्य बातचीत है।";
+    else if (language == "bn") g_prompt = "নমস্কার, এটি বাংলা ভাষায় একটি সাধারণ কথোপকথন।";
+    else g_prompt.clear();
+    if (!g_prompt.empty()) wp.initial_prompt = g_prompt.c_str();
+    wp.no_speech_thold = 0.6f;
+    wp.logprob_thold = -1.0f;
+    wp.entropy_thold = 2.4f;
     wp.token_timestamps = words == JNI_TRUE;
     wp.split_on_word = words == JNI_TRUE;
     wp.max_len = words == JNI_TRUE ? 1 : 0;   // one word per segment = word timing
@@ -148,7 +157,7 @@ JNIEXPORT jstring JNICALL Java_com_tuik_editorr_agy_WhisperNative_nativeRun(JNIE
     wp.abort_callback_user_data = nullptr;
 
     // Speed: no re-decoding at higher temperatures (that can multiply the time by 5 on hard audio), no 5-way greedy search.
-    wp.temperature_inc = 0.0f;
+    wp.temperature_inc = 0.2f;   // small retry ladder: a loop / garbage segment is decoded again hotter instead of kept
     wp.greedy.best_of = 1;
 
     Ctx c{env, cb, nullptr, -1, ctx, (long long) pcm.size() * 1000LL / 16000LL};

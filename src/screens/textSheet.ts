@@ -3,7 +3,6 @@ import type { Project } from '../core/types';
 import { uid } from '../core/speaker';
 import { h, icon, toast, fmtClock } from '../ui';
 import { chips } from './faceOptions';
-import { swatches } from './captionSheet';
 
 export interface TextCtx {
   p: Project;
@@ -15,68 +14,133 @@ export interface TextCtx {
 }
 
 const LOOK_NAMES: Record<TextLook, string> = { classic: 'Classic', bold: 'Bold', box: 'Box', minimal: 'Minimal' };
+const TABS = ['Templates', 'Fonts', 'Styles', 'Effects', 'Animations', 'Bubbles'] as const;
+type Tab = typeof TABS[number];
+const COLORS = ['#FFFFFF', '#B3B3B3', '#808080', '#3C3C3C', '#000000', '#F2C811', '#FF8A00', '#FF453A', '#30D158', '#0A84FF', '#BF5AF2'];
 
-/** Text > Add text: type a text, it appears at the playhead for a few seconds. Pick look, size, place, colour, length. */
+/** Text > Add text, laid out like CapCut: text field on top, tab row, then the controls of the open tab. */
 export function openTextItemsSheet(ctx: TextCtx): void {
   const items = (): TextItem[] => (ctx.p.texts ??= []);
   let sel: string | null = null;
-  const body = h('div', { class: 'at-body' });
+  let tab: Tab = 'Styles';
+  const cur = () => items().find((t) => t.id === sel);
+
+  const field = h('input', { type: 'text', class: 'ts-input', placeholder: 'Enter text', 'aria-label': 'Text' }) as HTMLInputElement;
+  const tabsEl = h('div', { class: 'ts-tabs' });
+  const body = h('div', { class: 'ts-body' });
   const close = () => { sheet.classList.add('out'); setTimeout(() => box.remove(), 180); };
-  const sheet = h('div', { class: 'at-sheet', role: 'dialog' },
-    h('div', { class: 'at-handle' }),
-    h('div', { class: 'at-head' }, h('button', { class: 'at-back', 'aria-label': 'Close', onclick: close }, icon('back', 20)), h('div', { class: 'at-title' }, 'Add text'), h('span', { class: 'at-head-gap' })),
-    body);
+  const done = () => {
+    const text = field.value.trim();
+    if (!cur()) {
+      if (!text) { close(); return; }
+      add(text);
+    }
+    close();
+  };
+  const sheet = h('div', { class: 'at-sheet ts', role: 'dialog' },
+    h('div', { class: 'ts-top' },
+      h('div', { class: 'ts-field' }, field, h('span', { class: 'ts-expand', 'aria-hidden': 'true' }, icon('expand', 20))),
+      h('button', { class: 'ts-ok', 'aria-label': 'Done', onclick: done }, icon('check', 26))),
+    h('div', { class: 'ts-grab' }),
+    tabsEl, body);
   const box = h('div', { class: 'at-scrim clear', onclick: (e: Event) => { if (e.target === box) close(); } }, sheet);
   document.body.append(box);
+
+  field.addEventListener('input', () => {
+    const it = cur();
+    if (it) { it.text = field.value; ctx.changed(); return; }
+    // first letters typed: the text appears at the playhead straight away, so you see it while you style it
+    if (field.value.trim()) { add(field.value); }
+  });
+  field.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); done(); } });
 
   function add(text: string) {
     const dur = ctx.durationMs();
     const s = Math.max(0, Math.min(ctx.playMs(), Math.max(0, dur - 500)));
-    const last = items().find((t) => t.id === sel) ?? items()[items().length - 1];
+    const last = items()[items().length - 1];
     const it: TextItem = {
       id: uid(), text, s, e: Math.min(dur || s + 3000, s + 3000),
-      look: last?.look ?? 'bold', size: last?.size ?? 0.07, y: last?.y ?? 0.5, color: last?.color ?? '#FFFFFF',
+      look: last?.look ?? 'bold', size: last?.size ?? 0.07, y: last?.y ?? 0.5, color: last?.color ?? '#FFFFFF', opacity: last?.opacity,
     };
     items().push(it);
     sel = it.id;
-    ctx.changed(); render();
+    ctx.changed(); render(false);
   }
 
-  function render() {
+  /** A text must exist before it can be styled. */
+  const need = (): TextItem | null => {
+    const it = cur();
+    if (!it) toast('Type a text first.');
+    return it ?? null;
+  };
+
+  function slider(label: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, onInput: (v: number) => void): HTMLElement {
+    const out = h('b', {}, fmt(value));
+    const r = h('input', { type: 'range', class: 'at-range', min: String(min), max: String(max), step: String(step), value: String(value) }) as HTMLInputElement;
+    r.addEventListener('input', () => { const v = Number(r.value); out.textContent = fmt(v); onInput(v); });
+    return h('div', { class: 'ts-slide' }, h('span', { class: 'ts-slide-l' }, label), r, out);
+  }
+
+  function colorRow(it: TextItem | undefined): HTMLElement {
+    const row = h('div', { class: 'ts-colors' });
+    const set = (c: string) => { const t = need(); if (!t) return; t.color = c; ctx.changed(); paint(); };
+    const picker = (cls: string, ic: Node | string) => {
+      const inp = h('input', { type: 'color', class: 'ts-colorpick', value: it?.color ?? '#FFFFFF' }) as HTMLInputElement;
+      inp.addEventListener('input', () => set(inp.value.toUpperCase()));
+      return h('label', { class: 'ts-circle ' + cls }, ic, inp);
+    };
+    const paint = () => {
+      const c = (cur()?.color ?? '#FFFFFF').toLowerCase();
+      row.replaceChildren(
+        picker('tool', icon('eyedrop', 20)),
+        picker('wheel', ''),
+        h('span', { class: 'ts-sep' }),
+        ...COLORS.map((x) => h('button', { class: 'ts-circle' + (x.toLowerCase() === c ? ' on' : ''), style: `background:${x}`, 'aria-label': x, onclick: () => set(x) })));
+    };
+    paint();
+    return row;
+  }
+
+  function renderStyles(): Node[] {
+    const it = cur();
+    const tiles = h('div', { class: 'ts-looks' },
+      h('button', { class: 'ts-look none', 'aria-label': 'No style', onclick: () => { const t = need(); if (!t) return; t.look = 'minimal'; ctx.changed(); render(); } }, icon('nostyle', 26)),
+      ...TEXT_LOOKS.map((l) => h('button', { class: `ts-look l-${l}` + (it?.look === l ? ' on' : ''), 'aria-label': LOOK_NAMES[l], onclick: () => { const t = need(); if (!t) return; t.look = l; ctx.changed(); render(); } }, 'Aa')));
+    return [
+      tiles,
+      h('div', { class: 'ts-subtabs' }, h('span', { class: 'on' }, 'Text'), h('span', {}, 'Brand colors'), h('span', {}, 'Stroke'), h('span', {}, 'Glow'), h('span', {}, 'Background'), h('span', {}, 'Shadow')),
+      colorRow(it),
+      slider('Size', 0.03, 0.16, 0.005, it?.size ?? 0.07, (v) => String(Math.round(v * 1000)), (v) => { const t = need(); if (!t) return; t.size = v; ctx.changed(); }),
+      slider('Opacity', 0.1, 1, 0.05, it?.opacity ?? 1, (v) => `${Math.round(v * 100)}%`, (v) => { const t = need(); if (!t) return; t.opacity = v >= 1 ? undefined : v; ctx.changed(); }),
+    ];
+  }
+
+  function renderTemplates(): Node[] {
+    const it = cur();
     const list = items().slice().sort((a, b) => a.s - b.s);
-    const cur = list.find((t) => t.id === sel);
-    const field = h('input', { type: 'text', placeholder: 'Type your text', 'aria-label': 'Text' }) as HTMLInputElement;
-    const addBtn = h('button', { class: 'btn primary', style: 'min-height:48px;padding:0 14px;white-space:nowrap', onclick: () => {
-      const text = field.value.trim();
-      if (!text) { toast('Type a text first.'); return; }
-      add(text);
-    } }, `Add at ${fmtClock(ctx.playMs())}`);
-    field.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addBtn.click(); } });
+    const out: Node[] = [];
+    if (list.length) {
+      out.push(h('div', { class: 'ts-list' }, ...list.map((x) => h('div', { class: 'ts-item' + (x.id === sel ? ' on' : '') },
+        h('button', { class: 'ts-item-main', onclick: () => { sel = x.id; field.value = x.text; ctx.seek(x.s); render(); } },
+          h('span', { class: 'ts-item-t' }, fmtClock(x.s)), h('span', { class: 'ts-item-x' }, x.text || '(empty)')),
+        h('button', { class: 'ts-item-del', 'aria-label': 'Remove', onclick: () => { ctx.p.texts = items().filter((y) => y.id !== x.id); if (sel === x.id) { sel = null; field.value = ''; } ctx.changed(); render(); } }, icon('trash', 18))))));
+    }
+    out.push(
+      chips<string>('Place', '', [['0.15', 'Top'], ['0.5', 'Middle'], ['0.82', 'Bottom']], String(it?.y ?? 0.5), (v) => { const t = need(); if (t) { t.y = Number(v); ctx.changed(); } }),
+      chips<string>('Shows for', it ? `Starts at ${fmtClock(it.s)}.` : 'The text shows from the playhead.', [['1500', '1.5 s'], ['3000', '3 s'], ['5000', '5 s'], ['8000', '8 s']], String(it ? it.e - it.s : 3000), (v) => {
+        const t = need(); if (!t) return; t.e = Math.min(ctx.durationMs() || t.s + Number(v), t.s + Number(v)); ctx.changed();
+      }));
+    return out;
+  }
 
-    const rows = list.map((it) => {
-      const input = h('input', { type: 'text', class: 'cap-input', value: it.text }) as HTMLInputElement;
-      input.addEventListener('change', () => { it.text = input.value; ctx.changed(); });
-      input.addEventListener('focus', () => { if (sel !== it.id) { sel = it.id; render(); } });
-      const row = h('div', { class: 'cap-row', style: it.id === sel ? 'outline:1px solid var(--accent, #C6F277);border-radius:2px' : '' },
-        h('button', { class: 'cap-time', onclick: () => { sel = it.id; ctx.seek(it.s); render(); } }, fmtClock(it.s)),
-        input,
-        h('button', { class: 'rx-del', 'aria-label': 'Remove', onclick: () => { ctx.p.texts = items().filter((x) => x.id !== it.id); if (sel === it.id) sel = null; ctx.changed(); render(); } }, icon('trash', 18)));
-      return row;
-    });
+  function renderSoon(): Node[] {
+    return [h('div', { class: 'ts-soon' }, `${tab} are coming next. Styles and Templates work now.`)];
+  }
 
-    body.replaceChildren(
-      h('div', { class: 'at-hint' }, 'The text shows from the playhead for 3 seconds. Change the length below.'),
-      h('div', { style: 'display:flex;gap:8px' }, field, addBtn),
-      h('div', { class: 'cap-pages', style: 'margin-top:10px' }, ...rows),
-      ...(cur ? [
-        chips<string>('Look', '', TEXT_LOOKS.map((l) => [l, LOOK_NAMES[l]] as [string, string]), cur.look, (v) => { cur.look = v as TextLook; ctx.changed(); }),
-        chips<string>('Size', '', [['0.045', 'Small'], ['0.07', 'Medium'], ['0.1', 'Large'], ['0.14', 'Huge']], String(cur.size), (v) => { cur.size = Number(v); ctx.changed(); }),
-        chips<string>('Place', '', [['0.15', 'Top'], ['0.5', 'Middle'], ['0.82', 'Bottom']], String(cur.y), (v) => { cur.y = Number(v); ctx.changed(); }),
-        chips<string>('Shows for', `Starts at ${fmtClock(cur.s)}.`, [['1500', '1.5 s'], ['3000', '3 s'], ['5000', '5 s'], ['8000', '8 s']], String(cur.e - cur.s), (v) => {
-          cur.e = Math.min(ctx.durationMs() || cur.s + Number(v), cur.s + Number(v)); ctx.changed();
-        }),
-        swatches('Colour', cur.color, (c) => { cur.color = c; ctx.changed(); }),
-      ] : [h('div', { class: 'at-hint', style: 'margin-top:12px' }, list.length ? 'Tap a text to change how it looks.' : 'No text yet.')]));
+  function render(retab = true) {
+    if (retab) tabsEl.replaceChildren(...TABS.map((t) => h('button', { class: 'ts-tab' + (t === tab ? ' on' : ''), onclick: () => { tab = t; render(); } }, t)));
+    body.replaceChildren(...(tab === 'Styles' ? renderStyles() : tab === 'Templates' ? renderTemplates() : renderSoon()));
   }
   render();
+  setTimeout(() => field.focus(), 250);
 }

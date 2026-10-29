@@ -2332,6 +2332,7 @@ export function editorScreen() {
     {
       let peak = 0;
       for (let i = 0; i < pcm.length; i += 7) { const v = Math.abs(pcm[i]!); if (v > peak) peak = v; }
+      if (peak < 0.003) { toast('This audio track is almost silent, so there is nothing to caption. Check the audio source (Host / Constant) in the editor.', 7000); return false; }
       if (peak > 0.0005 && peak < 0.7) {
         const gain = Math.min(8, 0.9 / peak), out = new Float32Array(pcm.length);
         for (let i = 0; i < pcm.length; i++) out[i] = Math.max(-1, Math.min(1, pcm[i]! * gain));
@@ -2343,7 +2344,7 @@ export function editorScreen() {
     startTask('captions', 'Making captions', 0, { modal: true, cancel: () => job.cancel() });
     try {
       const data = await job.promise;
-      if (!data.words.length) { toast('No speech found.'); return false; }
+      if (!data.words.length) { toast('No clear speech found (Whisper only heard repeated sounds). Try the other language chip, the Small model, or check the audio source.', 8000); return false; }
       p.captions = data;
       p.captionStyle ??= { ...DEFAULT_CAPTION_STYLE };
       const allText = data.words.map((x) => x.orig).join('');
@@ -2801,7 +2802,7 @@ export function editorScreen() {
     } else if (!hasClipSel && !hasSegSel && toolGroup === 'text') {
       rows.push(groupBack(),
         tool('text', 'Add text', openTexts),
-        tool('wand', 'Auto captions', openCaptions));
+        tool('captions', 'Auto captions', openCaptions));
     } else if (!hasClipSel && !hasSegSel) {
       // nothing selected: the main tools, like CapCut's first row
       rows.push(

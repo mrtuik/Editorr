@@ -137,10 +137,17 @@ export function exportCaptions(c: CaptionData | undefined, st: CaptionStyle | un
 export type TextLook = 'classic' | 'bold' | 'box' | 'minimal';
 export const TEXT_LOOKS: TextLook[] = ['classic', 'bold', 'box', 'minimal'];
 /** A piece of text you type and place on the video. Same look engine as captions (preview and export match). */
-export interface TextItem { id: string; text: string; s: number; e: number; look: TextLook; size: number; y: number; color: string }
+export interface TextItem { id: string; text: string; s: number; e: number; look: TextLook; size: number; y: number; color: string; opacity?: number }
+
+/** #RRGGBB + 0..1 opacity -> css colour the preview canvas and the native export both understand. */
+export function withOpacity(hex: string, a: number | undefined): string {
+  if (a === undefined || a >= 1 || !/^#[0-9a-f]{6}$/i.test(hex)) return hex;
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${Math.max(0, a).toFixed(2)})`;
+}
 
 export function textStyleOf(t: TextItem): CaptionStyle {
-  return { ...DEFAULT_CAPTION_STYLE, look: t.look, size: t.size, y: t.y, color: t.color, wordsPerLine: 99, upper: false, roman: false };
+  return { ...DEFAULT_CAPTION_STYLE, look: t.look, size: t.size, y: t.y, color: withOpacity(t.color, t.opacity), wordsPerLine: 99, upper: false, roman: false };
 }
 export function textPage(t: TextItem): CapPage {
   const words = t.text.trim().split(/\s+/).filter(Boolean).map((w) => ({ t: w, s: t.s, e: t.e }));
@@ -156,7 +163,7 @@ export function exportTexts(items: TextItem[] | undefined) {
     out.push({
       pages: [{ s: Math.round(it.s), e: Math.round(it.e), words: pg.words.map((x) => ({ t: x.t, s: Math.round(x.s), e: Math.round(x.e) })) }],
       style: {
-        size: it.size, y: it.y, color: it.color, highlight: it.color,
+        size: it.size, y: it.y, color: withOpacity(it.color, it.opacity), highlight: it.color,
         weight: look.weight, stroke: look.stroke, strokeColor: look.strokeColor, shadow: look.shadow,
         box: look.box ?? '', activeColor: false, activeScale: 1,
       },
