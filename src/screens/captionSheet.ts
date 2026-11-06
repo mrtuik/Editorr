@@ -1,11 +1,12 @@
-import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, LOOKS, type CapLook, type CaptionStyle } from '../core/captions';
+import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, LOOKS, fxIsEmpty, lookOf, type CapLook, type CaptionStyle, type Fx } from '../core/captions';
 import { needsRoman } from '../core/romanize';
 import { LANGS, WHISTLE_MODELS, normLang } from '../core/transcribe';
 import type { Project, Settings } from '../core/types';
 import { saveSettings } from '../core/store';
 import { isKept } from '../core/timeline';
-import { h, icon } from '../ui';
+import { h, icon, fmtClock, toast } from '../ui';
 import { chips } from './faceOptions';
+import { effectsPanel, fontsPanel, stylePanel, type FxModel } from './fxEditor';
 
 export interface CaptionCtx {
   p: Project;
@@ -18,7 +19,11 @@ export interface CaptionCtx {
   seek: (ms: number) => void;
   /** Descript-style: cut this time range (ms, source time) out of the video. */
   cut: (startMs: number, endMs: number) => void;
+  /** The word being edited (index in p.captions.words, -1 = none): the preview frames it. */
+  onSelect?: (word: number) => void;
+  onClosed?: () => void;
 }
+export interface CaptionSheetHandle { selectWord: (i: number) => void; close: () => void }
 
 const COLORS = ['#FFFFFF', '#FFD60A', '#FF453A', '#30D158', '#0A84FF', '#FF9F0A', '#BF5AF2', '#000000'];
 
@@ -31,14 +36,15 @@ export function swatches(label: string, value: string, onPick: (c: string) => vo
 }
 
 /** Text > Caption. First time: pick language, make captions. Then: looks and settings. */
-export function openCaptionSheet(ctx: CaptionCtx): void {
+export function openCaptionSheet(ctx: CaptionCtx, startWord = -1): CaptionSheetHandle {
   const { p, settings: s } = ctx;
   const save = () => { void saveSettings(s); };
   const body = h('div', { class: 'at-body' });
   const foot = h('div', { class: 'at-foot' });
   const title = h('div', { class: 'at-title' }, 'Captions');
-  const close = () => { sheet.classList.add('out'); setTimeout(() => box.remove(), 180); };
-  const sheet = h('div', { class: 'at-sheet', role: 'dialog' },
+  let closed = false;
+  const close = () => { if (closed) return; closed = true; ctx.onSelect?.(-1); sheet.classList.add('out'); setTimeout(() => box.remove(), 180); ctx.onClosed?.(); };
+  const sheet = h('div', { class: 'at-sheet cs', role: 'dialog' },
     h('div', { class: 'at-handle' }),
     h('div', { class: 'at-head' }, h('button', { class: 'at-back', 'aria-label': 'Close', onclick: close }, icon('back', 20)), title, h('span', { class: 'at-head-gap' })),
     body, foot);
@@ -70,6 +76,83 @@ export function openCaptionSheet(ctx: CaptionCtx): void {
       h('div', { class: 'at-hint' }, 'Bangla is shown as Banglish and Hindi as Hinglish. You can switch to the original script later.'));
   }
 
+  let selWord = -1;
+  let scope: 'word' | 'all' = 'word';
+  let tapMode: 'edit' | 'cut' = 'edit';
+  type WTab = 'Styles' | 'Fonts' | 'Effects';
+  let wordTab: WTab = 'Styles';
+  const styleKeep = { sub: 'Text' as 'Text' | 'Stroke' | 'Glow' | 'Background' | 'Shadow' };
+
+  /** Tap on a word: the video jumps there, the word gets a frame, and its tools open. */
+  function selectWord(i: number) {
+    const w = p.captions?.words[i]; if (!w) return;
+    tidyFx();
+    selWord = i; scope = 'word';
+    ctx.seek(w.s); ctx.onSelect?.(i);
+    renderWord();
+  }
+  /** Empty style objects are not kept in the project. */
+  function tidyFx() {
+    for (const w of p.captions?.words ?? []) if (w.fx && fxIsEmpty(w.fx)) delete w.fx;
+    const st = style(); if (st.fx && fxIsEmpty(st.fx)) delete st.fx;
+  }
+  function wordModel(i: number): FxModel {
+    const st = style(); const w = p.captions!.words[i];
+    return {
+      look: () => lookOf(st.look),
+      color: () => w.fx?.color ?? st.color,
+      setColor: (c) => { (w.fx ??= {}).color = c; ctx.changed(); },
+      own: () => (w.fx ??= {}),
+      below: () => st.fx,
+      patch: (f) => { f((w.fx ??= {})); ctx.changed(); },
+      size: { label: 'Size', min: 0.5, max: 2, step: 0.05, get: () => w.fx?.scale ?? 1, set: (v) => { (w.fx ??= {}).scale = v; ctx.changed(); }, fmt: (v) => `${Math.round(v * 100)}%` },
+    };
+  }
+  function allModel(): FxModel {
+    const st = style();
+    return {
+      look: () => lookOf(st.look),
+      color: () => st.color,
+      setColor: (c) => { st.color = c; ctx.changed(); },
+      own: () => (st.fx ??= {}),
+      below: () => undefined,
+      patch: (f) => { f((st.fx ??= {})); ctx.changed(); },
+      size: { label: 'Size', min: 0.03, max: 0.12, step: 0.005, get: () => st.size, set: (v) => { st.size = v; ctx.changed(); }, fmt: (v) => String(Math.round(v * 1000)) },
+    };
+  }
+
+  /** One word (or all words): text, tabs Styles / Fonts / Effects, then Cut / Reset / Done. */
+  function renderWord() {
+    const c = p.captions; if (!c) { renderMake(); return; }
+    if (scope === 'word' && !c.words[selWord]) { scope = 'all'; }
+    const w = scope === 'word' ? c.words[selWord] : undefined;
+    const st = style();
+    title.textContent = scope === 'word' ? 'Edit word' : 'All words';
+    const m = scope === 'word' ? wordModel(selWord) : allModel();
+
+    const leave = () => { tidyFx(); selWord = -1; ctx.onSelect?.(-1); ctx.changed(); renderStyle(); };
+    const input = h('input', { type: 'text', class: 'ts-input cs-word', value: w ? (st.roman ? w.w : (w.orig || w.w)) : 'All words', 'aria-label': 'Word', disabled: !w }) as HTMLInputElement;
+    if (w) input.addEventListener('input', () => { w.w = input.value; w.orig = input.value; ctx.changed(); });
+    const scopeRow = h('div', { class: 'cs-mode' },
+      h('button', { class: 'cs-mode-b' + (scope === 'word' ? ' on' : ''), disabled: !c.words[selWord] && selWord < 0, onclick: () => { if (selWord < 0) { toast('Tap a word first.'); return; } scope = 'word'; renderWord(); } }, 'This word'),
+      h('button', { class: 'cs-mode-b' + (scope === 'all' ? ' on' : ''), onclick: () => { scope = 'all'; renderWord(); } }, 'All words'));
+    const tabs = h('div', { class: 'ts-tabs' }, ...(['Styles', 'Fonts', 'Effects'] as WTab[]).map((t) => h('button', { class: 'ts-tab' + (t === wordTab ? ' on' : ''), onclick: () => { wordTab = t; renderWord(); } }, t)));
+    const panel = wordTab === 'Styles' ? stylePanel(m, styleKeep) : wordTab === 'Fonts' ? fontsPanel(m, renderWord) : effectsPanel(m, renderWord);
+
+    body.replaceChildren(
+      h('div', { class: 'cs-top' },
+        h('div', { class: 'ts-field' }, input),
+        ...(w ? [h('span', { class: 'cs-time' }, fmtClock(w.s))] : [])),
+      scopeRow, tabs, h('div', { class: 'cs-panel' }, panel));
+    foot.replaceChildren(h('div', { class: 'cs-actions' },
+      ...(w ? [h('button', { class: 'btn', onclick: () => { ctx.cut(w.s, w.e); toast('Word cut from the video. Undo brings it back.'); leave(); } }, icon('scissors', 18), 'Cut')] : []),
+      h('button', { class: 'btn', onclick: () => {
+        if (scope === 'word' && w) delete w.fx; else delete style().fx;
+        ctx.changed(); renderWord();
+      } }, 'Reset'),
+      h('button', { class: 'btn primary cs-done', onclick: leave }, icon('check', 20), 'Done')));
+  }
+
   function renderStyle() {
     title.textContent = 'Captions';
     const st = style();
@@ -85,18 +168,21 @@ export function openCaptionSheet(ctx: CaptionCtx): void {
     }));
     drawLooks();
 
-    // Descript-style transcript: tap a word to cut that part out of the video.
+    // Transcript: tap a word to style it (font, colour, shadow...). Switch to "Cut" to remove words from the video, Descript-style.
     const trans = h('div', { class: 'cap-trans' });
     const drawTrans = () => {
       const c = p.captions; if (!c) return;
-      trans.replaceChildren(...c.words.map((w) => {
+      trans.replaceChildren(...c.words.map((w, i) => {
         const gone = !isKept(p.segments, (w.s + w.e) / 2);
         const t = st.roman ? w.w : (w.orig || w.w);
-        return h('button', { class: 'cap-tw' + (gone ? ' gone' : ''), style: gone ? 'text-decoration:line-through;opacity:.4' : '',
-          onclick: () => { if (gone) { ctx.seek(w.s); return; } ctx.cut(w.s, w.e); drawTrans(); drawList(); } }, t);
+        const styled = !fxIsEmpty(w.fx);
+        return h('button', { class: 'cap-tw' + (gone ? ' gone' : '') + (styled ? ' styled' : '') + (i === selWord ? ' on' : ''),
+          onclick: () => {
+            if (tapMode === 'cut') { if (gone) { ctx.seek(w.s); return; } ctx.cut(w.s, w.e); drawTrans(); drawList(); return; }
+            selectWord(i);
+          } }, t);
       }));
     };
-    trans.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;max-height:220px;overflow:auto';
     const list = h('div', { class: 'cap-pages' });
     const drawList = () => {
       const pages = buildPages(p.captions, st);
@@ -126,11 +212,22 @@ export function openCaptionSheet(ctx: CaptionCtx): void {
       chips<string>('Letters', '', [['n', 'Normal'], ['u', 'CAPITALS']], st.upper ? 'u' : 'n', (v) => { st.upper = v === 'u'; ctx.changed(); drawList(); }),
       swatches('Text colour', st.color, (c) => { st.color = c; ctx.changed(); drawLooks(); }),
       swatches('Highlight colour', st.highlight, (c) => { st.highlight = c; ctx.changed(); drawLooks(); }),
-      h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Cut by text'), h('div', { class: 'at-hint' }, 'Tap a word to remove it from the video. Use Undo to bring it back.'), trans),
+      h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Words'),
+        h('div', { class: 'at-hint' }, 'Tap a word to change its font, colour, shadow, glow and more. You can also tap it on the video.'),
+        h('button', { class: 'btn cs-all', onclick: () => { selWord = -1; scope = 'all'; wordTab = 'Styles'; renderWord(); } }, icon('text', 20), 'Style all words'),
+        h('div', { class: 'cs-mode' }, ...(['edit', 'cut'] as const).map((m) => h('button', { class: 'cs-mode-b' + (tapMode === m ? ' on' : ''),
+          onclick: (e: Event) => { tapMode = m; (e.currentTarget as HTMLElement).parentElement?.querySelectorAll('.cs-mode-b').forEach((n, k) => n.classList.toggle('on', (k === 0) === (m === 'edit'))); } }, m === 'edit' ? 'Tap to style' : 'Tap to cut'))),
+        trans),
       h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Edit words'), h('div', { class: 'at-hint' }, 'Tap the time to jump there. Change a line to fix a word.'), list));
     foot.replaceChildren(
       h('button', { class: 'btn at-go', onclick: () => { ctx.remove(); renderMake(); } }, icon('trash', 20), 'Remove captions'));
   }
 
-  if (p.captions?.words.length) renderStyle(); else renderMake();
+  if (p.captions?.words.length) {
+    if (startWord >= 0 && p.captions.words[startWord]) { selWord = startWord; scope = 'word'; ctx.onSelect?.(startWord); renderWord(); } else renderStyle();
+  } else renderMake();
+  return {
+    selectWord: (i) => { if (p.captions?.words[i]) { if (!closed) selectWord(i); } },
+    close,
+  };
 }

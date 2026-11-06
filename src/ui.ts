@@ -280,18 +280,18 @@ export type TabName = 'edit' | 'projects' | 'agent' | 'me';
 export function tabBar(active: TabName, go: (t: TabName) => void): HTMLElement {
   const brandLogo = h('img', { class: 'tab-logo', src: logoUrl, alt: '', width: 26, height: 26, draggable: false });
   const tab = (name: TabName, label: string, ic: keyof typeof ICON | HTMLElement) =>
-    h('button', { class: 'tab' + (active === name ? ' on' : ''), 'aria-label': label, onclick: () => go(name) }, typeof ic === 'string' ? icon(ic, 26) : ic, h('span', {}, label));
+    h('button', { class: 'tab' + (active === name ? ' on' : ''), 'aria-label': label, onclick: () => go(name) }, h('span', { class: 'tab-ic' }, typeof ic === 'string' ? icon(ic, 24) : ic), h('span', { class: 'tab-lb' }, label));
   // "Me": the signed-in Google account's photo and first name (Antigravity sign-in); plain icon + "Me" when nobody is signed in
   const meBtn = tab('me', 'Me', 'user');
   const paintMe = () => {
     const a = getAccount();
-    const label = meBtn.querySelector('span') as HTMLElement;
-    meBtn.firstElementChild?.remove();
+    const label = meBtn.querySelector('.tab-lb') as HTMLElement;
+    const holder = meBtn.querySelector('.tab-ic') as HTMLElement;
     const face = a?.picture
       ? h('img', { class: 'tab-face', src: a.picture, alt: '', width: 26, height: 26, draggable: false })
       : a ? h('span', { class: 'tab-face tab-initial' }, (a.name || a.email || '?').trim().charAt(0).toUpperCase())
-      : icon('user', 26);
-    meBtn.insertBefore(face, label);
+      : icon('user', 24);
+    holder.replaceChildren(face);
     label.textContent = a ? (firstName(a).slice(0, 9) || 'Me') : 'Me';
     meBtn.setAttribute('aria-label', a ? `Profile: ${a.name || a.email}` : 'Me');
   };

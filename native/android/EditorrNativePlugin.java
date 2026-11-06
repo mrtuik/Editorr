@@ -1460,32 +1460,90 @@ public class EditorrNativePlugin extends Plugin {
 
     // ----------------------------------------------------------------- export
 
-    /** Captions drawn onto every frame. Same maths as captions.ts drawCaption, so preview and export match. */
+    /** Look of one word: colour, font, stroke, glow, shadow, own background. Mirrors RFx in captions.ts. */
+    private static final class WStyle {
+        int color = Color.WHITE;
+        String font = "sans";
+        boolean italic = false;
+        float scale = 1f;
+        float strokeW = 0f;
+        int strokeColor = Color.BLACK;
+        float glowB = 0f;
+        int glowColor = Color.WHITE;
+        boolean shadowOn = false;
+        float shadowB = 0.25f, shadowDx = 0f, shadowDy = 0.06f;
+        int shadowColor = 0xBF000000;
+        boolean hasWordBg = false;
+        int wordBg = 0;
+        float wordBgR = 0.3f;
+        boolean ownColor = false;
+
+        /** Copy of `def`, then every key present in `o` replaces the copied value. */
+        static WStyle from(JSONObject o, WStyle def) {
+            WStyle r = new WStyle();
+            if (def != null) {
+                r.color = def.color; r.font = def.font; r.italic = def.italic; r.scale = def.scale;
+                r.strokeW = def.strokeW; r.strokeColor = def.strokeColor; r.glowB = def.glowB; r.glowColor = def.glowColor;
+                r.shadowOn = def.shadowOn; r.shadowB = def.shadowB; r.shadowDx = def.shadowDx; r.shadowDy = def.shadowDy; r.shadowColor = def.shadowColor;
+                r.hasWordBg = def.hasWordBg; r.wordBg = def.wordBg; r.wordBgR = def.wordBgR; r.ownColor = def.ownColor;
+            }
+            if (o == null) return r;
+            if (o.has("color")) r.color = CaptionOverlay.css(o.optString("color"), r.color);
+            if (o.has("font")) r.font = o.optString("font", r.font);
+            if (o.has("italic")) r.italic = o.optBoolean("italic", r.italic);
+            if (o.has("scale")) r.scale = (float) o.optDouble("scale", r.scale);
+            if (o.has("strokeW")) r.strokeW = (float) o.optDouble("strokeW", r.strokeW);
+            else if (o.has("stroke")) r.strokeW = (float) o.optDouble("stroke", r.strokeW);
+            if (o.has("strokeColor")) r.strokeColor = CaptionOverlay.css(o.optString("strokeColor"), r.strokeColor);
+            if (o.has("glowB")) r.glowB = (float) o.optDouble("glowB", r.glowB);
+            if (o.has("glowColor")) r.glowColor = CaptionOverlay.css(o.optString("glowColor"), r.glowColor);
+            if (o.has("shadowOn")) r.shadowOn = o.optBoolean("shadowOn", r.shadowOn);
+            else if (o.has("shadow")) r.shadowOn = o.optBoolean("shadow", r.shadowOn);
+            if (o.has("shadowB")) r.shadowB = (float) o.optDouble("shadowB", r.shadowB);
+            if (o.has("shadowDx")) r.shadowDx = (float) o.optDouble("shadowDx", r.shadowDx);
+            if (o.has("shadowDy")) r.shadowDy = (float) o.optDouble("shadowDy", r.shadowDy);
+            if (o.has("shadowColor")) r.shadowColor = CaptionOverlay.css(o.optString("shadowColor"), r.shadowColor);
+            if (o.has("wordBg")) {
+                String wb = o.optString("wordBg", "");
+                r.hasWordBg = wb != null && wb.length() > 0;
+                r.wordBg = CaptionOverlay.css(wb, Color.BLACK);
+            }
+            if (o.has("wordBgR")) r.wordBgR = (float) o.optDouble("wordBgR", r.wordBgR);
+            if (o.has("ownColor")) r.ownColor = o.optBoolean("ownColor", r.ownColor);
+            return r;
+        }
+    }
+
+    /** Text or caption words drawn onto every frame. Same maths as captions.ts drawCaption, so preview and export match. */
     private static final class CaptionOverlay extends BitmapOverlay {
+        private static final long ANIM_IN = 300, ANIM_OUT = 250;
         private final int w, h;
         private final long[] ps, pe;
         private final String[][] words;
         private final long[][] ws;
-        private final double size, y, stroke, activeScale, bounceMs;
-        private final int weight, color, highlight, strokeColor, boxColor;
-        private final boolean shadow, activeColor, hasBox;
-        private int lastKey = -2;
+        private final WStyle[][] wfx;
+        private final WStyle base;
+        private final double size, y, xPos, activeScale, bounceMs, boxR;
+        private final int weight, highlight, boxColor, anim;
+        private final boolean activeColor, hasBox;
+        private long lastKey = -2;
         private Bitmap lastBmp;
 
-        private CaptionOverlay(int w, int h, long[] ps, long[] pe, String[][] words, long[][] ws, JSONObject st) {
-            this.w = w; this.h = h; this.ps = ps; this.pe = pe; this.words = words; this.ws = ws;
-            this.size = st.optDouble("size", 0.055); this.y = st.optDouble("y", 0.78);
-            this.stroke = st.optDouble("stroke", 0); this.activeScale = st.optDouble("activeScale", 1);
+        private CaptionOverlay(int w, int h, long[] ps, long[] pe, String[][] words, long[][] ws, WStyle[][] wfx, JSONObject st) {
+            this.w = w; this.h = h; this.ps = ps; this.pe = pe; this.words = words; this.ws = ws; this.wfx = wfx;
+            this.size = st.optDouble("size", 0.055); this.y = st.optDouble("y", 0.78); this.xPos = st.optDouble("x", 0.5);
+            this.activeScale = st.optDouble("activeScale", 1);
             this.bounceMs = st.optDouble("bounceMs", 0);
             this.weight = st.optInt("weight", 700);
-            this.color = css(st.optString("color", "#FFFFFF"), Color.WHITE);
             this.highlight = css(st.optString("highlight", "#FFD60A"), Color.YELLOW);
-            this.strokeColor = css(st.optString("strokeColor", "#000000"), Color.BLACK);
             String box = st.optString("box", "");
             this.hasBox = box != null && box.length() > 0;
             this.boxColor = css(box, Color.BLACK);
-            this.shadow = st.optBoolean("shadow", false);
+            this.boxR = st.optDouble("boxR", 0.3);
             this.activeColor = st.optBoolean("activeColor", false);
+            String an = st.optString("anim", "none");
+            this.anim = "fade".equals(an) ? 1 : "pop".equals(an) ? 2 : "rise".equals(an) ? 3 : 0;
+            this.base = WStyle.from(st, null);
         }
 
         static int css(String s, int def) {
@@ -1502,23 +1560,39 @@ public class EditorrNativePlugin extends Plugin {
             return def;
         }
 
+        /** Same names as FONTS in captions.ts; the phone's own system families. */
+        private static Typeface face(String font, boolean bold, boolean italic) {
+            String fam;
+            if ("condensed".equals(font)) fam = "sans-serif-condensed";
+            else if ("serif".equals(font)) fam = "serif";
+            else if ("mono".equals(font)) fam = "monospace";
+            else if ("casual".equals(font)) fam = "casual";
+            else if ("script".equals(font)) fam = "cursive";
+            else fam = "sans-serif";
+            int st = bold ? (italic ? Typeface.BOLD_ITALIC : Typeface.BOLD) : (italic ? Typeface.ITALIC : Typeface.NORMAL);
+            return Typeface.create(fam, st);
+        }
+
         static CaptionOverlay create(JSONObject cap, int w, int h, long[] ra, long[] rb, float[] sp) {
             try {
                 JSONArray pages = cap.optJSONArray("pages");
                 JSONObject st = cap.optJSONObject("style");
                 if (pages == null || st == null || pages.length() == 0) return null;
+                WStyle baseStyle = WStyle.from(st, null);
                 long[] cum = new long[ra.length];
                 long run = 0;
                 for (int i = 0; i < ra.length; i++) { cum[i] = run; run += Math.round((rb[i] - ra[i]) / (double) sp[i]); }
                 List<Long> starts = new ArrayList<>(), ends = new ArrayList<>();
                 List<String[]> allWords = new ArrayList<>();
                 List<long[]> allStarts = new ArrayList<>();
+                List<WStyle[]> allFx = new ArrayList<>();
                 for (int pi = 0; pi < pages.length(); pi++) {
                     JSONObject page = pages.getJSONObject(pi);
                     JSONArray wa = page.getJSONArray("words");
                     double pageE = page.getDouble("e");
                     List<String> t = new ArrayList<>();
                     List<Long> s = new ArrayList<>();
+                    List<WStyle> fxl = new ArrayList<>();
                     long lastMappedEnd = -1;
                     double lastWordE = 0;
                     for (int k = 0; k < wa.length(); k++) {
@@ -1532,6 +1606,8 @@ public class EditorrNativePlugin extends Plugin {
                         if (m < 0) continue;
                         t.add(wo.getString("t"));
                         s.add(m);
+                        JSONObject fo = wo.optJSONObject("fx");
+                        fxl.add(fo == null ? null : WStyle.from(fo, baseStyle));
                         lastMappedEnd = m + Math.round(Math.max(0, eMs - sMs) / wsp);
                         lastWordE = eMs;
                     }
@@ -1543,11 +1619,12 @@ public class EditorrNativePlugin extends Plugin {
                     ends.add(lastMappedEnd + pad);
                     allWords.add(t.toArray(new String[0]));
                     allStarts.add(sa);
+                    allFx.add(fxl.toArray(new WStyle[0]));
                 }
                 if (starts.isEmpty()) return null;
                 long[] ps = new long[starts.size()], pe = new long[starts.size()];
                 for (int i = 0; i < ps.length; i++) { ps[i] = starts.get(i); pe[i] = ends.get(i); }
-                return new CaptionOverlay(w, h, ps, pe, allWords.toArray(new String[0][]), allStarts.toArray(new long[0][]), st);
+                return new CaptionOverlay(w, h, ps, pe, allWords.toArray(new String[0][]), allStarts.toArray(new long[0][]), allFx.toArray(new WStyle[0][]), st);
             } catch (Exception e) {
                 return null;
             }
@@ -1560,9 +1637,17 @@ public class EditorrNativePlugin extends Plugin {
             for (int i = 0; i < ps.length; i++) { if (tc >= ps[i] && tc < pe[i]) { pi = i; break; } }
             int wi = -1;
             if (pi >= 0) { for (int k = 0; k < ws[pi].length; k++) { if (tc >= ws[pi][k]) wi = k; } }
-            int key = pi < 0 ? -1 : pi * 64 + (wi + 1);
+            long key = pi < 0 ? -1 : (long) pi * 64 + (wi + 1);
             // the spoken word bounces for a moment, so the cached bitmap must change until the pop settles
             if (key >= 0 && wi >= 0 && activeScale > 1.0 && bounceMs > 0) key = key * 16 + (int) Math.min(15, Math.max(0, (tc - ws[pi][wi]) / 16));
+            // a text that comes in / fades out changes every frame while the animation runs
+            if (key >= 0 && anim != 0) {
+                long into = tc - ps[pi], left = pe[pi] - tc;
+                int ab = 0;
+                if (into < ANIM_IN) ab = 1 + (int) (into / 16);
+                else if (anim == 1 && left < ANIM_OUT) ab = 100 + (int) (left / 16);
+                key = key * 256 + ab;
+            }
             if (key == lastKey && lastBmp != null) return lastBmp;
             Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
             if (pi >= 0) drawPage(new Canvas(bmp), pi, wi, tc);
@@ -1571,63 +1656,131 @@ public class EditorrNativePlugin extends Plugin {
             return bmp;
         }
 
+        private static void rrect(Canvas c, Paint p, float l, float t, float r, float b, float rad) {
+            float rr = Math.max(0f, Math.min(rad, Math.min((r - l) / 2f, (b - t) / 2f)));
+            c.drawRoundRect(new RectF(l, t, r, b), rr, rr, p);
+        }
+
         private void drawPage(Canvas c, int pi, int active, long tc) {
             String[] t = words[pi];
+            int nw = t.length;
+            WStyle[] rs = new WStyle[nw];
+            for (int i = 0; i < nw; i++) rs[i] = wfx[pi][i] != null ? wfx[pi][i] : base;
+            boolean bold = weight >= 700;
             float fs = (float) Math.max(8, size * h);
             Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-            p.setTypeface(Typeface.create(Typeface.SANS_SERIF, weight >= 700 ? Typeface.BOLD : Typeface.NORMAL));
             p.setStrokeJoin(Paint.Join.ROUND);
             float gap = fs * 0.28f;
-            float[] wd = new float[t.length];
-            float total = 0;
-            for (int i = 0; i < t.length; i++) {
-                p.setTextSize(fs * (i == active ? (float) activeScale : 1f));
+            float[] wd = new float[nw];
+            for (int i = 0; i < nw; i++) {
+                p.setTypeface(face(rs[i].font, bold, rs[i].italic));
+                p.setTextSize(fs * rs[i].scale * (i == active ? (float) activeScale : 1f));
                 wd[i] = p.measureText(t[i]);
-                total += wd[i];
             }
-            total += gap * (t.length - 1);
-            float k = 1f;
+            // animation of a text (in / out): opacity, size, rise
+            float aA = 1f, aK = 1f, aDy = 0f;
+            if (anim != 0) {
+                double tt = Math.max(0, Math.min(1, (tc - ps[pi]) / (double) ANIM_IN));
+                double easeOut = 1 - Math.pow(1 - tt, 3);
+                double back = 1 + 2.70158 * Math.pow(tt - 1, 3) + 1.70158 * Math.pow(tt - 1, 2);
+                double a = 1, k = 1, dy = 0;
+                if (anim == 1) { a = easeOut * Math.max(0, Math.min(1, (pe[pi] - tc) / (double) ANIM_OUT)); }
+                else if (anim == 2) { k = 0.55 + 0.45 * back; a = Math.min(1, tt * 3); }
+                else if (anim == 3) { dy = (1 - easeOut) * 0.9; a = easeOut; }
+                aA = (float) a; aK = (float) k; aDy = (float) dy;
+                if (aA <= 0.001f) return;
+            }
+            // wrap: a line wider than 90% of the video goes on to the next line
             float maxW = w * 0.9f;
-            if (total > maxW) k = maxW / total;
-            total *= k;
+            ArrayList<int[]> lines = new ArrayList<>();
+            int ls = 0;
+            float curW = 0f;
+            for (int i = 0; i < nw; i++) {
+                float add = (i > ls ? gap : 0f) + wd[i];
+                if (i > ls && curW + add > maxW) { lines.add(new int[]{ls, i}); ls = i; curW = wd[i]; } else { curW += add; }
+            }
+            lines.add(new int[]{ls, nw});
+            int n = lines.size();
+            float pitch = fs * 1.2f;
+            float cx = (float) (Math.max(0, Math.min(1, xPos)) * w);
             float cy = (float) (y * h);
-            float x = (w - total) / 2f;
+            float[] lk = new float[n], lx = new float[n], lw = new float[n];
+            float minX = Float.MAX_VALUE, maxX = -Float.MAX_VALUE;
+            for (int L = 0; L < n; L++) {
+                int[] ln = lines.get(L);
+                float raw = 0f;
+                for (int i = ln[0]; i < ln[1]; i++) raw += wd[i];
+                raw += gap * (ln[1] - ln[0] - 1);
+                float k = raw > maxW ? maxW / raw : 1f;
+                float wl = raw * k;
+                lk[L] = k; lw[L] = wl;
+                lx[L] = Math.max(w * 0.02f, Math.min(w - wl - w * 0.02f, cx - wl / 2f));
+                minX = Math.min(minX, lx[L]);
+                maxX = Math.max(maxX, lx[L] + wl);
+            }
+            float top = cy - ((n - 1) * pitch) / 2f - fs * 0.62f;
+            float boxH = (n - 1) * pitch + fs * 1.24f;
+
+            if (aA < 1f) c.saveLayerAlpha(0f, 0f, (float) w, (float) h, Math.round(aA * 255f)); else c.save();
+            if (aK != 1f || aDy != 0f) { c.translate(cx, cy); c.scale(aK, aK); c.translate(-cx, -cy + aDy * fs); }
+
             if (hasBox) {
-                float padX = fs * 0.45f, padY = fs * 0.3f, r = fs * 0.3f;
-                float top = cy - fs * 0.62f - padY;
-                RectF rf = new RectF(x - padX, top, x + total + padX, top + fs * 1.24f + padY * 2f);
+                float padX = fs * 0.45f, padY = fs * 0.3f;
                 p.setStyle(Paint.Style.FILL);
                 p.setColor(boxColor);
-                c.drawRoundRect(rf, r, r, p);
+                rrect(c, p, minX - padX, top - padY, maxX + padX, top - padY + boxH + padY * 2f, fs * (float) boxR);
             }
-            for (int i = 0; i < t.length; i++) {
-                boolean on = i == active;
-                float sc = (on ? (float) activeScale : 1f) * k;
-                // same word pop as captions.ts: 1.0 -> activeScale -> 1.0 over bounceMs, drawn centred on its slot
-                float popOff = 0f;
-                if (on && activeScale > 1.0 && bounceMs > 0) {
-                    double bt = Math.min(1, Math.max(0, (tc - ws[pi][i]) / (double) bounceMs));
-                    float pop = (float) (1 + (activeScale - 1) * Math.sin(Math.PI * bt));
-                    popOff = (wd[i] * k - wd[i] * k * ((float) pop / (float) activeScale)) / 2f;
-                    sc = pop * k;
-                }
-                p.setTextSize(fs * sc);
-                float tw = wd[i] * k;
-                float base = cy + fs * 0.34f;
-                if (stroke > 0) {
+            for (int L = 0; L < n; L++) {
+                int[] ln = lines.get(L);
+                float k = lk[L];
+                float lineCy = cy + (L - (n - 1) / 2f) * pitch;
+                float baseY = lineCy + fs * 0.34f;
+                float x = lx[L];
+                for (int i = ln[0]; i < ln[1]; i++) {
+                    WStyle r = rs[i];
+                    boolean on = i == active;
+                    float sc = on ? (float) activeScale : 1f;
+                    float popOff = 0f;
+                    // same word pop as captions.ts: 1.0 -> activeScale -> 1.0 over bounceMs, drawn centred on its slot
+                    if (on && activeScale > 1.0 && bounceMs > 0) {
+                        double bt = Math.min(1, Math.max(0, (tc - ws[pi][i]) / bounceMs));
+                        sc = (float) (1 + (activeScale - 1) * Math.sin(Math.PI * bt));
+                        popOff = (wd[i] * k * (1f - sc / (float) activeScale)) / 2f;
+                    }
+                    float tw = wd[i] * k;
+                    float px = x + popOff;
                     p.clearShadowLayer();
-                    p.setStyle(Paint.Style.STROKE);
-                    p.setStrokeWidth((float) (fs * stroke));
-                    p.setColor(strokeColor);
-                    c.drawText(t[i], x + popOff, base, p);
+                    if (r.hasWordBg) {
+                        p.setStyle(Paint.Style.FILL);
+                        p.setColor(r.wordBg);
+                        rrect(c, p, x - fs * 0.18f, lineCy - fs * 0.7f, x - fs * 0.18f + tw + fs * 0.36f, lineCy - fs * 0.7f + fs * 1.4f, fs * r.wordBgR);
+                    }
+                    p.setTypeface(face(r.font, bold, r.italic));
+                    p.setTextSize(fs * r.scale * sc * k);
+                    int col = (activeColor && on && !r.ownColor) ? highlight : r.color;
+                    if (r.glowB > 0f) {
+                        p.setStyle(Paint.Style.FILL);
+                        p.setColor(col);
+                        p.setShadowLayer(Math.max(0.5f, fs * r.glowB), 0f, 0f, r.glowColor);
+                        c.drawText(t[i], px, baseY, p);
+                        c.drawText(t[i], px, baseY, p);
+                        p.clearShadowLayer();
+                    }
+                    if (r.strokeW > 0f) {
+                        p.setStyle(Paint.Style.STROKE);
+                        p.setStrokeWidth(fs * r.strokeW);
+                        p.setColor(r.strokeColor);
+                        c.drawText(t[i], px, baseY, p);
+                    }
+                    p.setStyle(Paint.Style.FILL);
+                    if (r.shadowOn) p.setShadowLayer(Math.max(0.5f, fs * r.shadowB), fs * r.shadowDx, fs * r.shadowDy, r.shadowColor); else p.clearShadowLayer();
+                    p.setColor(col);
+                    c.drawText(t[i], px, baseY, p);
+                    p.clearShadowLayer();
+                    x += tw + gap * k;
                 }
-                p.setStyle(Paint.Style.FILL);
-                if (shadow) p.setShadowLayer(fs * 0.25f, 0f, fs * 0.06f, 0xBF000000); else p.clearShadowLayer();
-                p.setColor(activeColor && on ? highlight : color);
-                c.drawText(t[i], x + popOff, base, p);
-                p.clearShadowLayer();
-                x += tw + gap * k;
             }
+            c.restore();
         }
     }
 

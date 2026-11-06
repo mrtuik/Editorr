@@ -6,8 +6,8 @@ import { motionToActivity } from '../core/motion';
 import { cropForFace, FACE_SAMPLE_MS, faceBetween, lastReport, motionFromScan, pickTrack, scanFaces, speakerRuns, type FaceReport, type FaceScan } from '../core/faces';
 import { pickFace } from './facePick';
 import { askFaceOptions } from './faceOptions';
-import { openCaptionSheet } from './captionSheet';
-import { openTextItemsSheet } from './textSheet';
+import { openCaptionSheet, type CaptionSheetHandle } from './captionSheet';
+import { openTextItemsSheet, type TextSheetHandle } from './textSheet';
 import { openReactionSheet } from './reactionSheet';
 import { askAutoZoom, zoomShapeFrom } from './zoomSheet';
 import { openMusicSheet, type AutoPlan } from './musicSheet';
@@ -15,7 +15,7 @@ import { BGM_RATE, decodeFile, decodeUrl, renderMix, toBase64, toBuffer, toWav }
 import { MOOD_LABEL, analyzeMood, moodQuery, type MusicLang } from '../core/mood';
 import { synthLoop, synthSfx } from '../core/synth';
 import { AUTO_INFO, planSfx, type AutoKind } from '../core/sfxPlan';
-import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, pageAt, type CapPage, textPage, textStyleOf } from '../core/captions';
+import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, pageAt, type CapPage, type HitRect, textDrawOpts, textPage, textStyleOf } from '../core/captions';
 import { transcribe } from '../core/transcribe';
 import { addCutZooms, addPunchZooms, addReactions, findPeaks, removeAllReactions, removeReaction } from '../core/autocut';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
@@ -85,6 +85,14 @@ export function editorScreen() {
   let capPages: CapPage[] = [];
   let capKey = '';
   let capVersion = 0;
+  /** Text (Add text) and caption word being edited: the preview draws a dashed frame around them. */
+  let textSel: string | null = null;
+  let capSel = -1;
+  let textHandle: TextSheetHandle | null = null;
+  let capHandle: CaptionSheetHandle | null = null;
+  /** Boxes of the texts and caption words drawn right now (CSS pixels on the stage), for tap and drag on the video. */
+  type PreviewHit = { kind: 'text' | 'cap'; id: string; word: number; x: number; y: number; w: number; h: number };
+  let previewHits: PreviewHit[] = [];
   let playing = false;
   let selectedId: string | null = null;
   let selClip: Role | null = null;
@@ -425,6 +433,11 @@ export function editorScreen() {
   preview.addEventListener('pointerdown', (e: PointerEvent) => {
     if (panel === 'crop' || stage.classList.contains('full')) return;
     if ((e.target as HTMLElement)?.closest('.pill') || (e.target as HTMLElement)?.closest('.taskdialog') || (e.target as HTMLElement)?.closest('.sel-reset-btn')) return;
+    // a text or caption word on the video: tap = its tools, drag = move it
+    if (previewPtrs.size === 0 && !textGesture) {
+      const th = previewHitAt(e.clientX, e.clientY);
+      if (th) { beginTextGesture(e, th); return; }
+    }
 
     preview.setPointerCapture(e.pointerId);
     previewPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -2303,17 +2316,29 @@ export function editorScreen() {
     if (!w || !hh) return;
     if (capCanvas.width !== w || capCanvas.height !== hh) { capCanvas.width = w; capCanvas.height = hh; }
     g.clearRect(0, 0, w, hh);
+    previewHits = [];
+    const box = (hits: HitRect[]) => {
+      const x0 = Math.min(...hits.map((r) => r.x)), y0 = Math.min(...hits.map((r) => r.y));
+      const x1 = Math.max(...hits.map((r) => r.x + r.w)), y1 = Math.max(...hits.map((r) => r.y + r.h));
+      return { x: x0 / dpr, y: y0 / dpr, w: (x1 - x0) / dpr, h: (y1 - y0) / dpr };
+    };
     for (const it of p.texts ?? []) {
       if (playMs < it.s || playMs >= it.e) continue;
       const pg = textPage(it);
-      if (pg.words.length) drawCaption(g, w, hh, pg, playMs, textStyleOf(it));
+      if (!pg.words.length) continue;
+      const hits: HitRect[] = [];
+      drawCaption(g, w, hh, pg, playMs, textStyleOf(it), { ...textDrawOpts(it), hits, outline: it.id === textSel });
+      if (hits.length) previewHits.push({ kind: 'text', id: it.id, word: -1, ...box(hits) });
     }
     if (!p.captions?.words.length) return;
     const st = p.captionStyle ?? DEFAULT_CAPTION_STYLE;
     const key = `${p.captions.words.length}|${JSON.stringify(st)}|${p.captions.words[0].w}|${p.captions.words[p.captions.words.length - 1].w}|${capVersion}`;
     if (key !== capKey) { capKey = key; capPages = buildPages(p.captions, st); }
     const page = pageAt(capPages, playMs);
-    if (page) drawCaption(g, w, hh, page, playMs, st);
+    if (!page) return;
+    const hits: HitRect[] = [];
+    drawCaption(g, w, hh, page, playMs, st, { fx: st.fx, hits, selected: capSel >= page.from && capSel <= page.to ? capSel - page.from : undefined });
+    for (const r of hits) previewHits.push({ kind: 'cap', id: '', word: page.from + r.word, ...box([r]) });
   }
 
   /** Whistle on the main audio, shifted so that time 0 is timeline 0. */
@@ -2357,24 +2382,80 @@ export function editorScreen() {
       return false;
     } finally { endTask('captions'); }
   }
-  function openCaptions() {
-    openCaptionSheet({
+  function openCaptions(startWord = -1) {
+    textHandle?.close();
+    capHandle?.close();
+    capHandle = openCaptionSheet({
       p, settings: app.settings,
       generate: generateCaptions,
       changed: () => { capVersion++; drawCaptionsPreview(); scheduleSave(); },
       remove: () => { delete p.captions; capVersion++; drawCaptionsPreview(); scheduleSave(); },
       seek: (ms) => seek(ms),
       cut: (a, b) => { edit(dropSlivers(subtractRanges(p.segments, [{ startMs: a, endMs: b }]), 1)); capVersion++; drawCaptionsPreview(); },
-    });
+      onSelect: (i) => { capSel = i; drawCaptionsPreview(); },
+      onClosed: () => { capHandle = null; capSel = -1; drawCaptionsPreview(); },
+    }, startWord);
   }
 
-  function openTexts() {
-    openTextItemsSheet({
+  function openTexts(startId?: string) {
+    capHandle?.close();
+    textHandle?.close();
+    textHandle = openTextItemsSheet({
       p, playMs: () => playMs, durationMs: () => p.durationMs,
       changed: () => { drawCaptionsPreview(); scheduleSave(); },
       seek: (ms) => seek(ms),
-    });
+      onSelect: (id) => { textSel = id; drawCaptionsPreview(); },
+      onClosed: () => { textHandle = null; textSel = null; drawCaptionsPreview(); },
+    }, startId);
   }
+
+  // ---- tap a text or a caption word on the video: its tools open. Drag it to move it.
+  type TextGesture = { pointer: number; hit: PreviewHit; sx: number; sy: number; moved: boolean; ox: number; oy: number };
+  let textGesture: TextGesture | null = null;
+  function previewHitAt(clientX: number, clientY: number): PreviewHit | null {
+    const r = stage.getBoundingClientRect();
+    const x = clientX - r.left, y = clientY - r.top;
+    for (let i = previewHits.length - 1; i >= 0; i--) {
+      const hh = previewHits[i];
+      if (x >= hh.x - 6 && x <= hh.x + hh.w + 6 && y >= hh.y - 6 && y <= hh.y + hh.h + 6) return hh;
+    }
+    return null;
+  }
+  function beginTextGesture(e: PointerEvent, hit: PreviewHit) {
+    preview.setPointerCapture(e.pointerId);
+    const it = hit.kind === 'text' ? p.texts?.find((t) => t.id === hit.id) : undefined;
+    textGesture = { pointer: e.pointerId, hit, sx: e.clientX, sy: e.clientY, moved: false, ox: it?.x ?? 0.5, oy: it ? it.y : (p.captionStyle ?? DEFAULT_CAPTION_STYLE).y };
+  }
+  preview.addEventListener('pointermove', (e: PointerEvent) => {
+    const tg = textGesture;
+    if (!tg || e.pointerId !== tg.pointer) return;
+    const dx = e.clientX - tg.sx, dy = e.clientY - tg.sy;
+    if (!tg.moved && Math.hypot(dx, dy) > 8) tg.moved = true;
+    if (!tg.moved) return;
+    const sw = Math.max(1, stage.clientWidth), sh = Math.max(1, stage.clientHeight);
+    const clamp = (v: number) => Math.max(0.04, Math.min(0.96, v));
+    if (tg.hit.kind === 'text') {
+      const it = p.texts?.find((t) => t.id === tg.hit.id);
+      if (it) { it.x = clamp(tg.ox + dx / sw); it.y = clamp(tg.oy + dy / sh); }
+    } else {
+      const st = (p.captionStyle ??= { ...DEFAULT_CAPTION_STYLE });
+      st.y = clamp(tg.oy + dy / sh);
+    }
+    drawCaptionsPreview();
+  });
+  const endTextGesture = (e: PointerEvent) => {
+    const tg = textGesture;
+    if (!tg || e.pointerId !== tg.pointer) return;
+    textGesture = null;
+    if (preview.hasPointerCapture(e.pointerId)) preview.releasePointerCapture(e.pointerId);
+    if (e.type === 'pointercancel') return;
+    if (tg.moved) { scheduleSave(); return; }
+    setPlaying(false);
+    if (tg.hit.kind === 'text') { if (textHandle) textHandle.select(tg.hit.id); else openTexts(tg.hit.id); }
+    else if (capHandle) capHandle.selectWord(tg.hit.word); else openCaptions(tg.hit.word);
+  };
+  preview.addEventListener('pointerup', endTextGesture);
+  preview.addEventListener('pointercancel', endTextGesture);
 
   function doReactionTool() {
     if (!needAudio()) return;
@@ -2797,8 +2878,8 @@ export function editorScreen() {
         tool('trash', 'Delete', () => void doDeleteAudio()));
     } else if (!hasClipSel && !hasSegSel && toolGroup === 'text') {
       rows.push(groupBack(),
-        tool('text', 'Add text', openTexts),
-        tool('captions', 'Auto captions', openCaptions));
+        tool('text', 'Add text', () => openTexts()),
+        tool('captions', 'Auto captions', () => openCaptions()));
     } else if (!hasClipSel && !hasSegSel) {
       // nothing selected: the main tools, like CapCut's first row
       rows.push(

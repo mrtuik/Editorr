@@ -152,7 +152,7 @@ export function homeScreen() {
       onclick: () => { searching = !searching; if (!searching) query = ''; if (searching) app.homeTab = 'projects'; render(); if (searching) (body.querySelector('input') as HTMLInputElement | null)?.focus(); },
     }, icon(searching ? 'close' : 'search', 22));
     const av = h('button', { class: 'avatarbtn', 'aria-label': 'Profile menu', 'aria-haspopup': 'menu', onclick: openMenu }, avatar(40));
-    return h('div', { class: 'htop' }, av, searching ? input : null, btn);
+    return h('div', { class: 'htop' + (searching ? ' searching' : '') }, av, searching ? input : h('div', { class: 'htitle' }, 'Editorr'), btn);
   }
 
   /** Dropdown under the avatar (top left), with the same card as the Me page. */
