@@ -8,13 +8,19 @@ import pathlib, re, shutil, subprocess, sys, tarfile, tempfile, zipfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEST = ROOT / "native/android/third_party/needle"
 DEST.mkdir(parents=True, exist_ok=True)
-REPOS = ["Cactus-Compute/needle3", "Cactus-Compute/needle2", "Cactus-Compute/whistle"]
+REPOS = ["Cactus-Compute/needle3", "Cactus-Compute/whistle", "Cactus-Compute/needle2"]
 
 
 def find(base: pathlib.Path):
-    libs = [p for p in base.rglob("libneedle.a") if "android" in str(p).lower() and "arm64" in str(p).lower()] or list(base.rglob("libneedle.a"))
-    hdrs = [p for p in base.rglob("needle.h") if "android" in str(p).lower()] or list(base.rglob("needle.h"))
-    return (libs[0] if libs else None), (hdrs[0] if hdrs else None)
+    """An android arm64 libneedle.a with a needle.h that has the speech API (Needle 2 engines do not)."""
+    for lib in base.rglob("libneedle.a"):
+        s = str(lib).lower()
+        if "android" not in s or "arm64" not in s:
+            continue
+        hdr = lib.with_name("needle.h")
+        if hdr.exists() and "needle_transcribe" in hdr.read_text(errors="replace"):
+            return lib, hdr
+    return None, None
 
 
 def unpack(f: pathlib.Path, out: pathlib.Path):
@@ -64,6 +70,44 @@ def hub(tmp: pathlib.Path):
             return
 
 
+def releases(tmp: pathlib.Path):
+    """GitHub release assets of cactus-compute/needle (the repo README says engines come from the release)."""
+    import json, urllib.request
+    try:
+        data = json.load(urllib.request.urlopen("https://api.github.com/repos/cactus-compute/needle/releases?per_page=10", timeout=30))
+    except Exception as e:  # noqa: BLE001
+        print("cannot read GitHub releases:", e)
+        return
+    for rel in data:
+        names = [a["name"] for a in rel.get("assets", [])]
+        print("---- release", rel.get("tag_name"), names)
+        for a in rel.get("assets", []):
+            n = a["name"].lower()
+            if "android" in n and "arm64" in n:
+                dst = tmp / "release" / a["name"]
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    urllib.request.urlretrieve(a["browser_download_url"], dst)
+                    unpack(dst, tmp / "unpacked" / dst.name)
+                    if dst.suffix == ".a" or dst.name == "needle.h":
+                        pass
+                except Exception as e:  # noqa: BLE001
+                    print("download failed", a["name"], e)
+
+
+def introspect():
+    """Shows where the installed cactus-needle package gets its engines from, to fix the search above."""
+    try:
+        import needle.agent.fetch as fetch
+        src = pathlib.Path(fetch.__file__).read_text(errors="replace")
+        print("---- needle/agent/fetch.py (lines mentioning sources) ----")
+        for i, line in enumerate(src.splitlines()):
+            if re.search(r"http|repo|REPO|release|folder|wheel|android", line):
+                print(f"{i + 1}: {line.strip()[:200]}")
+    except Exception as e:  # noqa: BLE001
+        print("cannot read needle.agent.fetch:", e)
+
+
 tmp = pathlib.Path(tempfile.mkdtemp())
 lib = hdr = None
 for extra in (("--generation", "3"), ()):
@@ -75,6 +119,10 @@ if not (lib and hdr):
     hub(tmp)
     lib, hdr = find(tmp)
 if not (lib and hdr):
+    releases(tmp)
+    lib, hdr = find(tmp)
+if not (lib and hdr):
+    introspect()
     sys.exit("needle engine (libneedle.a + needle.h for android-arm64) could not be found: see the file lists above")
 
 shutil.copy2(lib, DEST / "libneedle.a")
