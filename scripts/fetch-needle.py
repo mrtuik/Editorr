@@ -95,15 +95,50 @@ def releases(tmp: pathlib.Path):
                     print("download failed", a["name"], e)
 
 
+def package_repos(tmp: pathlib.Path):
+    """Asks the installed cactus-needle which repos hold its engines, lists them and looks for an android arm64 engine with the speech API."""
+    try:
+        import needle.agent.fetch as fetch
+        from huggingface_hub import HfApi, hf_hub_download
+    except Exception as e:  # noqa: BLE001
+        print("package_repos unavailable:", e)
+        return
+    repos = set()
+    er = getattr(fetch, "ENGINE_REPOS", None)
+    if isinstance(er, dict):
+        repos.update(v for v in er.values() if isinstance(v, str))
+    elif isinstance(er, (list, tuple)):
+        repos.update(v for v in er if isinstance(v, str))
+    print("engine repos named by the package:", sorted(repos))
+    api = HfApi()
+    for repo in sorted(repos):
+        try:
+            files = api.list_repo_files(repo)
+        except Exception as e:  # noqa: BLE001
+            print("cannot list", repo, e)
+            continue
+        hits = [f for f in files if re.search(r"android|wasm|libneedle|\.whl$", f, re.I)]
+        print(f"---- {repo}: {len(files)} files, {len(hits)} engine-like ----")
+        for f in hits[:80]:
+            print("  ", f)
+        for f in hits:
+            if "android" in f.lower() and "arm64" in f.lower() and f.endswith((".a", ".h")):
+                try:
+                    hf_hub_download(repo, f, local_dir=str(tmp / "pkg" / repo.replace("/", "_")))
+                except Exception as e:  # noqa: BLE001
+                    print("download failed", f, e)
+
+
 def introspect():
     """Shows where the installed cactus-needle package gets its engines from, to fix the search above."""
     try:
         import needle.agent.fetch as fetch
         src = pathlib.Path(fetch.__file__).read_text(errors="replace")
-        print("---- needle/agent/fetch.py (lines mentioning sources) ----")
-        for i, line in enumerate(src.splitlines()):
-            if re.search(r"http|repo|REPO|release|folder|wheel|android", line):
-                print(f"{i + 1}: {line.strip()[:200]}")
+        print("---- needle/agent/fetch.py, top and engine layout ----")
+        lines = src.splitlines()
+        for i in list(range(0, 60)) + list(range(250, 270)):
+            if i < len(lines):
+                print(f"{i + 1}: {lines[i][:200]}")
     except Exception as e:  # noqa: BLE001
         print("cannot read needle.agent.fetch:", e)
 
@@ -117,6 +152,9 @@ for extra in (("--generation", "3"), ()):
         break
 if not (lib and hdr):
     hub(tmp)
+    lib, hdr = find(tmp)
+if not (lib and hdr):
+    package_repos(tmp)
     lib, hdr = find(tmp)
 if not (lib and hdr):
     releases(tmp)

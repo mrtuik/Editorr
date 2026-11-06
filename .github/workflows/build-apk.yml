@@ -98,7 +98,9 @@ jobs:
             git clone --depth 1 https://github.com/termux/libandroid-shmem.git native/android/third_party/libandroid-shmem
           fi
 
+      # Not fatal: without the engine the APK still builds and everything else works; captions then say the Whistle engine is missing.
       - name: Fetch Cactus needle engine (Whistle speech-to-text for captions)
+        continue-on-error: true
         run: |
           python3 -m pip install --quiet cactus-needle huggingface_hub
           python3 scripts/fetch-needle.py
