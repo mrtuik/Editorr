@@ -42,29 +42,81 @@ def cli(tmp: pathlib.Path, *extra):
     print((r.stdout + r.stderr).strip()[-600:])
 
 
-def direct(tmp: pathlib.Path):
-    """Plain HTTPS download of android-arm64/libneedle.a + needle.h from Cactus-Compute/needle3 (no pip, no CLI needed).
-    This is the folder the Whistle model card points to; the files are served through Hugging Face's LFS redirect."""
+# Cactus removed the platform folders from the *main* branch of Cactus-Compute/needle3 (CI log: main has only 8 files, no android-arm64).
+# Older commits still hold them, so the engine is taken from a pinned commit. Both ids were seen listing android-arm64/libneedle.a + needle.h.
+PINNED = [
+    "d6c7d6a2e9655505e0f8e23339356dd1705900eb",  # engine whose needle.h declares needle_transcribe (checked by another project's CI, 2026-10-20)
+    "b009f8937124b2d0458f4ed040c10c41fd2a0dfc",
+    "93e88ede867e4311c39151285e74df513e4b835b",
+]
+
+
+def _get(url: str, dst: pathlib.Path) -> bool:
     import urllib.request
-    base = "https://huggingface.co/Cactus-Compute/needle3/resolve/main/android-arm64/"
-    out = tmp / "direct" / "android-arm64"
+    for attempt in range(1, 3):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "editorr-ci"})
+            with urllib.request.urlopen(req, timeout=120) as r, open(dst, "wb") as f:
+                shutil.copyfileobj(r, f)
+            return True
+        except Exception as e:  # noqa: BLE001
+            print(f"  {url.split('/resolve/')[-1]} attempt {attempt} failed: {e}")
+    return False
+
+
+def _try_revision(tmp: pathlib.Path, rev: str) -> bool:
+    out = tmp / "direct" / rev[:8] / "android-arm64"
     out.mkdir(parents=True, exist_ok=True)
+    base = f"https://huggingface.co/Cactus-Compute/needle3/resolve/{rev}/android-arm64/"
     for name in ("libneedle.a", "needle.h"):
-        for attempt in range(1, 4):
-            try:
-                req = urllib.request.Request(base + name, headers={"User-Agent": "editorr-ci"})
-                with urllib.request.urlopen(req, timeout=120) as r, open(out / name, "wb") as f:
-                    shutil.copyfileobj(r, f)
-                print(f"direct: got {name} ({(out / name).stat().st_size} bytes)")
-                break
-            except Exception as e:  # noqa: BLE001
-                print(f"direct: {name} attempt {attempt} failed: {e}")
-        else:
+        if not _get(base + name, out / name):
+            return False
+    ok = (out / "libneedle.a").read_bytes()[:8] == b"!<arch>\n" and "needle_transcribe" in (out / "needle.h").read_text(errors="replace")
+    print(f"revision {rev[:8]}: libneedle.a {(out / 'libneedle.a').stat().st_size} bytes, speech API {'yes' if ok else 'NO'}")
+    return ok
+
+
+def direct(tmp: pathlib.Path):
+    """Plain HTTPS download of android-arm64/libneedle.a + needle.h from a pinned commit of Cactus-Compute/needle3."""
+    for rev in PINNED:
+        print("trying needle3 revision", rev)
+        if _try_revision(tmp, rev):
             return
-    magic = (out / "libneedle.a").read_bytes()[:8]
-    if magic != b"!<arch>\n":
-        print("direct: libneedle.a is not a static archive (got %r): probably an LFS pointer or an error page" % magic)
-        (out / "libneedle.a").unlink()
+
+
+def history(tmp: pathlib.Path):
+    """Walks the commit history of needle3 (and its branches/tags) for any commit that still has android-arm64/libneedle.a."""
+    try:
+        from huggingface_hub import HfApi
+    except Exception as e:  # noqa: BLE001
+        print("huggingface_hub missing:", e)
+        return
+    api = HfApi()
+    repo = "Cactus-Compute/needle3"
+    revs = []
+    try:
+        refs = api.list_repo_refs(repo)
+        revs += [b.target_commit for b in refs.branches] + [t.target_commit for t in refs.tags]
+    except Exception as e:  # noqa: BLE001
+        print("cannot list refs:", e)
+    try:
+        revs += [c.commit_id for c in api.list_repo_commits(repo)][:120]
+    except Exception as e:  # noqa: BLE001
+        print("cannot list commits:", e)
+    seen = set(PINNED)
+    for rev in revs:
+        if not rev or rev in seen:
+            continue
+        seen.add(rev)
+        try:
+            files = api.list_repo_files(repo, revision=rev)
+        except Exception as e:  # noqa: BLE001
+            continue
+        if "android-arm64/libneedle.a" in files and "android-arm64/needle.h" in files:
+            print("history: commit", rev, "has android-arm64")
+            if _try_revision(tmp, rev):
+                return
+    print(f"history: looked at {len(seen)} revisions, none had a usable android-arm64 engine")
 
 
 def hub(tmp: pathlib.Path):
@@ -176,6 +228,9 @@ if (DEST / "libneedle.a").exists() and (DEST / "needle.h").exists() and "needle_
     sys.exit(0)
 direct(tmp)
 lib, hdr = find(tmp)
+if not (lib and hdr):
+    history(tmp)
+    lib, hdr = find(tmp)
 for extra in (() if (lib and hdr) else (("--generation", "3"), ())):
     cli(tmp, *extra)
     lib, hdr = find(tmp)
@@ -192,7 +247,8 @@ if not (lib and hdr):
     lib, hdr = find(tmp)
 if not (lib and hdr):
     introspect()
-    sys.exit("needle engine (libneedle.a + needle.h for android-arm64) could not be found: see the file lists above")
+    sys.exit("needle engine (libneedle.a + needle.h for android-arm64) could not be found: see the lines above. Manual fix: download the android-arm64 folder from "
+             "https://huggingface.co/Cactus-Compute/needle3/tree/b009f8937124b2d0458f4ed040c10c41fd2a0dfc/android-arm64 and commit libneedle.a + needle.h to native/android/third_party/needle/")
 
 shutil.copy2(lib, DEST / "libneedle.a")
 shutil.copy2(hdr, DEST / "needle.h")

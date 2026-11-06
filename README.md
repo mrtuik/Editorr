@@ -214,3 +214,4 @@ The AI Agent tab uses Google's Antigravity CLI **inside Editorr**. No other app 
 - The step now fails the build when it cannot get the engine, and a new step checks `libeditorrwhistle.so` is inside the APK.
 - Offline fallback: commit `libneedle.a` + `needle.h` into `native/android/third_party/needle/` and the script uses them as they are.
 - The app now shows the real load error instead of the generic message.
+- Update: CI showed Cactus removed `android-arm64/` from the `main` branch of `Cactus-Compute/needle3` (only needle2 still has it, and Needle 2 has no speech API). The fetch script now takes the engine from pinned older commits of needle3 and, failing that, walks the repo history for one. Last resort: commit `libneedle.a` + `needle.h` into `native/android/third_party/needle/`.
