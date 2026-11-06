@@ -91,7 +91,7 @@ export interface EditorrNativePlugin {
   antigravityCancelLogin(): Promise<AgyStatus>;
   antigravityLogout(): Promise<AgyStatus>;
   /** Native Whistle (Cactus needle engine): is it in this build, and which language models are downloaded. */
-  whistleStatus(): Promise<{ available: boolean; english: boolean; bengali: boolean; hindi: boolean }>;
+  whistleStatus(): Promise<{ available: boolean; reason?: string; english: boolean; bengali: boolean; hindi: boolean }>;
   /** Downloads a language model once (token = Hugging Face token, only the gated Bangla model needs it). Emits 'whistleDownload' {percent}. */
   whistleDownloadModel(opts: { lang: string; token?: string }): Promise<void>;
   whistleBegin(): Promise<void>;

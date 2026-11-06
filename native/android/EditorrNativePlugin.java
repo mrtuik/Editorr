@@ -362,6 +362,7 @@ public class EditorrNativePlugin extends Plugin {
     public void whistleStatus(PluginCall call) {
         JSObject r = new JSObject();
         r.put("available", com.tuik.editorr.agy.WhistleEngine.available());
+        r.put("reason", com.tuik.editorr.agy.WhistleEngine.loadError());
         r.put("english", whistle().modelReady("english"));
         r.put("bengali", whistle().modelReady("bengali"));
         r.put("hindi", whistle().modelReady("hindi"));

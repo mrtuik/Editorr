@@ -206,3 +206,11 @@ The AI Agent tab uses Google's Antigravity CLI **inside Editorr**. No other app 
 - Bangla and Hindi text comes back in its own script and `romanize()` makes Banglish / Hinglish, as before.
 - Build: CI step `scripts/fetch-needle.py` downloads `libneedle.a` + `needle.h` (android-arm64) from `Cactus-Compute/needle3` into `native/android/third_party/needle`. The step fails if the engine or `needle_transcribe` is missing.
 - Captions need the Android app. The old browser-only Whisper fallback was removed.
+
+
+## v17.1: Whistle engine fetch fixed
+- Symptom: "Captions are not available in this build". Cause: the CI step that downloads `libneedle.a` + `needle.h` failed quietly (it was `continue-on-error`), so CMake skipped `libeditorrwhistle.so`.
+- `scripts/fetch-needle.py` now downloads `Cactus-Compute/needle3/android-arm64/{libneedle.a,needle.h}` directly over HTTPS first (no pip or CLI needed), then falls back to the older routes.
+- The step now fails the build when it cannot get the engine, and a new step checks `libeditorrwhistle.so` is inside the APK.
+- Offline fallback: commit `libneedle.a` + `needle.h` into `native/android/third_party/needle/` and the script uses them as they are.
+- The app now shows the real load error instead of the generic message.

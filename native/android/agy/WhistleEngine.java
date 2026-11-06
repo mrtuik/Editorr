@@ -43,6 +43,8 @@ public final class WhistleEngine {
 
     public static boolean available() { return WhistleNative.AVAILABLE; }
 
+    public static String loadError() { return WhistleNative.LOAD_ERROR; }
+
     private static String lang(String l) { return "bengali".equals(l) || "hindi".equals(l) ? l : "english"; }
 
     private static String fileName(String l) {

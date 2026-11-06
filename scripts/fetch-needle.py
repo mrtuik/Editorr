@@ -42,6 +42,31 @@ def cli(tmp: pathlib.Path, *extra):
     print((r.stdout + r.stderr).strip()[-600:])
 
 
+def direct(tmp: pathlib.Path):
+    """Plain HTTPS download of android-arm64/libneedle.a + needle.h from Cactus-Compute/needle3 (no pip, no CLI needed).
+    This is the folder the Whistle model card points to; the files are served through Hugging Face's LFS redirect."""
+    import urllib.request
+    base = "https://huggingface.co/Cactus-Compute/needle3/resolve/main/android-arm64/"
+    out = tmp / "direct" / "android-arm64"
+    out.mkdir(parents=True, exist_ok=True)
+    for name in ("libneedle.a", "needle.h"):
+        for attempt in range(1, 4):
+            try:
+                req = urllib.request.Request(base + name, headers={"User-Agent": "editorr-ci"})
+                with urllib.request.urlopen(req, timeout=120) as r, open(out / name, "wb") as f:
+                    shutil.copyfileobj(r, f)
+                print(f"direct: got {name} ({(out / name).stat().st_size} bytes)")
+                break
+            except Exception as e:  # noqa: BLE001
+                print(f"direct: {name} attempt {attempt} failed: {e}")
+        else:
+            return
+    magic = (out / "libneedle.a").read_bytes()[:8]
+    if magic != b"!<arch>\n":
+        print("direct: libneedle.a is not a static archive (got %r): probably an LFS pointer or an error page" % magic)
+        (out / "libneedle.a").unlink()
+
+
 def hub(tmp: pathlib.Path):
     try:
         from huggingface_hub import HfApi, hf_hub_download
@@ -145,7 +170,13 @@ def introspect():
 
 tmp = pathlib.Path(tempfile.mkdtemp())
 lib = hdr = None
-for extra in (("--generation", "3"), ()):
+# A copy committed to the repo wins: put libneedle.a + needle.h (from Cactus-Compute/needle3/android-arm64) in native/android/third_party/needle.
+if (DEST / "libneedle.a").exists() and (DEST / "needle.h").exists() and "needle_transcribe" in (DEST / "needle.h").read_text(errors="replace"):
+    print("engine already present in", DEST, "- nothing to download")
+    sys.exit(0)
+direct(tmp)
+lib, hdr = find(tmp)
+for extra in (() if (lib and hdr) else (("--generation", "3"), ())):
     cli(tmp, *extra)
     lib, hdr = find(tmp)
     if lib and hdr:

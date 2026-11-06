@@ -96,7 +96,7 @@ export function transcribe(
   const work = (async (): Promise<CaptionData> => {
     if (!isNative()) throw new Error('Captions run on the phone (Whistle). Install the Android app to make captions.');
     const st = await EditorrNative.whistleStatus();
-    if (!st.available) throw new Error('Captions are not available in this build: the Whistle engine (Cactus needle, Android) could not be added when the APK was built.');
+    if (!st.available) throw new Error('Captions engine did not load' + (st.reason ? ': ' + st.reason : ' (libeditorrwhistle.so is missing from this APK: the Cactus needle engine was not added at build time)') + '.');
     if (!st[language]) {
       const info = WHISTLE_MODELS[language];
       onStatus(`Downloading ${info.name} (${info.sizeMb} MB)`, 0);

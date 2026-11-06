@@ -98,12 +98,13 @@ jobs:
             git clone --depth 1 https://github.com/termux/libandroid-shmem.git native/android/third_party/libandroid-shmem
           fi
 
-      # Not fatal: without the engine the APK still builds and everything else works; captions then say the Whistle engine is missing.
+      # Fails the build on purpose: an APK without the engine cannot make captions, so it is better to see the red step than to ship it.
       - name: Fetch Cactus needle engine (Whistle speech-to-text for captions)
-        continue-on-error: true
         run: |
-          python3 -m pip install --quiet cactus-needle huggingface_hub
+          python3 -m pip install --quiet huggingface_hub || true
+          python3 -m pip install --quiet cactus-needle || true
           python3 scripts/fetch-needle.py
+          ls -l native/android/third_party/needle
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
@@ -135,6 +136,11 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Check the Whistle engine is inside the APK
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          unzip -l "$APK" | grep -E "libeditorrwhistle\.so" || { echo "::error::libeditorrwhistle.so is not in the APK: captions would fail"; exit 1; }
 
       - name: Check signature and version
         run: |
