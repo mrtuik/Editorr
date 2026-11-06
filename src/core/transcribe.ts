@@ -2,13 +2,20 @@ import type { CapWord, CaptionData } from './captions';
 import { needsRoman, romanize } from './romanize';
 import { EditorrNative, isNative } from './native';
 
-export type WhisperModel = 'base' | 'small';
-export const WHISPER_IDS: Record<WhisperModel, string> = { base: 'Xenova/whisper-base', small: 'Xenova/whisper-small' };
-export const LANGS: [string, string][] = [['', 'Auto'], ['bengali', 'Bangla'], ['hindi', 'Hindi'], ['english', 'English'], ['urdu', 'Urdu']];
+/** Whistle (Cactus needle engine): one small model per language. */
+export type WhistleLang = 'english' | 'bengali' | 'hindi';
+export const WHISTLE_MODELS: Record<WhistleLang, { name: string; sizeMb: number }> = {
+  english: { name: 'Whistle English', sizeMb: 16.9 },
+  bengali: { name: 'Whistle Bangla (2-bit)', sizeMb: 30.5 },
+  hindi: { name: 'Shruti Hindi (Whistle)', sizeMb: 29.5 },
+};
+export const LANGS: [string, string][] = [['bengali', 'Bangla (Banglish)'], ['hindi', 'Hindi (Hinglish)'], ['english', 'English']];
+/** Old saved settings may hold '' (auto) or 'urdu': those map to Bangla. */
+export const normLang = (l: string | undefined): WhistleLang => (l === 'english' || l === 'hindi' || l === 'bengali' ? l : 'bengali');
 
 
 /**
- * Whisper sometimes "hears" a voice it cannot read and repeats one sound ("aa, aa, aa") or a short pattern
+ * Speech models sometimes "hears" a voice it cannot read and repeats one sound ("aa, aa, aa") or a short pattern
  * ("AA, AAWW, AAWW, AA, AAWW, AAWW"). Any word or 2-4 word pattern repeated 3+ times in a row is that loop and is dropped.
  * If almost every word is the same few sounds, the whole result is junk and nothing is returned.
  */
@@ -37,13 +44,6 @@ export function dropLoops(words: CapWord[]): CapWord[] {
 
 export interface TranscribeJob { promise: Promise<CaptionData>; cancel: () => void }
 
-/**
- * Speech to words with times. `pcm` is mono 16 kHz audio that starts at timeline 0.
- * Bangla / Hindi come back in their own script; the Latin version (Banglish / Hinglish) is made by romanize().
- */
-/** whisper.cpp wants ISO codes; the app's language chips use names. */
-const ISO: Record<string, string> = { bengali: 'bn', hindi: 'hi', english: 'en', urdu: 'ur' };
-
 /** Float32 mono 16 kHz -> little-endian 16-bit -> base64 (for the native side). */
 function pcmChunkB64(pcm: Float32Array, from: number, to: number): string {
   const n = to - from;
@@ -58,18 +58,23 @@ function pcmChunkB64(pcm: Float32Array, from: number, to: number): string {
   return btoa(bin);
 }
 
-type NativeModel = 'tiny' | 'base' | 'small';
 const mmss = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 
 /**
- * One native Whisper attempt (whisper.cpp). Rejects with 'native-unavailable' when this build/phone has no native Whisper,
- * and with 'stalled' when it makes no progress for `stallMs` (the caller then tries a faster setting).
+ * Speech to words with times, with Whistle (Cactus needle engine) running natively on the phone.
+ * `pcm` is mono 16 kHz audio that starts at timeline 0. Bangla / Hindi come back in their own script;
+ * the Latin version (Banglish / Hinglish) is made by romanize().
+ * opts.segments = ignore the engine's word times and spread the words inside each piece (fallback).
+ * opts.token = Hugging Face token (only the gated Bangla model needs it).
  */
-function transcribeNative(
-  pcm: Float32Array, key: NativeModel, language: string,
+export function transcribe(
+  pcm: Float32Array, langIn: string,
   onStatus: (text: string, percent?: number) => void,
-  segmentsOnly: boolean, stallMs: number,
+  opts: { segments?: boolean; token?: string; stallMs?: number } = {},
 ): TranscribeJob {
+  const language = normLang(langIn);
+  const segmentsOnly = !!opts.segments;
+  const stallMs = opts.stallMs ?? 120_000;
   let cancelled = false;
   let phase: 'prep' | 'listen' = 'prep';
   let lastPct = 0;
@@ -84,33 +89,35 @@ function transcribeNative(
   const ticker = setInterval(() => {
     if (phase === 'listen') {
       onStatus(`Listening ${mmss(Date.now() - startedListening)}`, lastPct);
-      if (Date.now() - lastMove > stallMs) { void EditorrNative.whisperCancel(); rejectStall(new Error('stalled')); }
+      if (Date.now() - lastMove > stallMs) { void EditorrNative.whistleCancel(); rejectStall(new Error('Whistle stopped making progress on this phone.')); }
     }
   }, 1000);
 
   const work = (async (): Promise<CaptionData> => {
-    const st = await EditorrNative.whisperStatus();
-    if (!st.available) throw new Error('native-unavailable');
-    if (!st[key]) {
-      onStatus('Downloading model', 0);
-      handles.push(await EditorrNative.addListener('whisperDownload', (e: { percent: number }) => onStatus('Downloading model', e.percent)));
-      await EditorrNative.whisperDownloadModel({ model: key });
+    if (!isNative()) throw new Error('Captions run on the phone (Whistle). Install the Android app to make captions.');
+    const st = await EditorrNative.whistleStatus();
+    if (!st.available) throw new Error('Whistle is not in this build (the needle engine was not linked). Rebuild the APK.');
+    if (!st[language]) {
+      const info = WHISTLE_MODELS[language];
+      onStatus(`Downloading ${info.name} (${info.sizeMb} MB)`, 0);
+      handles.push(await EditorrNative.addListener('whistleDownload', (e: { percent: number }) => onStatus(`Downloading ${info.name} (${info.sizeMb} MB)`, e.percent)));
+      await EditorrNative.whistleDownloadModel({ lang: language, token: opts.token ?? '' });
       stop();
     }
     if (cancelled) throw new Error('cancelled');
     onStatus('Preparing audio', 0);
-    await EditorrNative.whisperBegin();
+    await EditorrNative.whistleBegin();
     const PIECE = 16000 * 60; // one minute per hand-over keeps every message small
     for (let at = 0; at < pcm.length; at += PIECE) {
       if (cancelled) throw new Error('cancelled');
-      await EditorrNative.whisperPush({ data: pcmChunkB64(pcm, at, Math.min(pcm.length, at + PIECE)) });
+      await EditorrNative.whistlePush({ data: pcmChunkB64(pcm, at, Math.min(pcm.length, at + PIECE)) });
     }
     phase = 'listen'; startedListening = Date.now(); lastMove = Date.now();
-    handles.push(await EditorrNative.addListener('whisperProgress', (e: { percent: number }) => {
+    handles.push(await EditorrNative.addListener('whistleProgress', (e: { percent: number }) => {
       if (e.percent !== lastPct) { lastPct = e.percent; lastMove = Date.now(); }
     }));
-    const r = await EditorrNative.whisperRun({ model: key, language: ISO[language] ?? '', words: !segmentsOnly });
-    const segs = JSON.parse(r.segments) as { t0: number; t1: number; text: string }[];
+    const r = await EditorrNative.whistleRun({ lang: language, words: !segmentsOnly });
+    const segs = JSON.parse(r.segments) as { t0: number; t1: number; text: string; seg?: boolean }[];
     const words: CapWord[] = [];
     for (const sgm of segs) {
       const text = (sgm.text ?? '').trim();
@@ -122,7 +129,7 @@ function transcribeNative(
         continue;
       }
       const s = Math.max(0, sgm.t0), e = Math.max(s + 80, sgm.t1);
-      const parts = segmentsOnly ? text.split(/\s+/).filter(Boolean) : [text];
+      const parts = segmentsOnly || sgm.seg ? text.split(/\s+/).filter(Boolean) : [text];
       const total = parts.reduce((a, x) => a + x.length + 1, 0);
       let at = s;
       for (const orig of parts) {
@@ -131,120 +138,11 @@ function transcribeNative(
         at += span;
       }
     }
-    return { lang: language || 'auto', words: dropLoops(words) };
+    return { lang: language, words: dropLoops(words) };
   })();
 
   const promise = Promise.race([work, stallPromise]).finally(() => { clearInterval(ticker); stop(); });
   // a stalled attempt's own rejection (from the cancelled run) must not become an unhandled error
   work.catch(() => { /* handled through the race */ });
-  return { promise, cancel: () => { cancelled = true; void EditorrNative.whisperCancel(); } };
-}
-
-/**
- * Native Whisper with automatic fallbacks, so it can never sit on "Listening" for ever:
- * the chosen model with word timing -> a faster setting if it stops moving -> the tiny model.
- * Without native Whisper in this build the web version is used.
- */
-function transcribeNativeTiered(
-  pcm: Float32Array, model: WhisperModel, language: string,
-  onStatus: (text: string, percent?: number) => void,
-  opts: { modelId?: string; segments?: boolean },
-): TranscribeJob {
-  const first: NativeModel = opts.modelId?.includes('tiny') ? 'tiny' : model;
-  const tiers: { key: NativeModel; seg: boolean }[] = [{ key: first, seg: !!opts.segments }];
-  if (!opts.segments) tiers.push({ key: first, seg: true });
-  if (first === 'small') tiers.push({ key: 'base', seg: true });
-  if (first !== 'tiny') tiers.push({ key: 'tiny', seg: true });
-  let current: TranscribeJob | null = null;
-  let stopped = false;
-  const promise = (async (): Promise<CaptionData> => {
-    let lastErr = new Error('Transcription failed.');
-    // Fallbacks may only use models that are already on the phone: never start a new download in the middle of a retry.
-    try {
-      const st = await EditorrNative.whisperStatus();
-      if (st.available) for (let k = tiers.length - 1; k > 0; k--) if (tiers[k]!.key !== first && !st[tiers[k]!.key]) tiers.splice(k, 1);
-    } catch { /* keep the tiers */ }
-    for (let i = 0; i < tiers.length; i++) {
-      if (stopped) throw new Error('cancelled');
-      const t = tiers[i]!;
-      if (i > 0) onStatus(`Too slow, trying ${t.key}${t.seg ? ' (faster)' : ''}`, 0);
-      // generous for the first try (Small is slow on weak phones), shorter for the fallbacks
-      current = transcribeNative(pcm, t.key, language, onStatus, t.seg, i === 0 ? 150_000 : 100_000);
-      try { return await current.promise; } catch (e) {
-        const err = e as Error;
-        if (err.message === 'native-unavailable') throw err;
-        if (stopped || err.message === 'cancelled') throw new Error('cancelled');
-        lastErr = err.message === 'stalled' ? new Error('Whisper stopped making progress on this phone. Try the Base or Tiny model.') : err;
-      }
-    }
-    throw lastErr;
-  })();
-  return { promise, cancel: () => { stopped = true; current?.cancel(); } };
-}
-
-export function transcribe(
-  pcm: Float32Array, model: WhisperModel, language: string,
-  onStatus: (text: string, percent?: number) => void,
-  /** Fallback options: another model id (e.g. 'Xenova/whisper-tiny') and/or sentence timing instead of word timing (more reliable, words are spread inside each sentence). */
-  opts: { modelId?: string; segments?: boolean } = {},
-): TranscribeJob {
-  if (isNative()) {
-    // Native first. If this build has no native Whisper (or it fails to start), fall back to the web version below.
-    const native = transcribeNativeTiered(pcm, model, language, onStatus, opts);
-    let inner: TranscribeJob | null = null;
-    let stopped = false;
-    const promise = native.promise.catch((e: Error) => {
-      if (stopped || e.message === 'cancelled' || e.message !== 'native-unavailable') throw e;
-      inner = transcribeWeb(pcm, model, language, onStatus, opts);
-      return inner.promise;
-    });
-    return { promise, cancel: () => { stopped = true; native.cancel(); inner?.cancel(); } };
-  }
-  return transcribeWeb(pcm, model, language, onStatus, opts);
-}
-
-function transcribeWeb(
-  pcm: Float32Array, model: WhisperModel, language: string,
-  onStatus: (text: string, percent?: number) => void,
-  opts: { modelId?: string; segments?: boolean },
-): TranscribeJob {
-  // ask the WebView to keep the cached model files instead of evicting them
-  try { void navigator.storage?.persist?.(); } catch { /* not supported */ }
-  const worker = new Worker(new URL('./whisper.worker.ts', import.meta.url), { type: 'module' });
-  let settled = false;
-  let reject: (e: Error) => void = () => {};
-  const promise = new Promise<CaptionData>((resolve, rej) => {
-    reject = rej;
-    worker.onmessage = (ev: MessageEvent<any>) => {
-      const m = ev.data;
-      if (m.type === 'status') onStatus(m.text, 0);
-      else if (m.type === 'download') onStatus('Loading model', m.percent);
-      else if (m.type === 'progress') onStatus('Listening', m.percent);
-      else if (m.type === 'done') {
-        settled = true; worker.terminate();
-        const words: CapWord[] = [];
-        for (const c of m.chunks as { text: string; timestamp: [number, number | null]; seg?: boolean }[]) {
-          const text = (c.text ?? '').trim();
-          if (!text) continue;
-          const s = Math.round((c.timestamp?.[0] ?? 0) * 1000);
-          const e = Math.round(((c.timestamp?.[1] ?? (c.timestamp?.[0] ?? 0) + 0.4)) * 1000);
-          // sentence timing: spread the words over the sentence by their length
-          const parts = opts.segments || c.seg ? text.split(/\s+/).filter(Boolean) : [text];
-          const total = parts.reduce((a, x) => a + x.length + 1, 0);
-          let at = s;
-          for (const orig of parts) {
-            const span = Math.max(80, Math.round(((e - s) * (orig.length + 1)) / total));
-            words.push({ orig, w: needsRoman(orig) ? romanize(orig) : orig, s: at, e: Math.max(at + 80, at + span - 20) });
-            at += span;
-          }
-        }
-        resolve({ lang: language || 'auto', words: dropLoops(words) });
-      } else if (m.type === 'error') { settled = true; worker.terminate(); rej(new Error(m.error || 'Transcription failed.')); }
-    };
-    worker.onerror = (e) => { settled = true; worker.terminate(); rej(new Error(e.message || 'Transcription worker failed.')); };
-    const copy = pcm.slice();
-    const buf = copy.buffer as ArrayBuffer;
-    worker.postMessage({ pcm: buf, model: opts.modelId ?? WHISPER_IDS[model], timestamps: opts.segments ? 'segment' : 'word', language: language || null }, [buf]);
-  });
-  return { promise, cancel: () => { if (settled) return; settled = true; worker.terminate(); reject(new Error('cancelled')); } };
+  return { promise, cancel: () => { cancelled = true; void EditorrNative.whistleCancel(); } };
 }

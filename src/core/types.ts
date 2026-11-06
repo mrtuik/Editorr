@@ -118,9 +118,9 @@ export interface Settings {
   leadInMs?: number;
   /** Autoframe: a short answer ("hmm", a laugh) shorter than this does not switch the camera (ms). 0 = off. */
   ignoreShortMs?: number;
-  /** Captions: Whisper size and spoken language ('' = auto). */
-  whisperModel?: 'base' | 'small';
+  /** Captions: spoken language (english | bengali | hindi) and the Hugging Face token the gated Bangla Whistle model needs. */
   captionLang?: string;
+  whistleHfToken?: string;
   /** Reaction tool: talk time before a cutaway and its length (ms). */
   reactAfterMs?: number;
   reactLengthMs?: number;

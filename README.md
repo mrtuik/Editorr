@@ -151,7 +151,7 @@ All bottom sheets share one look (end of `src/style.css`): flat black `#121212`,
 - Not compiled against Android and not run on a phone in this session (no network here).
 
 ## v16.9.1: Bangla captions never in Urdu letters + square corners everywhere
-- Captions: when a language other than Urdu/Arabic/Persian is chosen, Arabic-script tokens are blocked in native Whisper (logits filter) and in the web worker.
+- Captions (older note): Arabic-script blocking was a Whisper-only fix and is gone with Whisper.
 - Every corner in the app (CSS, inline styles, timeline layers, icons, handles) is now 0-2 px. The video "Corner radius" crop slider is a video effect and was left alone.
 
 ## v16.9.0: optional YouTube songs (Music > Auto BGM > Add from YouTube)
@@ -197,3 +197,12 @@ The AI Agent tab uses Google's Antigravity CLI **inside Editorr**. No other app 
 - Under the hood: PRoot (compiled by CI from termux/proot) runs a small private Ubuntu; Google's official `agy` binary is downloaded from Google and checksum-verified. The Google sign-in token stays in Editorr's private storage and is never read by the app.
 - Arm64 phones only. The APK is built with targetSdk 28 (`EDITORR_TARGET_SDK` in the workflow) because Android blocks PRoot's Linux programs for newer targets.
 - The Linux base bundle URL is `EDITORR_RUNTIME_BASE_URL` in the workflow. It points at the Mobile Harness release; copy `pocketdev-core-arm64-2026.09.5.tar.zst` to your own release and change the URL if you want full independence.
+
+
+## v17: Whisper removed, captions run on Whistle
+- Speech to text is now **Whistle** (Cactus needle engine, C++ via JNI, `libeditorrwhistle.so`). No more whisper.cpp, no transformers.js, no 250 MB model.
+- One small model per language, downloaded once on first use: English = `Cactus-Compute/whistle` (16.9 MB, Apache-2.0), Hindi/Hinglish = `udgamlabs/Shruti` (29.5 MB, Apache-2.0), Bangla = `ehzawad/whistle-bn-BD-2bit` (30.5 MB).
+- **Bangla model licence:** it is gated and research / non-commercial only. Accept the licence on its Hugging Face page, make a read token and paste it once in Text > Caption. Commercial use needs written permission from its author.
+- Bangla and Hindi text comes back in its own script and `romanize()` makes Banglish / Hinglish, as before.
+- Build: CI step `scripts/fetch-needle.py` downloads `libneedle.a` + `needle.h` (android-arm64) from `Cactus-Compute/needle3` into `native/android/third_party/needle`. The step fails if the engine or `needle_transcribe` is missing.
+- Captions need the Android app. The old browser-only Whisper fallback was removed.

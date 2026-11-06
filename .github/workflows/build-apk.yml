@@ -98,12 +98,10 @@ jobs:
             git clone --depth 1 https://github.com/termux/libandroid-shmem.git native/android/third_party/libandroid-shmem
           fi
 
-      - name: Fetch whisper.cpp (native Whisper for captions)
+      - name: Fetch Cactus needle engine (Whistle speech-to-text for captions)
         run: |
-          if [ ! -f native/android/third_party/whisper.cpp/CMakeLists.txt ]; then
-            rm -rf native/android/third_party/whisper.cpp
-            git clone --depth 1 --branch v1.7.5 https://github.com/ggml-org/whisper.cpp.git native/android/third_party/whisper.cpp
-          fi
+          python3 -m pip install --quiet cactus-needle huggingface_hub
+          python3 scripts/fetch-needle.py
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund

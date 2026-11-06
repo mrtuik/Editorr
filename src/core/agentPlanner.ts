@@ -297,11 +297,10 @@ const tick = () => new Promise<void>((r) => setTimeout(r, 30));
 
 // ------------------------------------------------------------------ speech to words, with fallbacks
 
-interface Tier { label: string; opts: { modelId?: string; segments?: boolean } }
+interface Tier { label: string; opts: { segments?: boolean } }
 const TIERS: Tier[] = [
-  { label: 'Whisper', opts: {} },
-  { label: 'Whisper (sentence timing)', opts: { segments: true } },
-  { label: 'Whisper tiny', opts: { modelId: 'Xenova/whisper-tiny', segments: true } },
+  { label: 'Whistle', opts: {} },
+  { label: 'Whistle (sentence timing)', opts: { segments: true } },
 ];
 const STALL_MS = 240_000;
 
@@ -313,10 +312,10 @@ async function transcribeTiered(voice: Float32Array, settings: Settings, status:
     try {
       const data = await new Promise<import('./captions').CaptionData>((resolve, reject) => {
         let last = Date.now();
-        const job = transcribe(voice, settings.whisperModel ?? 'base', settings.captionLang ?? '', (t, pct) => {
+        const job = transcribe(voice, settings.captionLang ?? '', (t, pct) => {
           last = Date.now();
           status(`${i ? tier.label + ': ' : ''}${t}${pct !== undefined ? ` ${pct}%` : ''}`);
-        }, tier.opts);
+        }, { ...tier.opts, token: settings.whistleHfToken });
         const iv = setInterval(() => { if (Date.now() - last > STALL_MS) { clearInterval(iv); job.cancel(); reject(new Error('stopped answering')); } }, 5000);
         job.promise.then((d) => { clearInterval(iv); resolve(d); }, (e) => { clearInterval(iv); reject(e); });
       });
@@ -356,19 +355,19 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
   let plan = lp.plan;
   let words: CapWord[] = p.captions?.words?.length ? p.captions.words : p.agentWords?.words ?? [];
   let wordsFailed = false, wordsTried = false;
-  /** Speech to words, with fallbacks: Whisper -> Whisper with sentence timing -> small Whisper -> (later) sound matching. */
+  /** Speech to words, with fallbacks: Whistle -> Whistle with sentence timing -> (later) sound matching. */
   const ensureWords = async () => {
     if (words.length || wordsTried || voice.length <= SAMPLE_RATE * 2) return;
     wordsTried = true;
     const r = await transcribeTiered(voice, settings, (t) => step(0, 'run', t));
     if (r.data && r.data.words.length) {
       words = r.data.words; p.agentWords = r.data;
-      if (r.used > 0) warnings.push(`Whisper had a problem (${r.errors[0] ?? 'failed'}), so "${TIERS[r.used]!.label}" was used instead.`);
+      if (r.used > 0) warnings.push(`Whistle had a problem (${r.errors[0] ?? 'failed'}), so "${TIERS[r.used]!.label}" was used instead.`);
     } else if (r.data) {
       warnings.push('No speech was found, so retakes and word-based sounds were skipped.');
     } else {
       wordsFailed = true;
-      warnings.push(`Whisper could not run (${r.errors[0] ?? 'failed'}).`);
+      warnings.push(`Whistle could not run (${r.errors[0] ?? 'failed'}).`);
     }
   };
   if (plan.retakes || plan.meme || input.useAntigravity) await ensureWords();

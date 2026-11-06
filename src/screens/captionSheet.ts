@@ -1,6 +1,6 @@
 import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, LOOKS, type CapLook, type CaptionStyle } from '../core/captions';
 import { needsRoman } from '../core/romanize';
-import { LANGS, type WhisperModel } from '../core/transcribe';
+import { LANGS, WHISTLE_MODELS, normLang } from '../core/transcribe';
 import type { Project, Settings } from '../core/types';
 import { saveSettings } from '../core/store';
 import { isKept } from '../core/timeline';
@@ -10,8 +10,8 @@ import { chips } from './faceOptions';
 export interface CaptionCtx {
   p: Project;
   settings: Settings;
-  /** Runs Whisper (the editor shows the progress). true = captions were made. */
-  generate: (lang: string, model: WhisperModel) => Promise<boolean>;
+  /** Runs Whistle (the editor shows the progress). true = captions were made. */
+  generate: (lang: string) => Promise<boolean>;
   /** Style or text changed: redraw the preview and save. */
   changed: () => void;
   remove: () => void;
@@ -30,7 +30,7 @@ export function swatches(label: string, value: string, onPick: (c: string) => vo
   return h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, label), row);
 }
 
-/** Text > Caption. First time: pick language and Whisper size, make captions. Then: looks and settings. */
+/** Text > Caption. First time: pick language, make captions. Then: looks and settings. */
 export function openCaptionSheet(ctx: CaptionCtx): void {
   const { p, settings: s } = ctx;
   const save = () => { void saveSettings(s); };
@@ -51,15 +51,22 @@ export function openCaptionSheet(ctx: CaptionCtx): void {
     title.textContent = 'Auto captions';
     foot.replaceChildren(h('button', { class: 'btn primary at-go', onclick: async () => {
       sheet.classList.add('out'); box.style.display = 'none';
-      const ok = await ctx.generate(s.captionLang ?? '', s.whisperModel ?? 'small');
+      const ok = await ctx.generate(normLang(s.captionLang));
       box.style.display = ''; sheet.classList.remove('out');
       if (ok) renderStyle();
     } }, icon('wand', 20), 'Generate captions'));
+    const tokenBox = h('div', { class: 'at-sec' },
+      h('div', { class: 'at-label' }, 'Hugging Face token (Bangla model)'),
+      h('input', { type: 'password', class: 'cap-input', placeholder: 'hf_...', value: s.whistleHfToken ?? '',
+        onchange: (e: Event) => { s.whistleHfToken = (e.target as HTMLInputElement).value.trim(); save(); } }),
+      h('div', { class: 'at-hint' }, 'The Bangla Whistle model is gated and research-only (non-commercial). Accept its license on huggingface.co/ehzawad/whistle-bn-BD-2bit, make a read token, paste it here once.'));
+    const sync = () => { tokenBox.style.display = normLang(s.captionLang) === 'bengali' ? '' : 'none'; };
+    const langName = (l?: string) => { const m = WHISTLE_MODELS[normLang(l)]; return `${m.name}, ${m.sizeMb} MB, downloads once`; };
+    sync();
     body.replaceChildren(
-      chips<string>('Spoken language', 'Auto works for most videos. Pick one if the words come out wrong.',
-        LANGS.map(([v, l]) => [v, l] as [string, string]), s.captionLang ?? '', (v) => { s.captionLang = v; save(); }),
-      chips<WhisperModel>('Whisper size', 'Small understands Bangla much better but is slower. Base is faster. The model downloads once (first time needs internet).',
-        [['base', 'Base (faster)'], ['small', 'Small (best Bangla)']], s.whisperModel ?? 'small', (v) => { s.whisperModel = v; save(); }),
+      chips<string>('Spoken language', 'Whistle is a tiny speech engine (17-30 MB) that runs on the phone. ' + langName(s.captionLang),
+        LANGS.map(([v, l]) => [v, l] as [string, string]), normLang(s.captionLang), (v) => { s.captionLang = v; save(); sync(); }),
+      tokenBox,
       h('div', { class: 'at-hint' }, 'Bangla is shown as Banglish and Hindi as Hinglish. You can switch to the original script later.'));
   }
 

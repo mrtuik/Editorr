@@ -16,7 +16,7 @@ import { MOOD_LABEL, analyzeMood, moodQuery, type MusicLang } from '../core/mood
 import { synthLoop, synthSfx } from '../core/synth';
 import { AUTO_INFO, planSfx, type AutoKind } from '../core/sfxPlan';
 import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, pageAt, type CapPage, textPage, textStyleOf } from '../core/captions';
-import { transcribe, type WhisperModel } from '../core/transcribe';
+import { transcribe } from '../core/transcribe';
 import { addCutZooms, addPunchZooms, addReactions, findPeaks, removeAllReactions, removeReaction } from '../core/autocut';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
 import { detectSilence } from '../core/silence';
@@ -2316,11 +2316,11 @@ export function editorScreen() {
     if (page) drawCaption(g, w, hh, page, playMs, st);
   }
 
-  /** Whisper on the main audio, shifted so that time 0 is timeline 0. */
-  async function generateCaptions(lang: string, model: WhisperModel): Promise<boolean> {
+  /** Whistle on the main audio, shifted so that time 0 is timeline 0. */
+  async function generateCaptions(lang: string): Promise<boolean> {
     if (!needAudio()) return false;
     const role = p.mainAudio;
-    // Whisper hears best on the original voice (denoised audio can sound robotic and make it write "aa, aa, aa").
+    // Whistle hears best on the original voice (denoised audio can sound robotic and make it write "aa, aa, aa").
     const src = sourcePcm(role) ?? cleanedPcm(role);
     if (!src) { toast('Audio is still being read. Try again in a moment.'); return false; }
     const per = SAMPLE_RATE / 1000;
@@ -2328,7 +2328,7 @@ export function editorScreen() {
     let pcm: Float32Array;
     if (shiftS >= 0) pcm = src.subarray(shiftS, shiftS + Math.ceil(p.durationMs * per));
     else { pcm = new Float32Array(Math.ceil(p.durationMs * per)); pcm.set(src.subarray(0, Math.max(0, pcm.length + shiftS)), -shiftS); }
-    // quiet voice -> lift it, so Whisper does not mistake it for silence
+    // quiet voice -> lift it, so Whistle does not mistake it for silence
     {
       let peak = 0;
       for (let i = 0; i < pcm.length; i += 7) { const v = Math.abs(pcm[i]!); if (v > peak) peak = v; }
@@ -2340,18 +2340,13 @@ export function editorScreen() {
       }
     }
     setPlaying(false);
-    const job = transcribe(pcm, model, lang, (text, pct) => updateTask('captions', text, pct ?? undefined));
+    const job = transcribe(pcm, lang, (text, pct) => updateTask('captions', text, pct ?? undefined), { token: app.settings.whistleHfToken });
     startTask('captions', 'Making captions', 0, { modal: true, cancel: () => job.cancel() });
     try {
       const data = await job.promise;
-      if (!data.words.length) { toast('No clear speech found (Whisper only heard repeated sounds). Try the other language chip, the Small model, or check the audio source.', 8000); return false; }
+      if (!data.words.length) { toast('No clear speech found (Whistle only heard repeated sounds). Try the other language chip or check the audio source.', 8000); return false; }
       p.captions = data;
       p.captionStyle ??= { ...DEFAULT_CAPTION_STYLE };
-      const allText = data.words.map((x) => x.orig).join('');
-      const arab = (allText.match(/[\u0600-\u06FF]/g) ?? []).length;
-      if (lang !== 'urdu' && arab > allText.length * 0.4) {
-        toast('Ekhono Urdu script ashche. Captions remove kore Small model diye abar generate koro (Bangla chip select thakle native build e Urdu letters block kora ache).', 9000);
-      }
       capVersion++;
       scheduleSave(); drawCaptionsPreview();
       toast(`Captions ready: ${data.words.length} words. Style them in Text.`);

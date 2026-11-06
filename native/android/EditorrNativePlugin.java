@@ -350,69 +350,69 @@ public class EditorrNativePlugin extends Plugin {
         call.resolve(agyStatusObject());
     }
 
-    // ---- Whisper (whisper.cpp) running natively: no WebView memory limit, so captions stop crashing the app.
-    private com.tuik.editorr.agy.WhisperEngine whisper;
+    // ---- Whistle (Cactus needle engine) running natively: no WebView memory limit, so captions stop crashing the app.
+    private com.tuik.editorr.agy.WhistleEngine whistle;
 
-    private synchronized com.tuik.editorr.agy.WhisperEngine whisper() {
-        if (whisper == null) whisper = new com.tuik.editorr.agy.WhisperEngine(getContext());
-        return whisper;
+    private synchronized com.tuik.editorr.agy.WhistleEngine whistle() {
+        if (whistle == null) whistle = new com.tuik.editorr.agy.WhistleEngine(getContext());
+        return whistle;
     }
 
     @PluginMethod
-    public void whisperStatus(PluginCall call) {
+    public void whistleStatus(PluginCall call) {
         JSObject r = new JSObject();
-        r.put("available", com.tuik.editorr.agy.WhisperEngine.available());
-        r.put("tiny", whisper().modelReady("tiny"));
-        r.put("base", whisper().modelReady("base"));
-        r.put("small", whisper().modelReady("small"));
+        r.put("available", com.tuik.editorr.agy.WhistleEngine.available());
+        r.put("english", whistle().modelReady("english"));
+        r.put("bengali", whistle().modelReady("bengali"));
+        r.put("hindi", whistle().modelReady("hindi"));
         call.resolve(r);
     }
 
-    /** Downloads a Whisper model once. Progress: "whisperDownload" {percent}. */
+    /** Downloads a Whistle model once. Progress: "whistleDownload" {percent}. */
     @PluginMethod
-    public void whisperDownloadModel(final PluginCall call) {
-        final String model = call.getString("model", "base");
+    public void whistleDownloadModel(final PluginCall call) {
+        final String lang = call.getString("lang", "english");
+        final String token = call.getString("token", "");
         new Thread(() -> {
             try {
-                whisper().downloadModel(model, p -> { JSObject e = new JSObject(); e.put("percent", p); notifyListeners("whisperDownload", e); });
+                whistle().downloadModel(lang, token, p -> { JSObject e = new JSObject(); e.put("percent", p); notifyListeners("whistleDownload", e); });
                 call.resolve();
             } catch (Throwable t) {
                 call.reject(t.getMessage() == null ? "Model download failed." : t.getMessage());
             }
-        }, "editorr-whisper-download").start();
+        }, "editorr-whistle-download").start();
     }
 
     @PluginMethod
-    public void whisperBegin(PluginCall call) {
-        try { whisper().begin(); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    public void whistleBegin(PluginCall call) {
+        try { whistle().begin(); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
     }
 
     @PluginMethod
-    public void whisperPush(PluginCall call) {
-        try { whisper().push(call.getString("data", "")); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+    public void whistlePush(PluginCall call) {
+        try { whistle().push(call.getString("data", "")); call.resolve(); } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
     }
 
-    /** Runs Whisper. Progress: "whisperProgress" {percent}. Resolves {segments: "<json>"}. */
+    /** Runs Whistle. Progress: "whistleProgress" {percent}. Resolves {segments: "<json>"}. */
     @PluginMethod
-    public void whisperRun(final PluginCall call) {
-        final String model = call.getString("model", "base");
-        final String lang = call.getString("language", "");
+    public void whistleRun(final PluginCall call) {
+        final String lang = call.getString("lang", "english");
         final boolean words = Boolean.TRUE.equals(call.getBoolean("words", true));
         new Thread(() -> {
             try {
-                String json = whisper().run(model, lang, words, p -> { JSObject e = new JSObject(); e.put("percent", p); notifyListeners("whisperProgress", e); });
+                String json = whistle().run(lang, words, p -> { JSObject e = new JSObject(); e.put("percent", p); notifyListeners("whistleProgress", e); });
                 JSObject r = new JSObject();
                 r.put("segments", json);
                 call.resolve(r);
             } catch (Throwable t) {
-                call.reject(t.getMessage() == null ? "Whisper failed." : t.getMessage());
+                call.reject(t.getMessage() == null ? "Whistle failed." : t.getMessage());
             }
-        }, "editorr-whisper-run").start();
+        }, "editorr-whistle-run").start();
     }
 
     @PluginMethod
-    public void whisperCancel(PluginCall call) {
-        whisper().cancel();
+    public void whistleCancel(PluginCall call) {
+        whistle().cancel();
         call.resolve();
     }
 

@@ -1,5 +1,5 @@
 /**
- * Retakes found by SOUND ONLY (no Whisper, no internet): when someone says a sentence again after a pause, the second
+ * Retakes found by SOUND ONLY (no speech model, no internet): when someone says a sentence again after a pause, the second
  * attempt sounds like the first. Each phrase (speech between pauses) becomes a small "sound shape" over time, and a phrase
  * that the next one repeats from its start is dropped, keeping the last attempt.
  * Less exact than the word-based search, so the thresholds are strict and the agent tells the user to check the timeline.
