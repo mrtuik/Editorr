@@ -1613,3 +1613,14 @@ input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-webkit-s
 .tabbar .tab .tab-face { border-radius: 50%; }
 .tabbar .tab.on .tab-face { border-color: #fff; }
 .tabbar .tab:not(.on) .tab-ic { opacity: .85; }
+
+/* ---- rounded project cards + export done screen ---- */
+.home .pcard, .pcard { border-radius: 16px; overflow: hidden; }
+.pcard .opt { border-radius: 50%; }
+.topbar .btn.iconbtn.plain { background: none; border: 0; box-shadow: none; border-radius: 0; }
+.xcard { border-radius: 22px; }
+.xframe { border-radius: 14px; }
+.xplay { border-radius: 50%; }
+.xtiktok { border-radius: 14px; }
+.xticon { border-radius: 14px; }
+.xqicon { border-radius: 16px; }

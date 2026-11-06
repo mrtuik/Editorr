@@ -1,6 +1,8 @@
 import { exportCaptions, exportTexts } from './captions';
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import { docuSegments, fixDocuLayout } from './docuApply';
+import { exportDocu } from './docuRenderer';
 import { effectiveGain } from './gain';
 import { fxForExport } from './fx';
 import { outputSize, type CropState, type Project } from './types';
@@ -35,6 +37,8 @@ export interface ExportRequest {
   captions?: unknown;
   /** Free text pieces: one caption-shaped block each (see captions.ts exportTexts). */
   texts?: unknown[];
+  /** Documentary typography beats with their geometry worked out (see docuRenderer.ts exportDocu). */
+  docu?: unknown[];
   /** Baked background music / effects track (file uri), at timeline time. */
   bgmUri?: string;
   /** Overlay videos on top (see OverlayClip). */
@@ -176,6 +180,7 @@ export async function loadPcm(pcmPath: string): Promise<Float32Array> {
 
 export function toExportRequest(p: Project, hostUri: string, constUri: string, height: number, fps: number, mbps: number): ExportRequest {
   const { w, h } = outputSize(p.aspect, height);
+  fixDocuLayout(p);
   return {
     hostUri, constUri,
     fps, bitrate: Math.round(mbps * 1_000_000),
@@ -190,13 +195,14 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     mainAudio: p.mainAudio,
     captions: exportCaptions(p.captions, p.captionStyle),
     ...(exportTexts(p.texts) ? { texts: exportTexts(p.texts) } : {}),
+    ...(exportDocu(p.docu, w, h) ? { docu: exportDocu(p.docu, w, h) } : {}),
     ...(p.bgm?.path ? { bgmUri: 'file://' + p.bgm.path } : {}),
     ...(p.overlays?.length ? { overlays: p.overlays.map((o) => ({ uri: o.uri, startMs: Math.round(o.startMs), lenMs: Math.round(o.lenMs), durationMs: Math.round(o.durationMs), cx: o.cx, cy: o.cy, scale: o.scale, volume: Math.max(0, Math.min(1, o.volume / 100)) })) } : {}),
     ...(fxForExport(p) ? { fx: fxForExport(p) } : {}),
     normalize: p.normalize,
     gain: effectiveGain(p, p.mainAudio),
     // sorted; parts removed by silence cut are simply not in this list
-    segments: [...p.segments].sort((a, b) => a.startMs - b.startMs).map((s) => ({
+    segments: [...docuSegments(p)].sort((a, b) => a.startMs - b.startMs).map((s) => ({
       startMs: Math.round(s.startMs), endMs: Math.round(s.endMs), style: s.style, main: s.main, corner: s.corner, size: s.size,
       ...(s.cropHost ? { cropHost: s.cropHost } : {}), ...(s.cropConst ? { cropConst: s.cropConst } : {}),
       ...(s.speed && Math.abs(s.speed - 1) > 0.01 ? { speed: Math.max(0.5, Math.min(2, s.speed)) } : {}),

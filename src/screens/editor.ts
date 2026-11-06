@@ -8,6 +8,10 @@ import { pickFace } from './facePick';
 import { askFaceOptions } from './faceOptions';
 import { openCaptionSheet, type CaptionSheetHandle } from './captionSheet';
 import { openTextItemsSheet, type TextSheetHandle } from './textSheet';
+import { openDocuSheet, type DocuSheetHandle } from './docuSheet';
+import { docuCrop, fixDocuLayout, splitBeatAt } from '../core/docuApply';
+import { drawDocuFrame } from '../core/docuRenderer';
+import { docuBeatAt } from '../core/docuTypes';
 import { openReactionSheet } from './reactionSheet';
 import { askAutoZoom, zoomShapeFrom } from './zoomSheet';
 import { openMusicSheet, type AutoPlan } from './musicSheet';
@@ -89,6 +93,7 @@ export function editorScreen() {
   let textSel: string | null = null;
   let capSel = -1;
   let textHandle: TextSheetHandle | null = null;
+  let docuHandle: DocuSheetHandle | null = null;
   let capHandle: CaptionSheetHandle | null = null;
   /** Boxes of the texts and caption words drawn right now (CSS pixels on the stage), for tap and drag on the video. */
   type PreviewHit = { kind: 'text' | 'cap'; id: string; word: number; x: number; y: number; w: number; h: number };
@@ -263,6 +268,12 @@ export function editorScreen() {
   const CK = (role: Role) => (role === 'host' ? 'cropHost' : 'cropConst') as 'cropHost' | 'cropConst';
   /** The crop that is showing now: the clip under the playhead, else the project crop. */
   function cropOf(role: Role): CropState { return segmentAt(p.segments, playMs)?.[CK(role)] ?? p[CK(role)]; }
+  /** The crop the preview draws: the clip's crop, plus the move into the window while a split typography beat plays. */
+  function displayCrop(role: Role): CropState {
+    const base = cropOf(role);
+    const b = splitBeatAt(p.docu, playMs);
+    return b && (segmentAt(p.segments, playMs)?.main ?? 'host') === role ? docuCrop(base, b, aspectValue(p.aspect)) : base;
+  }
   /** Same crop, ready to edit: the clip under the playhead gets its own copy first, so other clips stay as they are. */
   function cropForEdit(role: Role): CropState {
     const seg = segmentAt(p.segments, playMs);
@@ -298,7 +309,7 @@ export function editorScreen() {
 
   /** Crop = zoom + move inside the frame. Uniform scale, zero distortion. */
   function applyCrop(role: Role) {
-    const c = cropOf(role);
+    const c = displayCrop(role);
     const v = role === 'host' ? hostV : constV;
     const clip = role === 'host' ? hostClip : constClip;
     const ring = role === 'host' ? hostRing : constRing;
@@ -372,7 +383,9 @@ export function editorScreen() {
     } // nothing decided yet: show the Host
     const main = seg.main === 'host' ? hostCell : constCell;
     const other = seg.main === 'host' ? constCell : hostCell;
-    if (seg.style === 'one') { place(main, 0, 0, 100, 100); hide(other); }
+    // a split typography beat: the main person fills the frame and is moved into the window by displayCrop()
+    if (splitBeatAt(p.docu, playMs)) { place(main, 0, 0, 100, 100); hide(other); }
+    else if (seg.style === 'one') { place(main, 0, 0, 100, 100); hide(other); }
     else if (seg.style === 'side') { place(hostCell, 0, 0, 50, 100); place(constCell, 50, 0, 50, 100); }
     else if (seg.style === 'updown') { place(hostCell, 0, 0, 100, 50); place(constCell, 0, 50, 100, 50); }
     else {
@@ -2317,6 +2330,8 @@ export function editorScreen() {
     if (capCanvas.width !== w || capCanvas.height !== hh) { capCanvas.width = w; capCanvas.height = hh; }
     g.clearRect(0, 0, w, hh);
     previewHits = [];
+    const beat = docuBeatAt(p.docu, playMs);
+    if (beat) drawDocuFrame(g, beat, playMs, w, hh);
     const box = (hits: HitRect[]) => {
       const x0 = Math.min(...hits.map((r) => r.x)), y0 = Math.min(...hits.map((r) => r.y));
       const x1 = Math.max(...hits.map((r) => r.x + r.w)), y1 = Math.max(...hits.map((r) => r.y + r.h));
@@ -2395,6 +2410,19 @@ export function editorScreen() {
       onSelect: (i) => { capSel = i; drawCaptionsPreview(); },
       onClosed: () => { capHandle = null; capSel = -1; drawCaptionsPreview(); },
     }, startWord);
+  }
+
+  function openDocu() {
+    capHandle?.close();
+    textHandle?.close();
+    docuHandle?.close();
+    docuHandle = openDocuSheet({
+      p, playMs: () => playMs, durationMs: () => p.durationMs,
+      changed: () => { applyLayout(segmentAt(p.segments, playMs)); drawCaptionsPreview(); scheduleSave(); },
+      seek: (ms) => seek(ms),
+      words: () => p.captions?.words?.length ? p.captions.words : p.agentWords?.words ?? [],
+      onClosed: () => { docuHandle = null; },
+    });
   }
 
   function openTexts(startId?: string) {
@@ -2888,6 +2916,7 @@ export function editorScreen() {
         tool('autoframe', 'Autoframe', doAutoframe),
         tool('face', 'Faces', doFaces),
         tool('text', 'Text', () => openGroup('text')),
+        tool('layout', 'Docu', () => openDocu()),
         tool('reaction', 'Reaction', doReactionTool),
         tool('overlay', 'Overlay', () => { if (ovList().length) openPanel('overlay'); else void addOverlay(false); }),
         tool('punch', 'Auto zoom', doAutoZoom),
@@ -3130,7 +3159,7 @@ export function editorScreen() {
       const tiles = (Object.keys(ASPECTS) as Aspect[]).map((a) => {
         const [aw, ah] = ASPECTS[a]; const k = 20 / Math.max(aw, ah);
         return ptile(h('i', { class: 'rbox', style: `width:${Math.round(aw * k)}px;height:${Math.round(ah * k)}px` }), a,
-          () => { p.aspect = a; fitStage(); applyLayout(segmentAt(p.segments, playMs)); scheduleSave(); renderPanel(); tick(); }, { sel: p.aspect === a });
+          () => { p.aspect = a; fixDocuLayout(p); fitStage(); applyLayout(segmentAt(p.segments, playMs)); scheduleSave(); renderPanel(); tick(); }, { sel: p.aspect === a });
       });
       setPanel('Ratio', pstrip(...tiles));
     } else if (panel === 'layout') {
@@ -3883,6 +3912,7 @@ export function editorScreen() {
       try { actx?.close(); } catch { /* ignore */ }
       window.removeEventListener('resize', onResize);
       document.removeEventListener('visibilitychange', onVisible);
+      docuHandle?.close();
       ro.disconnect(); tlRo.disconnect();
       (screen.orientation as any)?.unlock?.();
     },

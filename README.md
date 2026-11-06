@@ -215,3 +215,13 @@ The AI Agent tab uses Google's Antigravity CLI **inside Editorr**. No other app 
 - Offline fallback: commit `libneedle.a` + `needle.h` into `native/android/third_party/needle/` and the script uses them as they are.
 - The app now shows the real load error instead of the generic message.
 - Update: CI showed Cactus removed `android-arm64/` from the `main` branch of `Cactus-Compute/needle3` (only needle2 still has it, and Needle 2 has no speech API). The fetch script now takes the engine from pinned older commits of needle3 and, failing that, walks the repo history for one. Last resort: commit `libneedle.a` + `needle.h` into `native/android/third_party/needle/`.
+
+
+## v17_5 changes (Docu typography beats)
+
+- New **Docu** tool (toolbar) and AI Agent preset **Docu Typography**: 3 to 6 documentary moments per video (black screen, split card, big quote).
+- Wide videos (16:9) use a **side** split (video left or right), tall videos (9:16) use an **up/down** split (video top or bottom). One tap flips the side; Corner radius slider 0 to 40 px.
+- AI director: Antigravity picks the moments from the transcript (`core/docuPlanner.ts`, prompt `buildDocuTypographyPrompt`); without it, built-in rules pick numbers, questions and big claims.
+- Preview: `core/docuRenderer.ts` draws the card and a rounded window for the video. Export: `DocuOverlay` in `EditorrNativePlugin.java` draws the same numbers. Beats are stored in `Project.docu` (project time, like texts).
+- Split beats move the main person into the window with the existing free-placement crop (`px`/`py`), so no new Media3 layout code was needed (`core/docuApply.ts`).
+- Not compiled/tested on a device yet: run a 30 s export with one black screen and one split beat first.

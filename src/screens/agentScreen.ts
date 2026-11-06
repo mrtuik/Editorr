@@ -8,10 +8,11 @@ import logoUrl from '../assets/logo.png';
 import { firstName, getAccount } from '../core/account';
 import { agyOn, antigravityReady, openAntigravityPanel } from './antigravitySetup';
 
-const PRESETS: { label: string; prompt: string }[] = [
+const PRESETS: { label: string; prompt: string; llm?: boolean }[] = [
   { label: '⚡ Viral Fast Paced', prompt: 'Make it viral and fast paced: tight pauses, no dead air, slightly faster speech.' },
   { label: '😂 Auto Meme SFX', prompt: 'Add funny meme sound effects on the punchlines, shouts and awkward silences.' },
   { label: '✂️ Cut Retakes & Stutters', prompt: 'Cut retakes, false starts, stutters and filler words. Keep only the best take.' },
+  { label: '🎞️ Docu Typography', prompt: 'Make it a documentary: pick the strongest moments and add Vox-style typography cards, split screens and black-screen beats.', llm: true },
   { label: '🎙️ Studio Podcast Clean', prompt: 'Make it a clean studio podcast: trim long pauses, remove retakes, add soft background music.' },
 ];
 
@@ -117,7 +118,7 @@ export function agentScreen() {
     input.value = '';
 
     // live progress card
-    const isPreset = PRESETS.some((c) => c.prompt === text);
+    const isPreset = PRESETS.some((c) => c.prompt === text && !c.llm);
     const rows = AGENT_STEPS.map((label) => {
       const mark = h('span', { class: 'ag-mark' });
       const txt = h('span', {}, label);
@@ -158,6 +159,7 @@ export function agentScreen() {
     if (s.fillers) parts.push(`${s.fillers} filler word${s.fillers === 1 ? '' : 's'}`);
     if (s.sfx) parts.push(`added ${s.sfx} SFX`);
     if (s.bgmSections) parts.push('added background music');
+    if (s.docuBeats) parts.push(`added ${s.docuBeats} documentary beat${s.docuBeats === 1 ? '' : 's'} (edit them in Docu)`);
     if (s.speed > 1.005) parts.push(`${s.speed}x speed`);
     const line = parts.length ? parts[0]!.charAt(0).toUpperCase() + parts.join(', ').slice(1) + '.' : 'Nothing needed changing here.';
     return h('div', { class: 'ag-result' },

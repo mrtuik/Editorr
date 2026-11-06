@@ -13,11 +13,12 @@ import { analyzeMood, MOOD_LABEL } from './mood';
 import { EditorrNative, isNative } from './native';
 import { acousticRetakes } from './retakeAcoustic';
 import { ensureAudio, runAutoSwitch, runSync } from './pipeline';
+import { planDocuBeats } from './docuPlanner';
 import { detectSilence } from './silence';
 import { AUTO_INFO, planSfx, type AutoKind } from './sfxPlan';
 import { runtime } from './store';
 import { synthLoop, synthSfx } from './synth';
-import { coverage, defaultSegments, dropSlivers, keptMs, subtractRanges, type Range } from './timeline';
+import { coverage, defaultSegments, dropSlivers, isKept, keptMs, subtractRanges, type Range } from './timeline';
 import { transcribe } from './transcribe';
 import type { Project, Segment, Settings } from './types';
 
@@ -28,6 +29,7 @@ export const AGENT_STEPS = [
   'Removing false starts and silent pauses...',
   'Scoring punchlines with meme sounds...',
   'Applying retention speed...',
+  'Adding documentary typography...',
 ] as const;
 
 export interface AgentPlan {
@@ -44,6 +46,8 @@ export interface AgentPlan {
   /** Music level under the voice (dB, negative). */
   bgmLevelDb: number;
   normalize: boolean;
+  /** Documentary typography beats (black screen, split card, quote) on the strongest moments. */
+  docu: boolean;
   /** Extra ranges to drop, chosen by the LLM from the transcript. */
   dropRanges: Range[];
   /** Short line the assistant says about what it understood. */
@@ -60,6 +64,7 @@ export interface AgentStats {
   sfx: number;
   bgmSections: number;
   speed: number;
+  docuBeats: number;
   warnings: string[];
 }
 
@@ -88,7 +93,8 @@ export function localPlan(prompt: string): { plan: AgentPlan; understood: boolea
   const meme = has(t, /\b(meme|memes|sfx|sound effects?|funny|vine|boom|laugh|bruh|joke|comedy|punchlines?)\b/);
   const studio = has(t, /\b(studio|podcast|polish|professional|clean)\b/);
   const music = has(t, /\b(bgm|music|background|lofi|ambient|studio|podcast)\b/);
-  const understood = fast || retakes || meme || studio || music;
+  const docu = has(t, /\b(docu|documentary|typography|vox|keynote|kinetic|split ?screen|black ?screen|explainer|johnny harris)\b/);
+  const understood = fast || retakes || meme || studio || music || docu;
   const plan: AgentPlan = {
     speed: fast ? 1.1 : 1,
     silenceMinMs: fast ? 400 : studio ? 700 : !understood ? 700 : 0,
@@ -99,6 +105,7 @@ export function localPlan(prompt: string): { plan: AgentPlan; understood: boolea
     bgm: music || (meme && fast),
     bgmLevelDb: studio ? -26 : -20,
     normalize: studio,
+    docu,
     dropRanges: [],
     reply: '',
     source: 'local',
@@ -123,9 +130,9 @@ function transcriptText(words: CapWord[], maxWords = 5000): string {
 }
 
 const SYSTEM = `You plan edits for a podcast/video editor. Do NOT use any tools, do NOT read or write files. Reply with ONE JSON object only, no markdown, no other text:
-{"speed":1.0-1.3,"silenceMinMs":0 or 300-1500,"retakes":bool,"fillers":bool,"meme":bool,"memeMax":0-20,"bgm":bool,"bgmLevelDb":-30..-12,"normalize":bool,
+{"speed":1.0-1.3,"silenceMinMs":0 or 300-1500,"retakes":bool,"fillers":bool,"meme":bool,"memeMax":0-20,"bgm":bool,"bgmLevelDb":-30..-12,"normalize":bool,"docu":bool,
 "dropRanges":[{"startMs":int,"endMs":int}],"reply":"one short sentence on what you will do"}
-speed 1.1 = fast paced. silenceMinMs 400 = very tight. dropRanges = parts of the transcript to delete (failed takes, rambling the user asked to cut). Times are in milliseconds (the transcript shows seconds).`;
+docu = true when the user wants documentary / Vox / typography style cards and black-screen moments. speed 1.1 = fast paced. silenceMinMs 400 = very tight. dropRanges = parts of the transcript to delete (failed takes, rambling the user asked to cut). Times are in milliseconds (the transcript shows seconds).`;
 
 /** Reads the JSON plan out of the AI's answer. Null if it is not a usable plan. */
 export function parsePlanJson(text: string, durationMs: number): Partial<AgentPlan> | null {
@@ -142,7 +149,7 @@ export function parsePlanJson(text: string, durationMs: number): Partial<AgentPl
     silenceMinMs: o.silenceMinMs ? clamp(o.silenceMinMs, 300, 1500, 700) : 0,
     retakes: !!o.retakes, fillers: !!o.fillers, meme: !!o.meme,
     memeMax: Math.round(clamp(o.memeMax, 0, 20, 8)), bgm: !!o.bgm,
-    bgmLevelDb: clamp(o.bgmLevelDb, -30, -12, -20), normalize: !!o.normalize,
+    bgmLevelDb: clamp(o.bgmLevelDb, -30, -12, -20), normalize: !!o.normalize, docu: !!o.docu,
     dropRanges: drops, reply: typeof o.reply === 'string' ? o.reply.slice(0, 200) : '', source: 'llm',
   };
 }
@@ -257,6 +264,7 @@ export function findRetakes(words: CapWord[], opt: { retakes: boolean; fillers: 
 
 // ------------------------------------------------------------------ helpers
 
+
 /** Audio that starts at timeline 0 (the Host video is already there; Constant is shifted by the sync offset). */
 function timelinePcm(p: Project, src: Float32Array, role: 'host' | 'constant'): Float32Array {
   if (role === 'host') return src;
@@ -370,7 +378,7 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
       warnings.push(`Whistle could not run (${r.errors[0] ?? 'failed'}).`);
     }
   };
-  if (plan.retakes || plan.meme || input.useAntigravity) await ensureWords();
+  if (plan.retakes || plan.meme || plan.docu || input.useAntigravity) await ensureWords();
 
   if (input.useAntigravity) {
     step(0, 'run', 'Asking Antigravity...');
@@ -379,7 +387,7 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
     } catch (e) {
       warnings.push(`Antigravity: ${(e as Error).message || 'no answer'}. The built-in rules were used instead.`);
     }
-    if (plan.retakes || plan.meme) await ensureWords();
+    if (plan.retakes || plan.meme || plan.docu) await ensureWords();
   }
   if (!plan.reply) {
     const bits: string[] = [];
@@ -388,6 +396,7 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
     if (plan.retakes) bits.push('retakes and stutters out');
     if (plan.meme) bits.push('meme sounds');
     if (plan.bgm) bits.push('background music');
+    if (plan.docu) bits.push('documentary typography');
     plan.reply = lp.understood || plan.source === 'llm'
       ? `On it: ${bits.join(', ') || 'a light clean-up'}.`
       : "I wasn't sure what you meant, so I did a safe clean-up: pauses and retakes.";
@@ -489,13 +498,30 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
   } else step(3, 'skip');
   if (plan.normalize) p.normalize = true;
 
+  // ---- step 4: documentary typography beats. Times stay in project time like texts and captions (the export maps them through the kept parts),
+  // so only words that are still kept are shown to the director and every beat has to start inside a kept part.
+  let docuN = 0;
+  if (plan.docu) {
+    step(4, 'run');
+    try {
+      if (!words.length) throw new Error('no transcript, so no moments could be picked');
+      const kept = words.filter((w) => isKept(p.segments, w.s));
+      const r = await planDocuBeats(kept, p.aspect, p.durationMs, !!input.useAntigravity);
+      p.docu = r.beats.filter((b) => isKept(p.segments, b.start));
+      docuN = p.docu.length;
+      if (r.note) warnings.push(r.note);
+      if (!docuN) warnings.push('No strong moments were found for documentary typography.');
+    } catch (e) { warnings.push(`Documentary typography skipped: ${(e as Error).message || 'failed'}`); }
+    step(4, docuN ? 'done' : 'skip');
+  } else step(4, 'skip');
+
   const after = outputMs(p.segments);
   return {
     project: p,
     plan,
     stats: {
       lengthBeforeMs: before, lengthAfterMs: after, silenceMs, retakes: retakeN, fillers: fillerN,
-      sfx: sfxN, bgmSections: bgmN, speed: plan.speed, warnings,
+      sfx: sfxN, bgmSections: bgmN, speed: plan.speed, docuBeats: docuN, warnings,
     },
   };
 }

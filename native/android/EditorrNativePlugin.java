@@ -1784,6 +1784,159 @@ public class EditorrNativePlugin extends Plugin {
         }
     }
 
+    /**
+     * Documentary typography beats (see src/core/docuRenderer.ts, which draws the same thing in the preview).
+     * One full-frame bitmap per beat: a dark cover with a rounded window cut out for the talking head, and the text card.
+     * Times come in as timeline ms and are mapped to output time through the kept parts (ra / rb) and their speeds (sp).
+     */
+    private static final class DocuOverlay extends BitmapOverlay {
+        private final int w, h;
+        private final List<JSONObject> beats = new ArrayList<>();
+        private final List<long[]> times = new ArrayList<>(); // output start, output end
+        private long lastKey = -2;
+        private Bitmap lastBmp;
+
+        private DocuOverlay(int w, int h) { this.w = w; this.h = h; }
+
+        static DocuOverlay create(JSONArray arr, int w, int h, long[] ra, long[] rb, float[] sp) {
+            if (arr == null || arr.length() == 0) return null;
+            DocuOverlay o = new DocuOverlay(w, h);
+            long[] cum = new long[ra.length];
+            long run = 0;
+            for (int i = 0; i < ra.length; i++) { cum[i] = run; run += Math.round((rb[i] - ra[i]) / (double) sp[i]); }
+            for (int bi = 0; bi < arr.length(); bi++) {
+                JSONObject b = arr.optJSONObject(bi);
+                if (b == null) continue;
+                long s = Math.round(b.optDouble("s", 0)), e = Math.round(b.optDouble("e", 0));
+                long os = -1, oe = -1;
+                for (int i = 0; i < ra.length; i++) {
+                    if (os < 0 && s >= ra[i] && s < rb[i]) os = cum[i] + Math.round((s - ra[i]) / (double) sp[i]);
+                    if (e > ra[i] && e <= rb[i]) oe = cum[i] + Math.round((e - ra[i]) / (double) sp[i]);
+                }
+                if (os < 0) continue;
+                if (oe <= os) oe = os + Math.max(300, e - s);
+                o.beats.add(b);
+                o.times.add(new long[] { os, oe });
+            }
+            return o.beats.isEmpty() ? null : o;
+        }
+
+        @Override
+        public Bitmap getBitmap(long presentationTimeUs) throws VideoFrameProcessingException {
+            long tc = presentationTimeUs / 1000;
+            int bi = -1;
+            for (int i = 0; i < times.size(); i++) { if (tc >= times.get(i)[0] && tc < times.get(i)[1]) { bi = i; break; } }
+            long key = -1;
+            if (bi >= 0) {
+                long fade = Math.max(1, Math.round(beats.get(bi).optDouble("fadeMs", 250)));
+                long into = tc - times.get(bi)[0];
+                key = (long) bi * 64 + (into < fade ? 1 + (into * 20 / fade) : 0);
+            }
+            if (key == lastKey && lastBmp != null) return lastBmp;
+            Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            if (bi >= 0) {
+                JSONObject b = beats.get(bi);
+                long fade = Math.max(1, Math.round(b.optDouble("fadeMs", 250)));
+                float a = (float) Math.max(0, Math.min(1, (tc - times.get(bi)[0]) / (double) fade));
+                if (a > 0f) draw(new Canvas(bmp), b, a);
+            }
+            lastKey = key;
+            lastBmp = bmp;
+            return bmp;
+        }
+
+        private static int theme(String t, boolean card) {
+            if ("investigative".equals(t)) return card ? Color.rgb(22, 28, 38) : Color.rgb(16, 20, 27);
+            if ("modern".equals(t)) return card ? Color.rgb(28, 28, 36) : Color.rgb(20, 20, 26);
+            return card ? Color.rgb(18, 18, 22) : Color.rgb(10, 10, 12);
+        }
+
+        private static void rrect(Canvas c, Paint p, JSONObject r, float rad) {
+            float x = (float) r.optDouble("x", 0), y = (float) r.optDouble("y", 0);
+            float ww = (float) r.optDouble("w", 0), hh = (float) r.optDouble("h", 0);
+            float k = Math.max(0f, Math.min(rad, Math.min(ww / 2f, hh / 2f)));
+            c.drawRoundRect(new RectF(x, y, x + ww, y + hh), k, k, p);
+        }
+
+        private static List<String> wrap(Paint p, String text, float maxW, int maxLines) {
+            List<String> lines = new ArrayList<>();
+            String cur = "";
+            for (String word : text.trim().split("\\s+")) {
+                if (word.isEmpty()) continue;
+                String t = cur.isEmpty() ? word : cur + " " + word;
+                if (!cur.isEmpty() && p.measureText(t) > maxW) { lines.add(cur); cur = word; } else cur = t;
+            }
+            if (!cur.isEmpty()) lines.add(cur);
+            return lines.size() > maxLines ? new ArrayList<String>(lines.subList(0, maxLines)) : lines;
+        }
+
+        private void draw(Canvas c, JSONObject b, float a) {
+            String type = b.optString("type", "split_screen");
+            String th = b.optString("theme", "noir");
+            int accent = CaptionOverlay.css(b.optString("accent", "#C6F277"), Color.rgb(198, 242, 119));
+            float radius = (float) b.optDouble("radius", 20);
+            int alpha = Math.round(a * 255f);
+            Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+            JSONObject video = b.optJSONObject("video"), card = b.optJSONObject("card");
+            RectF area = new RectF(0, 0, w, h);
+            boolean center = !"split_screen".equals(type) || card == null;
+            if ("kinetic_quote".equals(type)) {
+                p.setColor(Color.BLACK); p.setAlpha(Math.round(a * 0.62f * 255f));
+                c.drawRect(0, 0, w, h, p);
+            } else if ("black_screen".equals(type)) {
+                p.setColor(theme(th, false)); p.setAlpha(alpha);
+                c.drawRect(0, 0, w, h, p);
+            } else if (video != null && card != null) {
+                p.setColor(theme(th, false)); p.setAlpha(alpha);
+                c.drawRect(0, 0, w, h, p);
+                // window for the talking head
+                p.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR));
+                rrect(c, p, video, radius);
+                p.setXfermode(null);
+                p.setColor(theme(th, true)); p.setAlpha(alpha);
+                rrect(c, p, card, radius);
+                area = new RectF((float) card.optDouble("x", 0), (float) card.optDouble("y", 0),
+                        (float) (card.optDouble("x", 0) + card.optDouble("w", w)), (float) (card.optDouble("y", 0) + card.optDouble("h", h)));
+            }
+            String headline = b.optString("headline", "").toUpperCase();
+            String sub = b.optString("subtext", "");
+            if (headline.isEmpty()) return;
+            float shortSide = Math.min(w, h);
+            float headSize = Math.round(shortSide * (center ? 0.085f : 0.062f));
+            float subSize = Math.round(shortSide * (center ? 0.034f : 0.03f));
+            float pad = shortSide * 0.04f;
+            float bar = Math.max(4f, Math.round(shortSide * 0.006f));
+            float aw = area.width(), ah = area.height();
+            float textX = center ? area.left + aw / 2f : area.left + pad + bar * 2.5f;
+            float maxW = center ? aw * 0.86f : aw - pad * 2f - bar * 2.5f;
+            Paint tp = new Paint(Paint.ANTI_ALIAS_FLAG);
+            tp.setTextAlign(center ? Paint.Align.CENTER : Paint.Align.LEFT);
+            tp.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+            tp.setTextSize(headSize);
+            tp.setFakeBoldText(true);
+            List<String> head = wrap(tp, headline, maxW, 4);
+            Paint sp2 = new Paint(Paint.ANTI_ALIAS_FLAG);
+            sp2.setTextAlign(center ? Paint.Align.CENTER : Paint.Align.LEFT);
+            sp2.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+            sp2.setTextSize(subSize);
+            List<String> subs = sub.isEmpty() ? new ArrayList<String>() : wrap(sp2, sub, maxW, 4);
+            float headH = head.size() * headSize * 1.12f, subH = subs.size() * subSize * 1.35f;
+            float gap = subs.isEmpty() ? 0f : headSize * 0.45f;
+            float total = headH + gap + subH;
+            float y = area.top + (ah - total) / 2f;
+            if (!center) {
+                Paint bp = new Paint(Paint.ANTI_ALIAS_FLAG);
+                bp.setColor(accent); bp.setAlpha(alpha);
+                c.drawRect(area.left + pad, y, area.left + pad + bar, y + total, bp);
+            }
+            tp.setColor(Color.WHITE); tp.setAlpha(alpha);
+            for (String ln : head) { c.drawText(ln, textX, y + headSize * 0.86f, tp); y += headSize * 1.12f; }
+            y += gap;
+            sp2.setColor(center ? accent : Color.rgb(167, 176, 190)); sp2.setAlpha(alpha);
+            for (String ln : subs) { c.drawText(ln, textX, y + subSize * 0.95f, sp2); y += subSize * 1.35f; }
+        }
+    }
+
     private static class Seg {
         long start, end;
         String style, main, corner, size;
@@ -1946,6 +2099,7 @@ public class EditorrNativePlugin extends Plugin {
             final String bgmUri = call.getString("bgmUri");
             final JSONArray overlaysJson = call.getData().optJSONArray("overlays");
             final JSONArray textsJson = call.getData().optJSONArray("texts");
+            final JSONArray docuJson = call.getData().optJSONArray("docu");
             final float gain = (float) Math.max(0.0, Math.min(10.0, call.getDouble("gain", 1.0)));
             // Enhanced Audio: EQ + de-esser + compressor + limiter on the audio-source mic ("voice") and on the final mix ("master")
             final JSONObject fxJson = call.getData().optJSONObject("fx");
@@ -1970,13 +2124,13 @@ public class EditorrNativePlugin extends Plugin {
             final long durationMs = durationRaw;
             cancelProxyJobs();
             exportHandler().post(() ->
-                    startTransformer(call, hostUri, constUri, cleanAudioUri, captionsJson, textsJson, bgmUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate, voiceFx, masterFx, overlaysJson));
+                    startTransformer(call, hostUri, constUri, cleanAudioUri, captionsJson, textsJson, docuJson, bgmUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate, voiceFx, masterFx, overlaysJson));
         } catch (JSONException e) {
             call.reject("Bad export request: " + e.getMessage());
         }
     }
 
-    private void startTransformer(PluginCall call, String hostUri, String constUri, String cleanAudioUri, JSONObject captionsJson, JSONArray textsJson, String bgmUri, long offsetMs, long durationMs,
+    private void startTransformer(PluginCall call, String hostUri, String constUri, String cleanAudioUri, JSONObject captionsJson, JSONArray textsJson, JSONArray docuJson, String bgmUri, long offsetMs, long durationMs,
                                   int outW, int outH, boolean hostAudio, List<Seg> segs,
                                   CropSpec cropHost, CropSpec cropConst, boolean mirrorHost, boolean mirrorConst,
                                   float gain, int fps, int bitrate, FxCfg voiceFx, FxCfg masterFx, JSONArray overlaysJson) {
@@ -2023,6 +2177,9 @@ public class EditorrNativePlugin extends Plugin {
             final CaptionOverlay captionOverlay = captionsJson == null ? null : CaptionOverlay.create(captionsJson, outW, outH, capRa, capRb, capSp);
             // free text pieces (Text > Add text): one overlay each, drawn above the captions
             final List<TextureOverlay> overlayList = new ArrayList<>();
+            // documentary typography beats sit under captions and texts
+            final DocuOverlay docuOverlay = DocuOverlay.create(docuJson, outW, outH, capRa, capRb, capSp);
+            if (docuOverlay != null) overlayList.add(docuOverlay);
             if (captionOverlay != null) overlayList.add(captionOverlay);
             for (int ti = 0; textsJson != null && ti < textsJson.length(); ti++) {
                 JSONObject tj = textsJson.optJSONObject(ti);

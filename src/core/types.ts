@@ -208,6 +208,8 @@ export interface Project {
   fx?: import('./fx').FxState;
   /** Words with times found by the AI Agent when the project has no captions (kept apart so no captions show up on the video). */
   agentWords?: import('./captions').CaptionData;
+  /** Documentary typography beats (black screen, split card, quote) at timeline time. */
+  docu?: import('./docuTypes').DocuBeat[];
   /** the sound designer already ran on this project */
   autoSoundDone?: boolean;
   /** small jpeg data URL for Home */
