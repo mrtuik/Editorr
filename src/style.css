@@ -1687,3 +1687,71 @@ input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-webkit-s
 .at-back, .at-sheet .at-back, .at-sheet.fz .at-back { background: transparent !important; border: 0 !important; box-shadow: none !important; }
 .at-sheet.cs .at-body { padding: 0 16px 8px; }
 .at-sheet.cs .ts-tabs { padding-left: 0; padding-right: 0; }
+
+/* ======================================================================
+   Controls, one look everywhere
+   slider = label | value box | thick rounded track with a white handle
+   toggle = label + switch, 3+ options = small dots
+   ====================================================================== */
+html body input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input) {
+  -webkit-appearance: none !important; appearance: none !important;
+  height: 22px !important; border-radius: 11px !important; background: #2c2c2f !important;
+  overflow: hidden !important; margin: 0; padding: 0; accent-color: #8e8e91;
+}
+html body input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-webkit-slider-runnable-track {
+  height: 22px !important; background: transparent !important; border-radius: 0 !important; border: 0 !important;
+}
+html body input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-webkit-slider-thumb {
+  -webkit-appearance: none !important; appearance: none !important;
+  width: 10px !important; height: 22px !important; margin-top: 0 !important; border-radius: 5px !important;
+  background: #fff !important; border: 0 !important; box-shadow: -900px 0 0 900px #8e8e91 !important;
+}
+html body input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-moz-range-track { height: 22px; background: transparent; }
+html body input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-moz-range-progress { height: 22px; background: #8e8e91; }
+html body input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-moz-range-thumb { width: 10px; height: 22px; border: 0; border-radius: 5px; background: #fff; }
+html body input[type=range]:disabled { opacity: .4; }
+
+.rs { display: grid; grid-template-columns: minmax(70px, 30%) 72px 1fr; align-items: center; gap: 10px; min-height: 44px; margin-top: 8px; }
+.rs-l { color: #9a9a9e; font-size: 14px; line-height: 1.15; }
+.rs-val { display: flex; align-items: baseline; justify-content: center; gap: 3px; height: 34px; border-radius: 9px; background: #232326; padding: 0 6px; align-self: center; line-height: 34px; overflow: hidden; }
+.rs-val b { color: #fff; font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.rs-val i { color: #6f6f73; font-size: 12px; font-style: normal; }
+.panel .pval, .fz-sl-row b, .ts-slide b { background: #232326; border-radius: 8px; padding: 5px 8px; min-width: 48px; text-align: center; color: #fff !important; font-size: 13px; }
+
+.tg-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 46px; padding: 6px 12px; margin-top: 8px; border-radius: 12px; background: #232326; cursor: pointer; }
+.tg-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; }
+.tg-l { color: #fff; font-size: 15px; }
+.tg-note { color: #8d8d90; font-size: 13px; }
+.tg-h { flex-basis: 100%; color: #7d7d81; font-size: 12px; }
+.tg-row .fx-switch { width: 42px; height: 24px; border-radius: 12px; padding: 3px; }
+.tg-row .fx-switch i { width: 18px; height: 18px; }
+.tg-row .fx-switch.on i { transform: translateX(18px); }
+
+.sg-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; min-height: 46px; margin-top: 8px; }
+.sg-text { display: flex; flex-direction: column; min-width: 0; }
+.sg-dots { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
+.sg-d { flex: none; width: 14px; height: 14px; padding: 0; border: 0; border-radius: 5px; background: #3a3a3d; color: #000; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.sg-d.on { min-width: 34px; width: auto; height: 30px; padding: 0 11px; border-radius: 9px; background: #e9e9ea; }
+.at-sec > .tg-row:first-child, .at-sec > .sg-row:first-child, .srow > .tg-row:first-child, .srow > .sg-row:first-child { margin-top: 0; }
+
+/* ---- text editor: a calm small input, smaller cards ---- */
+.ts-top { gap: 6px; padding: 0 12px 6px; }
+.ts-field { height: 38px !important; padding: 0 12px !important; border-radius: 10px !important; background: #2a2a2c !important; box-shadow: none !important; }
+.ts-field::before, .ts-field::after { content: none !important; }
+.ts-input, .ts-field input { height: 100% !important; padding: 0 !important; margin: 0 !important; background: transparent !important; border: 0 !important; box-shadow: none !important; border-radius: 0 !important; font-size: 16px !important; }
+.ts-ok, .ts-del { width: 38px !important; height: 38px !important; border-radius: 10px !important; }
+.ts-tab { font-size: 14px; padding: 6px 0 9px; }
+.ts-tabs { gap: 18px; }
+.ts-body { padding: 10px 14px 16px; }
+.fx-grid { grid-template-columns: repeat(5, 1fr) !important; gap: 7px !important; }
+.fx-tile { font-size: 10.5px; gap: 3px; }
+.fx-tile .fx-cv { border-radius: 8px; border-width: 1.5px; }
+.ts-look { width: 62px; height: 40px; border-radius: 8px; }
+.ts-sub { min-height: 28px; padding: 0 11px; font-size: 13px; border-radius: 14px; }
+.ts-circle { width: 30px; height: 30px; }
+.dt-grid { grid-template-columns: repeat(4, 1fr); gap: 7px; }
+.dt-tile { padding: 4px; border-radius: 11px; }
+.dt-name { font-size: 10.5px; }
+.dt-sub { display: none; }
+.dt-aa { font-size: 24px; }
+.at-sheet .at-sec { margin-top: 10px; }

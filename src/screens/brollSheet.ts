@@ -10,7 +10,7 @@ import {
 import { isNative, youtubeAvailable } from '../core/native';
 import { uid } from '../core/speaker';
 import type { Project } from '../core/types';
-import { fmtTime, h, icon, toast } from '../ui';
+import { fmtTime, h, icon, toast, slider as uiSlider, optionRow } from '../ui';
 
 
 export interface BrollCtx {
@@ -33,17 +33,11 @@ export interface BrollPane { el: HTMLElement; dispose: () => void; select: (id: 
 function fill(el: HTMLElement, ...kids: (Node | null | undefined | false)[]) { el.replaceChildren(...(kids.filter(Boolean) as Node[])); }
 
 function slider(label: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, onInput: (v: number) => void): HTMLElement {
-  const val = h('b', {}, fmt(value));
-  const r = h('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(value), class: 'at-range', 'aria-label': label }) as HTMLInputElement;
-  r.addEventListener('input', () => { const v = Number(r.value); val.textContent = fmt(v); onInput(v); });
-  return h('div', { class: 'at-sec' }, h('div', { class: 'at-label-row' }, h('div', { class: 'at-label' }, label), val), r);
+  return uiSlider(label, min, max, step, value, fmt, onInput);
 }
 
 function chipRow<T extends string>(label: string, opts: [T, string][], value: T, onPick: (v: T) => void): HTMLElement {
-  const row = h('div', { class: 'schips' });
-  const render = (cur: T) => row.replaceChildren(...opts.map(([v, l]) => h('button', { class: 'chip' + (v === cur ? ' on' : ''), onclick: () => { onPick(v); render(v); } }, l)));
-  render(value);
-  return h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, label), row);
+  return optionRow(label, opts, value, onPick);
 }
 
 type SearchKind = 'photo' | 'video' | 'youtube' | 'article';

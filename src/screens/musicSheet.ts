@@ -1,5 +1,5 @@
 import type { Project } from '../core/types';
-import { h, icon, fmtClock, toast } from '../ui';
+import { h, icon, fmtClock, toast, slider as uiSlider } from '../ui';
 import { mountSoundBrowser, sbBtn, sbRow, stopSound, type ExtraTab } from './soundBrowser';
 import { MOOD_LABEL, type Mood, type MusicLang } from '../core/mood';
 
@@ -42,10 +42,7 @@ export interface MusicCtx {
 type MusicSettings = { musicLevelDb?: number; musicDuckDb?: number; musicFadeMs?: number; musicClipDb?: number; musicClipDuck?: boolean; musicLang?: MusicLang; sfxLevel?: number };
 
 function slider(label: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, on: (v: number) => void): HTMLElement {
-  const val = h('b', {}, fmt(value));
-  const r = h('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(value), class: 'at-range', 'aria-label': label }) as HTMLInputElement;
-  r.addEventListener('input', () => { const v = Number(r.value); val.textContent = fmt(v); on(v); });
-  return h('div', { class: 'at-sec' }, h('div', { class: 'at-label-row' }, h('div', { class: 'at-label' }, label), val), r);
+  return uiSlider(label, min, max, step, value, fmt, on);
 }
 function pick(multiple: boolean, onFiles: (f: File[]) => void) {
   const input = h('input', { type: 'file', accept: 'audio/*', ...(multiple ? { multiple: 'true' } : {}), style: 'display:none' }) as HTMLInputElement;

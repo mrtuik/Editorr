@@ -3,7 +3,7 @@ import {
   type FxChain, type FxTarget,
 } from '../core/fx';
 import type { Project } from '../core/types';
-import { confirmDialog, h, icon, paintRange, promptDialog, toast } from '../ui';
+import { confirmDialog, h, icon, paintRange, promptDialog, toast, slider as uiSlider } from '../ui';
 
 export interface FxCtx {
   p: Project;
@@ -43,11 +43,7 @@ function switchEl(on: boolean, toggle: (v: boolean) => void, label: string): HTM
 }
 
 function slider(label: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, onInput: (v: number) => void): HTMLElement {
-  const val = h('b', {}, fmt(value));
-  const r = h('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(value), class: 'at-range', 'aria-label': label }) as HTMLInputElement;
-  paintRange(r);
-  r.addEventListener('input', () => { const v = Number(r.value); val.textContent = fmt(v); paintRange(r); onInput(v); });
-  return h('div', { class: 'fz-sl' }, h('div', { class: 'fz-sl-row' }, h('span', {}, label), val), r);
+  return uiSlider(label, min, max, step, value, fmt, onInput);
 }
 
 /** Section card with a title, an optional switch and a one-line hint. */

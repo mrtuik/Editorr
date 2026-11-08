@@ -9,7 +9,7 @@ import {
 import { uid } from '../core/speaker';
 import { buildBrollPane, type BrollPane } from './brollSheet';
 import type { Project } from '../core/types';
-import { h, icon, toast } from '../ui';
+import { h, icon, toast, slider as uiSlider, optionRow } from '../ui';
 
 export interface DocuCtx {
   p: Project;
@@ -33,21 +33,11 @@ const THEME_CARD_HEX = { noir: '#121216', investigative: '#161C26', modern: '#1C
 const POS_LABEL: Record<DocuPos, string> = { left: 'Video left', right: 'Video right', top: 'Video top', bottom: 'Video bottom' };
 
 function slider(label: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, onInput: (v: number) => void): HTMLElement {
-  const val = h('b', {}, fmt(value));
-  const r = h('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(value), class: 'at-range', 'aria-label': label }) as HTMLInputElement;
-  r.addEventListener('input', () => { const v = Number(r.value); val.textContent = fmt(v); onInput(v); });
-  return h('div', { class: 'at-sec' }, h('div', { class: 'at-label-row' }, h('div', { class: 'at-label' }, label), val), r);
+  return uiSlider(label, min, max, step, value, fmt, onInput);
 }
 
-function chipRow<T extends string>(label: string, opts: [T, string][], value: T, onPick: (v: T) => void, disabled = false): HTMLElement {
-  const row = h('div', { class: 'schips' });
-  const render = (cur: T) => row.replaceChildren(...opts.map(([v, l]) => {
-    const b = h('button', { class: 'chip' + (v === cur ? ' on' : ''), onclick: () => { onPick(v); render(v); } }, l) as HTMLButtonElement;
-    b.disabled = disabled;
-    return b;
-  }));
-  render(value);
-  return h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, label), row);
+function chipRow<T extends string>(label: string, opts: [T, string][], value: T, onPick: (v: T) => void, _disabled = false): HTMLElement {
+  return optionRow(label, opts, value, onPick);
 }
 
 /**

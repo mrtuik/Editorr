@@ -1,16 +1,11 @@
 import { app } from '../app';
 import { saveSettings } from '../core/store';
 import type { Sensitivity } from '../core/types';
-import { h, icon } from '../ui';
+import { h, icon, optionRow } from '../ui';
 
 /** Label (+ hint) on top, chips below. Used in Settings and in the auto edit sheet. */
 export function option<T extends string | number>(label: string, hint: string, opts: [T, string][], value: T, onPick: (v: T) => void) {
-  const chips = h('div', { class: 'schips' });
-  const render = (cur: T) => {
-    chips.replaceChildren(...opts.map(([v, l]) => h('button', { class: 'chip' + (v === cur ? ' on' : ''), onclick: () => { onPick(v); render(v); } }, l)));
-  };
-  render(value);
-  return h('div', { class: 'srow' }, h('div', { class: 'slabel' }, label), hint ? h('div', { class: 'sdesc' }, hint) : null, chips);
+  return h('div', { class: 'srow' }, optionRow(label, opts, value, onPick, hint || undefined));
 }
 
 type Ic = Parameters<typeof icon>[0];

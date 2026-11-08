@@ -41,7 +41,7 @@ import {
   moveBoundary, nextKeptStart, overlapDuration, segmentAt, splitAt, subtractRanges, updateSegment, type Range,
 } from '../core/timeline';
 import { Aspect, ASPECTS, aspectValue, Corner, CropRatio, CropState, LayoutStyle, NO_CROP, PopupSize, Project, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
-import { confirmDialog, fmtClock, h, ICON, icon, iconButton, spinner, toast } from '../ui';
+import { confirmDialog, fmtClock, h, ICON, icon, iconButton, segDots, spinner, toast, toggle } from '../ui';
 import { pickVideosCapcut } from './mediaPicker';
 import type { OverlayClip } from '../core/types';
 
@@ -1405,7 +1405,7 @@ export function editorScreen() {
       const a = xOf(pg.s), b = xOf(pg.e);
       if (b < G || a > W) continue;
       const w = Math.max(10, b - a - 1);
-      rrect(g, a, R.cap.y, w, R.cap.h, 6); g.fillStyle = '#1b2a14'; g.fill();
+      clipBody(g, a, R.cap.y, w, R.cap.h);
       g.save();
       g.beginPath(); g.rect(Math.max(a, G), R.cap.y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), R.cap.h); g.clip();
       g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
@@ -1423,8 +1423,7 @@ export function editorScreen() {
       if (b < G || a > W) return;
       {
         const y = R.text!.y + R.pt.line[n]! * (SUB_T + 3), w = Math.max(16, b - a);
-        rrect(g, a + 0.5, y + 0.5, w - 1, SUB_T - 1, 6); g.fillStyle = '#17131f'; g.fill();
-        g.strokeStyle = '#8b5fd6'; g.lineWidth = 1; g.stroke();
+        clipBody(g, a, y, w, SUB_T);
         g.save();
         g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
         g.fillStyle = '#8b5fd6'; g.beginPath(); g.arc(a + 8, y + SUB_T / 2, 2.6, 0, 6.3); g.fill();
@@ -1436,8 +1435,13 @@ export function editorScreen() {
     });
     g.restore();
   }
+  /** One look for every layer clip: a dark rounded card with a thin outline (selected: white). */
+  function clipBody(g: CanvasRenderingContext2D, a: number, y: number, w: number, hh: number) {
+    rrect(g, a + 0.5, y + 0.5, w - 1, hh - 1, 8); g.fillStyle = '#2b2b2e'; g.fill();
+    g.strokeStyle = '#505054'; g.lineWidth = 1; g.stroke();
+  }
   function layOutline(g: CanvasRenderingContext2D, a: number, y: number, w: number, hh: number) {
-    rrect(g, a + 0.75, y + 0.75, w - 1.5, hh - 1.5, 6); g.strokeStyle = '#ffffff'; g.lineWidth = 1.6; g.stroke();
+    rrect(g, a + 1, y + 1, w - 2, hh - 2, 8); g.strokeStyle = '#ffffff'; g.lineWidth = 2; g.stroke();
   }
   function drawDocuRow(g: CanvasRenderingContext2D) {
     const R = rowsNow; if (!R.docu) return;
@@ -1447,12 +1451,12 @@ export function editorScreen() {
       const a = xOf(d.start), b = xOf(d.end);
       if (b < G || a > W) return;
       const y = R.docu!.y + R.pd.line[n]! * (SUB_T + 3), w = Math.max(16, b - a);
-      pill(g, a, y, w, SUB_T, d.accent_color && d.style?.template ? '#3b2a4d' : '#3b2a4d', '');
+      clipBody(g, a, y, w, SUB_T);
       g.save();
       g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
-      g.fillStyle = d.accent_color; g.fillRect(a, y + 5, 3, SUB_T - 10);
+      g.fillStyle = d.accent_color; g.beginPath(); g.arc(a + 8, y + SUB_T / 2, 2.6, 0, 6.3); g.fill();
       g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-      g.fillText(d.headline || 'Beat', Math.max(a, G) + 9, y + SUB_T / 2 + 0.5);
+      g.fillText(d.headline || 'Beat', a + 15, y + SUB_T / 2 + 0.5);
       g.restore();
       if (laySel?.kind === 'docu' && laySel.id === d.id) layOutline(g, a, y, w, SUB_T);
     });
@@ -1466,12 +1470,12 @@ export function editorScreen() {
       const a = xOf(bt.start), b = xOf(bt.end);
       if (b < G || a > W) return;
       const y = R.broll!.y + R.pb.line[n]! * (SUB_T + 3), w = Math.max(16, b - a);
-      pill(g, a, y, w, SUB_T, '#33481f', '');
+      clipBody(g, a, y, w, SUB_T);
       g.save();
       g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
-      g.fillStyle = '#C6F277'; g.fillRect(a, y + 5, 3, SUB_T - 10);
+      g.fillStyle = '#C6F277'; g.beginPath(); g.arc(a + 8, y + SUB_T / 2, 2.6, 0, 6.3); g.fill();
       g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-      g.fillText(`${isBrollVideo(bt) ? '\u25B6 ' : ''}${bt.keyword || bt.title}`, Math.max(a, G) + 9, y + SUB_T / 2 + 0.5);
+      g.fillText(`${isBrollVideo(bt) ? '\u25B6 ' : ''}${bt.keyword || bt.title}`, a + 15, y + SUB_T / 2 + 0.5);
       g.restore();
       if (laySel?.kind === 'broll' && laySel.id === bt.id) layOutline(g, a, y, w, SUB_T);
     });
@@ -1919,7 +1923,7 @@ export function editorScreen() {
     setPlaying(false);
     if (playMs < s0 || playMs >= e0) seek(Math.min(e0 - 1, s0 + 120));
     if (kind === 'text') { if (textHandle) textHandle.select(id); else openTexts(id); textSel = id; }
-    else openDocu(kind === 'docu' ? 'beats' : 'broll', id, kind);
+    else openDocu(kind === 'docu' ? 'beats' : 'broll', id);
     laySel = { kind, id };
     drawCaptionsPreview(); requestDraw();
   }
@@ -1937,7 +1941,7 @@ export function editorScreen() {
       const hit = layerAt(lane, x, y);
       if (hit) selectLayer(lane, hit.id, hit.s, hit.e);
       else if (lane === 'text') openTexts();
-      else openDocu(lane === 'docu' ? 'beats' : 'broll', undefined, lane);
+      else openDocu(lane === 'docu' ? 'beats' : 'broll');
       return;
     }
     if (x < G) {
@@ -3022,8 +3026,7 @@ export function editorScreen() {
         tool('autoframe', 'Autoframe', doAutoframe),
         tool('face', 'Faces', doFaces),
         tool('text', 'Text', () => openGroup('text')),
-        tool('text', 'Docu beats', () => openDocu('beats', undefined, 'docu')),
-        tool('layout', 'B-roll', () => openDocu('broll', undefined, 'broll')),
+        tool('layout', 'Docu / B-roll', () => openDocu('beats')),
         tool('reaction', 'Reaction', doReactionTool),
         tool('overlay', 'Overlay', () => { if (ovList().length) openPanel('overlay'); else void addOverlay(false); }),
         tool('punch', 'Auto zoom', doAutoZoom),
@@ -3119,7 +3122,7 @@ export function editorScreen() {
   const secText = (ms: number) => (ms >= 60000 ? fmtClock(ms) : `${(ms / 1000).toFixed(1)} s`);
 
   function chipRow<T extends string | number>(opts: [T, string][], cur: T, on: (v: T) => void): HTMLElement {
-    return h('div', { class: 'chips' }, ...opts.map(([v, l]) => h('button', { class: 'chip' + (v === cur ? ' on' : ''), onclick: () => on(v) }, l)));
+    return segDots(opts, cur, on);
   }
 
   function runDetect() {
@@ -3441,10 +3444,9 @@ export function editorScreen() {
         h('div', { class: 'prow', style: 'margin-top:10px' },
           h('div', { class: 'plabel' }, 'Sensitivity'),
           chipRow<SilenceSens>([['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], s.silenceSens, (v) => go({ silenceSens: v }))),
-        h('div', { class: 'prow', style: 'margin-top:10px' },
-          h('div', { class: 'plabel' }, 'Zoom at cuts'),
+        h('div', { style: 'margin-top:10px' },
+          toggle('Zoom at cuts', !!s.silenceZoom, (on) => go({ silenceZoom: on })),
           h('div', { class: 'chips' },
-            h('button', { class: 'chip' + (s.silenceZoom ? ' on' : ''), onclick: () => go({ silenceZoom: !s.silenceZoom }) }, s.silenceZoom ? 'On' : 'Off'),
             s.silenceZoom ? h('button', { class: 'chip', onclick: () => { void askAutoZoom(app.settings, { title: 'Zoom at cuts', hint: 'At every silence cut the picture zooms in, holds, and eases out. Set the amount, timing and the graph here.', cta: 'Save zoom' }).then(() => renderPanel()); } }, 'Zoom graph') : null)),
         applyBtn);
     }

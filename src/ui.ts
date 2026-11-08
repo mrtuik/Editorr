@@ -299,3 +299,53 @@ export function tabBar(active: TabName, go: (t: TabName) => void): HTMLElement {
   const offMe = onAccountChange(() => { if (!meBtn.isConnected) { offMe(); return; } paintMe(); });
   return h('nav', { class: 'tabbar' }, tab('edit', 'Edit', 'scissors'), tab('projects', 'Projects', 'folder'), tab('agent', 'AI Agent', brandLogo), meBtn);
 }
+
+
+// ------------------------------------------------------------------ shared controls
+// One look everywhere: slider = label | value box | slider, toggle = label + switch, 3+ options = dot picker.
+
+export function slider(label: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, onInput: (v: number) => void, disabled = false): HTMLElement {
+  const val = h('span', { class: 'rs-val' });
+  const show = (v: number) => {
+    const t = fmt(v), m = /^([+-]?[\d.,]+)\s*(.*)$/.exec(t);
+    val.replaceChildren(...(m ? [h('b', {}, m[1]!), ...(m[2] ? [h('i', {}, m[2])] : [])] : [h('b', {}, t)]));
+  };
+  show(value);
+  const r = h('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(value), class: 'at-range', 'aria-label': label }) as HTMLInputElement;
+  r.disabled = disabled;
+  r.addEventListener('input', () => { const v = Number(r.value); show(v); onInput(v); });
+  return h('div', { class: 'rs' }, h('span', { class: 'rs-l' }, label), val, r);
+}
+
+export function toggle(label: string, on: boolean, onChange: (next: boolean) => void, note?: () => string, hint?: string): HTMLElement {
+  let cur = on;
+  const sw = h('button', { class: 'fx-switch' + (cur ? ' on' : ''), role: 'switch', 'aria-checked': String(cur), 'aria-label': label }, h('i', {}));
+  const noteEl = h('span', { class: 'tg-note' }, note ? note() : '');
+  const row = h('div', { class: 'tg-row' }, h('div', { class: 'tg-text' }, h('span', { class: 'tg-l' }, label), noteEl, ...(hint ? [h('span', { class: 'tg-h' }, hint)] : [])), sw);
+  const flip = () => { cur = !cur; sw.classList.toggle('on', cur); sw.setAttribute('aria-checked', String(cur)); if (note) noteEl.textContent = note(); onChange(cur); };
+  sw.addEventListener('click', (e) => { e.stopPropagation(); flip(); });
+  row.addEventListener('click', flip);
+  return row;
+}
+
+/** 3+ options: a row of small dots; the picked one shows its name in a white pill. */
+export function segDots<T extends string | number>(opts: [T, string][], value: T, onPick: (v: T) => void): HTMLElement {
+  const dots = h('div', { class: 'sg-dots' });
+  const draw = (cur: T) => dots.replaceChildren(...opts.map(([v, l]) =>
+    h('button', { class: 'sg-d' + (v === cur ? ' on' : ''), 'aria-label': l, onclick: () => { onPick(v); draw(v); } }, v === cur ? l : '')));
+  draw(value);
+  return dots;
+}
+export function seg<T extends string | number>(label: string, opts: [T, string][], value: T, onPick: (v: T) => void, hint?: string): HTMLElement {
+  const dots = segDots(opts, value, onPick);
+  return h('div', { class: 'sg-row' }, h('div', { class: 'sg-text' }, h('span', { class: 'rs-l' }, label), ...(hint ? [h('span', { class: 'tg-h' }, hint)] : [])), dots);
+}
+
+/** A pick-one setting. Two options become a toggle (on = the second option); more become a dot picker. */
+export function optionRow<T extends string | number>(label: string, opts: [T, string][], value: T, onPick: (v: T) => void, hint?: string): HTMLElement {
+  if (opts.length === 2) {
+    let cur = value;
+    return toggle(label, cur === opts[1]![0], (on) => { cur = on ? opts[1]![0] : opts[0]![0]; onPick(cur); }, () => (cur === opts[1]![0] ? opts[1]![1] : opts[0]![1]), hint);
+  }
+  return seg(label, opts, value, onPick, hint);
+}

@@ -1,7 +1,7 @@
 import type { Settings } from '../core/types';
 import { saveSettings } from '../core/store';
 import { bezier, type ZoomShape } from '../core/autocut';
-import { h, icon } from '../ui';
+import { h, icon, slider as uiSlider } from '../ui';
 import { chips } from './faceOptions';
 
 const PRESETS: { name: string; e: number[] }[] = [
@@ -16,10 +16,7 @@ const PRESETS: { name: string; e: number[] }[] = [
 const Y0 = -0.5, Y1 = 1.5;
 
 function slider(label: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, onInput: (v: number) => void): HTMLElement {
-  const val = h('b', {}, fmt(value));
-  const r = h('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(value), class: 'at-range', 'aria-label': label }) as HTMLInputElement;
-  r.addEventListener('input', () => { const v = Number(r.value); val.textContent = fmt(v); onInput(v); });
-  return h('div', { class: 'at-sec' }, h('div', { class: 'at-label-row' }, h('div', { class: 'at-label' }, label), val), r);
+  return uiSlider(label, min, max, step, value, fmt, onInput);
 }
 
 /** Auto zoom: amount, speed in / out, hold, and a graph editor for the easing curve. Resolves with the shape, or null when closed. */

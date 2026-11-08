@@ -4,7 +4,7 @@
  * same panels edit a whole text, one caption word or all caption words.
  */
 import { DEFAULT_CAPTION_STYLE, drawCaption, FONTS, hexA, lookOf, resolveFx, type Fx, type FontId, type LookDef, type TextAnim } from '../core/captions';
-import { h } from '../ui';
+import { h, slider as uiSlider, toggle } from '../ui';
 
 export interface SliderSpec { label: string; min: number; max: number; step: number; get: () => number; set: (v: number) => void; fmt: (v: number) => string }
 
@@ -38,11 +38,7 @@ function rgbaAlpha(c: string): number {
 }
 
 export function slider(s: SliderSpec): HTMLElement {
-  const v0 = s.get();
-  const out = h('b', {}, s.fmt(v0));
-  const r = h('input', { type: 'range', class: 'at-range', min: String(s.min), max: String(s.max), step: String(s.step), value: String(v0) }) as HTMLInputElement;
-  r.addEventListener('input', () => { const v = Number(r.value); out.textContent = s.fmt(v); s.set(v); });
-  return h('div', { class: 'ts-slide' }, h('span', { class: 'ts-slide-l' }, s.label), r, out);
+  return uiSlider(s.label, s.min, s.max, s.step, s.get(), s.fmt, s.set);
 }
 
 export function colorRow(current: string, onPick: (hex: string) => void): HTMLElement {
@@ -56,9 +52,7 @@ export function colorRow(current: string, onPick: (hex: string) => void): HTMLEl
 }
 
 export function switchRow(label: string, on: boolean, onToggle: (next: boolean) => void): HTMLElement {
-  const b = h('button', { class: 'fx-switch' + (on ? ' on' : ''), role: 'switch', 'aria-checked': String(on), 'aria-label': label,
-    onclick: () => onToggle(!on) }, h('i', {}));
-  return h('div', { class: 'fx-switch-row' }, h('span', {}, label), b);
+  return toggle(label, on, onToggle);
 }
 
 /** A small picture drawn by the real caption engine, so a tile shows exactly what you will get. */

@@ -1,17 +1,12 @@
 import { app } from '../app';
 import { saveSettings } from '../core/store';
 import { Aspect, ASPECTS } from '../core/types';
-import { h, icon } from '../ui';
+import { h, icon, optionRow } from '../ui';
 
 type Opt<T> = [T, string];
 
 export function chips<T extends string>(label: string, hint: string, opts: Opt<T>[], value: T, onPick: (v: T) => void): HTMLElement {
-  const row = h('div', { class: 'schips' });
-  const render = (cur: T) => {
-    row.replaceChildren(...opts.map(([v, l]) => h('button', { class: 'chip' + (v === cur ? ' on' : ''), onclick: () => { onPick(v); render(v); } }, l)));
-  };
-  render(value);
-  return h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, label), h('div', { class: 'at-hint' }, hint), row);
+  return h('div', { class: 'at-sec' }, optionRow(label, opts, value, onPick, hint || undefined));
 }
 
 /**
