@@ -158,7 +158,7 @@ function frameImage(src: string, onLoad?: () => void): HTMLImageElement | undefi
     frameImgs.set(src, e);
     img.onload = () => { e!.ok = true; onLoad?.(); };
     img.src = src;
-    if (frameImgs.size > 24) { const k = frameImgs.keys().next().value; if (k !== undefined && k !== src) frameImgs.delete(k); }
+    if (frameImgs.size > 64) { const k = frameImgs.keys().next().value; if (k !== undefined && k !== src) frameImgs.delete(k); }
   }
   return e.ok ? e.img : undefined;
 }
@@ -166,8 +166,17 @@ function frameImage(src: string, onLoad?: () => void): HTMLImageElement | undefi
 /** Draw `beat` at timeline time `ms` on a w x h canvas (clear it first). `onLoad` redraws when a Kallaway picture has just arrived. */
 export function drawDocuFrame(g: CanvasRenderingContext2D, beat: DocuBeat, ms: number, w: number, h: number, onLoad?: () => void): void {
   if (beat.image) {
-    // finished picture (no fade: the steps of a list follow each other without a flash)
-    const im = frameImage(beat.image.path ? Capacitor.convertFileSrc('file://' + beat.image.path) : beat.image.url, onLoad);
+    // finished picture (no fade: the steps of a list follow each other without a flash).
+    // The first moments of a Kallaway beat play baked motion pictures (pop, red wipe, count-up); they are all loaded ahead of time.
+    const srcOf = (im: { url: string; path?: string }) => (im.path ? Capacitor.convertFileSrc('file://' + im.path) : im.url);
+    const fr = beat.frames, fms = beat.framesMs ?? 0;
+    let pic = beat.image;
+    if (fr?.length && fms > 0) {
+      for (const f of fr) frameImage(srcOf(f), onLoad);
+      const into = ms - beat.start;
+      if (into >= 0 && into < fms) pic = fr[Math.min(fr.length - 1, Math.floor((into / fms) * fr.length))]!;
+    }
+    const im = frameImage(srcOf(pic), onLoad) ?? (pic !== beat.image ? frameImage(srcOf(beat.image), onLoad) : undefined);
     if (im) g.drawImage(im, 0, 0, w, h);
     return;
   }
@@ -227,6 +236,7 @@ export function exportDocu(beats: DocuBeat[] | undefined, outW: number, outH: nu
       type: b.type, s: Math.round(b.start), e: Math.round(b.end), headline: b.headline, subtext: b.subtext ?? '', accent: b.accent_color, theme: b.theme,
       radius: radiusPx(b, outW, outH), fadeMs: b.image ? 1 : DOCU_FADE_MS,
       ...(b.image?.path ? { image: b.image.path } : {}),
+      ...(b.image?.path && b.frames?.length && b.framesMs && b.frames.every((f) => f.path) ? { frames: b.frames.map((f) => f.path), framesMs: Math.round(b.framesMs) } : {}),
       ...(geo ? { video: geo.video, card: geo.card } : {}),
       ...exportStyle(b, outW, outH),
     });

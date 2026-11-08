@@ -14,9 +14,11 @@ import { Directory, Filesystem } from '@capacitor/filesystem';
 import { docuGeometry } from './docuRenderer';
 import { docuLayoutFor, type DocuBeat } from './docuTypes';
 import { uid } from './speaker';
+import { motionAt, introPlan, REST, type Motion } from './kallawayMotion';
+import { sanitizeSvg, svgDataUrl } from './kallawaySvg';
 import { aspectValue, type Aspect } from './types';
 
-export type KallawayKind = 'steps' | 'script' | 'photo';
+export type KallawayKind = 'steps' | 'script' | 'photo' | 'stat' | 'quote' | 'svg';
 
 export interface KallawaySpec {
   kind: KallawayKind;
@@ -30,6 +32,12 @@ export interface KallawaySpec {
   handle: string;
   /** photo card only: the picture (data address or file address) shown in the card area */
   photo?: string;
+  /** number card: the big number ("40%", "$1.2M"), the small line under it and the trend (draws a line that climbs / falls) */
+  stat?: { big: string; label?: string; trend?: 'up' | 'down' };
+  /** quote card: the supporting line under the big two-font headline */
+  sub?: string;
+  /** svg card: the graphic (cleaned before use, see kallawaySvg.ts) */
+  svg?: string;
   /** Share of the frame the card / picture takes: 0.5 = 50-50, 0.58 = Kallaway, 0.65 = big picture. Missing = the default for the frame shape. */
   share?: number;
   /** Which side the speaker window sits on: bottom/top on a tall frame, right/left on a wide one. Missing = bottom / right. */
@@ -133,7 +141,7 @@ function blurred(g: CanvasRenderingContext2D, px: number, draw: () => void) {
   g.restore();
 }
 
-function paintSteps(g: CanvasRenderingContext2D, spec: KallawaySpec, active: number, area: { x: number; y: number; w: number; h: number }, k: number) {
+function paintSteps(g: CanvasRenderingContext2D, spec: KallawaySpec, active: number, area: { x: number; y: number; w: number; h: number }, k: number, mo: Motion) {
   const steps = spec.steps.filter((s) => s.trim()).slice(0, 5);
   const n = steps.length;
   if (!n) return;
@@ -141,24 +149,30 @@ function paintSteps(g: CanvasRenderingContext2D, spec: KallawaySpec, active: num
   const rowH = Math.min(132 * k, (area.h - gap * (n - 1)) / n);
   const boxW = Math.min(area.w, 800 * k), boxX = area.x + (area.w - boxW) / 2;
   const font = Math.round(Math.min(46 * k, rowH * 0.36));
+  const w = mo.wipe;
   steps.forEach((txt, i) => {
     const y = area.y + i * (rowH + gap);
-    const isActive = i === active, card = isActive || active < 0;
-    if (card) {
+    const isActive = i === active, wasActive = i === mo.prev && !isActive && active >= 0;
+    // how much of the highlighted card this row shows: the new point wipes in, the old one wipes out
+    const show = active < 0 ? 1 : isActive ? w : wasActive ? 1 - w : 0;
+    if (show > 0.01) {
       g.save();
+      g.globalAlpha *= show;
       g.shadowColor = 'rgba(0,0,0,0.5)'; g.shadowBlur = 18 * k; g.shadowOffsetY = 6 * k;
       g.fillStyle = isActive ? '#2a2a2e' : '#222226';
       rr(g, boxX, y, boxW, rowH, 8 * k); g.fill();
       g.restore();
-      g.fillStyle = KALLAWAY_RED;
-      g.save(); rr(g, boxX, y, boxW, rowH, 8 * k); g.clip(); g.fillRect(boxX, y, 10 * k, rowH); g.restore();
+      g.save(); rr(g, boxX, y, boxW, rowH, 8 * k); g.clip();
+      g.fillStyle = KALLAWAY_RED; g.fillRect(boxX, y, 10 * k * (active < 0 ? 1 : show), rowH);
+      g.restore();
     }
+    const crisp = active < 0 ? 1 : isActive ? w : wasActive ? 1 - w : 0;
     // number: always crisp
     g.textAlign = 'left'; g.textBaseline = 'middle';
     g.font = `800 ${Math.round(font * 1.05)}px ${SANS}`;
-    g.fillStyle = isActive ? '#fff' : card ? '#f0f0f2' : '#a9a9ae';
+    g.fillStyle = crisp > 0.5 ? '#fff' : '#a9a9ae';
     g.fillText(String(i + 1).padStart(2, '0'), boxX + 38 * k, y + rowH / 2);
-    // text: crisp for the spoken point, blurred for the rest
+    // text: crisp for the spoken point, blurred for the rest (blur eases with the wipe)
     const tx = boxX + 38 * k + font * 2.4, maxW = boxW - (tx - boxX) - 24 * k;
     g.font = `800 ${font}px ${SANS}`;
     const lines = wrapLines(g, txt, maxW, 2);
@@ -167,14 +181,15 @@ function paintSteps(g: CanvasRenderingContext2D, spec: KallawaySpec, active: num
       const lh = font * 1.08, y0 = y + rowH / 2 - ((lines.length - 1) * lh) / 2;
       lines.forEach((ln, j) => g.fillText(ln, tx, y0 + j * lh));
     };
-    if (isActive) drawTxt(); else blurred(g, 5 * k, drawTxt);
+    const blurPx = 5 * k * (1 - crisp);
+    if (blurPx < 0.3) drawTxt(); else blurred(g, blurPx, drawTxt);
   });
 }
 
 /** Deterministic line lengths so the "script" looks like writing. */
 const BAR_LEN = [0.84, 0.9, 0.78, 0.6, 0.88, 0.7, 0.8, 0.94, 0.5, 0.82, 0.76, 0.66, 0.9, 0.72, 0.86, 0.58, 0.8];
 
-function paintScript(g: CanvasRenderingContext2D, active: number, area: { x: number; y: number; w: number; h: number }, k: number) {
+function paintScript(g: CanvasRenderingContext2D, active: number, area: { x: number; y: number; w: number; h: number }, k: number, mo: Motion) {
   const cardW = Math.min(area.w * 0.82, 760 * k), cardH = area.h;
   const x = area.x + (area.w - cardW) / 2, y = area.y;
   g.save();
@@ -208,16 +223,22 @@ function paintScript(g: CanvasRenderingContext2D, active: number, area: { x: num
     g.fillText(name, x + pad, yy + 30 * k);
     yy += labelH;
     for (let i = 0; i < count; i++) {
-      g.fillStyle = si === active ? KALLAWAY_RED : '#4b4b50';
-      rr(g, x + pad, yy, innerW * BAR_LEN[li++ % BAR_LEN.length]!, barH, barH / 2); g.fill();
+      const len = innerW * BAR_LEN[li++ % BAR_LEN.length]!;
+      g.fillStyle = '#4b4b50';
+      rr(g, x + pad, yy, len, barH, barH / 2); g.fill();
+      // red grows over the grey bar for the spoken section and shrinks away from the one before
+      const red = si === active ? mo.wipe : si === mo.prev && active >= 0 ? 1 - mo.wipe : 0;
+      if (red > 0.01) { g.fillStyle = KALLAWAY_RED; rr(g, x + pad, yy, Math.max(barH, len * red), barH, barH / 2); g.fill(); }
       yy += pitch;
     }
     yy += secGap;
   });
 }
 
-/** Photo card: the picture fills the card area (centre crop), rounded, with a soft shadow and a thin light edge. */
-function paintPhoto(g: CanvasRenderingContext2D, img: HTMLImageElement | undefined, area: { x: number; y: number; w: number; h: number }, k: number) {
+type Area = { x: number; y: number; w: number; h: number };
+
+/** Picture card: the picture fills the card area (centre crop; `contain` fits it whole instead, for drawings), rounded, soft shadow, thin light edge. */
+function paintPhoto(g: CanvasRenderingContext2D, img: HTMLImageElement | undefined, area: Area, k: number, contain = false) {
   const r = 22 * k;
   g.save();
   g.shadowColor = 'rgba(0,0,0,0.55)'; g.shadowBlur = 36 * k; g.shadowOffsetY = 12 * k;
@@ -227,12 +248,84 @@ function paintPhoto(g: CanvasRenderingContext2D, img: HTMLImageElement | undefin
   if (img && img.width > 0) {
     g.save();
     rr(g, area.x, area.y, area.w, area.h, r); g.clip();
-    const sc = Math.max(area.w / img.width, area.h / img.height);
-    g.drawImage(img, area.x + (area.w - img.width * sc) / 2, area.y + (area.h - img.height * sc) / 2, img.width * sc, img.height * sc);
+    const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+    const sc = contain ? Math.min(area.w / iw, area.h / ih) : Math.max(area.w / iw, area.h / ih);
+    g.drawImage(img, area.x + (area.w - iw * sc) / 2, area.y + (area.h - ih * sc) / 2, iw * sc, ih * sc);
     g.restore();
   }
   g.lineWidth = 2 * k; g.strokeStyle = 'rgba(255,255,255,0.22)';
   rr(g, area.x + k, area.y + k, area.w - 2 * k, area.h - 2 * k, r - k); g.stroke();
+}
+
+/** Splits "$1.2M" into prefix "$", number 1.2, decimals 1, suffix "M" (commas kept). */
+function splitNumber(big: string): { pre: string; num: number; dec: number; comma: boolean; post: string } | undefined {
+  const m = big.match(/^(\D*?)(\d[\d,]*(?:\.\d+)?)(.*)$/);
+  if (!m) return undefined;
+  const raw = m[2]!, num = parseFloat(raw.replace(/,/g, ''));
+  if (!isFinite(num)) return undefined;
+  return { pre: m[1]!, num, dec: raw.includes('.') ? raw.split('.')[1]!.length : 0, comma: raw.includes(','), post: m[3]! };
+}
+
+/** The number text when `count` (0..1) of the way up. */
+export function countText(big: string, count: number): string {
+  const sp = splitNumber(big);
+  if (!sp) return big;
+  const v = sp.num * Math.max(0, Math.min(1, count));
+  let t = v.toFixed(sp.dec);
+  if (sp.comma) { const [i, d] = t.split('.'); t = i!.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (d ? '.' + d : ''); }
+  return sp.pre + t + sp.post;
+}
+
+/** Number card: a big number that counts up, a bar, the line under it, and a trend line that draws itself. */
+function paintStat(g: CanvasRenderingContext2D, spec: KallawaySpec, area: Area, k: number, mo: Motion) {
+  const st = spec.stat ?? { big: '' };
+  const accent = st.trend === 'up' ? '#2ee59d' : st.trend === 'down' ? '#ff4d5e' : KALLAWAY_RED;
+  const x = area.x + 6 * k, w = area.w - 12 * k;
+  g.save();
+  g.shadowColor = 'rgba(0,0,0,0.55)'; g.shadowBlur = 36 * k; g.shadowOffsetY = 12 * k;
+  g.fillStyle = '#18181C'; rr(g, x, area.y, w, area.h, 24 * k); g.fill();
+  g.restore();
+  g.lineWidth = 2 * k; g.strokeStyle = 'rgba(255,255,255,0.22)';
+  rr(g, x + k, area.y + k, w - 2 * k, area.h - 2 * k, 23 * k); g.stroke();
+  if (st.trend) {
+    const pts = st.trend === 'up' ? [0.8, 0.72, 0.76, 0.6, 0.62, 0.46, 0.48, 0.3, 0.22] : [0.22, 0.32, 0.28, 0.44, 0.42, 0.6, 0.58, 0.76, 0.84];
+    g.save();
+    rr(g, x, area.y, w, area.h, 24 * k); g.clip();
+    g.beginPath(); g.rect(x, area.y, w * mo.count, area.h); g.clip();
+    g.strokeStyle = accent; g.globalAlpha *= 0.3; g.lineWidth = 12 * k; g.lineJoin = 'round'; g.lineCap = 'round';
+    g.beginPath();
+    pts.forEach((v, i) => { const px = x + w * (0.06 + 0.88 * (i / (pts.length - 1))), py = area.y + area.h * v; if (i) g.lineTo(px, py); else g.moveTo(px, py); });
+    g.stroke();
+    g.restore();
+  }
+  const text = countText(st.big, mo.count), full = st.big;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  // size from the final text so the number does not jump while it counts
+  let size = Math.round(220 * k);
+  const maxW = w * 0.86;
+  for (; size > 40 * k; size -= 4) { g.font = `900 ${size}px ${SANS}`; if (g.measureText(full).width <= maxW) break; }
+  g.font = `900 ${size}px ${SANS}`;
+  const midY = area.y + area.h * (st.label ? 0.42 : 0.5);
+  g.fillStyle = '#fff';
+  g.fillText(text, x + w / 2, midY);
+  const barW = Math.min(maxW * 0.3, 200 * k), barY = midY + size * 0.62;
+  g.fillStyle = accent; g.fillRect(x + w / 2 - barW / 2, barY, barW, 9 * k);
+  if (st.label) {
+    g.font = `700 ${Math.round(44 * k)}px ${SANS}`; g.fillStyle = 'rgba(255,255,255,0.8)';
+    wrapLines(g, st.label, maxW, 3).forEach((ln, i) => g.fillText(ln, x + w / 2, barY + 62 * k + i * 56 * k));
+  }
+}
+
+/** Quote card: a big two-font headline in the middle of the card and a supporting line. */
+function paintQuote(g: CanvasRenderingContext2D, spec: KallawaySpec, card: Area, k: number) {
+  const x = card.x + 6 * k, w = card.w - 12 * k;
+  const top = drawTitle(g, spec, card.x + card.w / 2, card.y + card.h * 0.2, w * 0.92, k * 1.5);
+  const sub = (spec.sub ?? '').trim();
+  g.fillStyle = KALLAWAY_RED; g.fillRect(card.x + card.w / 2 - 70 * k, top + 26 * k, 140 * k, 9 * k);
+  if (sub) {
+    g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.font = `600 ${Math.round(42 * k)}px ${SANS}`; g.fillStyle = 'rgba(255,255,255,0.78)';
+    wrapLines(g, sub, w * 0.86, 3).forEach((ln, i) => g.fillText(ln, card.x + card.w / 2, top + 100 * k + i * 54 * k));
+  }
 }
 
 const shareFor = (spec: KallawaySpec, layout: 'side' | 'updown') => spec.share ?? (layout === 'updown' ? SHARE_TALL : SHARE_WIDE);
@@ -242,40 +335,53 @@ const posFor = (spec: KallawaySpec, layout: 'side' | 'updown'): 'bottom' | 'top'
   return want === 'left' ? 'left' : 'right';
 };
 
-/** Draws one finished frame on `g` (w x h), with the video window cut out. `active` = the point / section being spoken (-1 = none). `photo` = the loaded picture (photo card). */
-export function paintKallaway(g: CanvasRenderingContext2D, spec: KallawaySpec, active: number, aspect: Aspect, w: number, h: number, photo?: HTMLImageElement) {
+/**
+ * Draws one finished frame on `g` (w x h), with the video window cut out. `active` = the point / section being spoken (-1 = none).
+ * `photo` = the loaded picture (picture and svg cards). `mo` = how far the motion is (missing = at rest, the final look).
+ */
+export function paintKallaway(g: CanvasRenderingContext2D, spec: KallawaySpec, active: number, aspect: Aspect, w: number, h: number, photo?: HTMLImageElement, mo: Motion = REST) {
   const k = Math.min(w, h) / 1080;
   const layout = docuLayoutFor(aspect);
   const share = shareFor(spec, layout);
   const geo = docuGeometry(layout, posFor(spec, layout), w, h, share);
+  g.save();
+  g.globalAlpha = mo.alpha;
   dotGrid(g, w, h, k);
   const card = geo.card;
+  // the card content pops (scales) around the middle of the card area
+  g.translate(card.x + card.w / 2, card.y + card.h / 2); g.scale(mo.pop, mo.pop); g.translate(-(card.x + card.w / 2), -(card.y + card.h / 2));
   const cx = card.x + card.w / 2;
-  const hasTitle = !!(spec.a.trim() || spec.b.trim() || spec.c.trim());
+  const hasTitle = !!(spec.a.trim() || spec.b.trim() || spec.c.trim()) && spec.kind !== 'quote';
   const below = hasTitle ? drawTitle(g, spec, cx, card.y + 26 * k, card.w * 0.92, k) : card.y + 6 * k;
   const pad = 18 * k;
   const handleRoom = (spec.handle.trim() ? 44 : 6) * k;
   const area = { x: card.x, y: below + pad, w: card.w, h: card.y + card.h - below - pad - handleRoom };
-  if (area.h > 80 * k) {
-    if (spec.kind === 'steps') paintSteps(g, spec, active, area, k);
+  if (spec.kind === 'quote') paintQuote(g, spec, { x: card.x, y: card.y, w: card.w, h: card.h - handleRoom }, k);
+  else if (area.h > 80 * k) {
+    if (spec.kind === 'steps') paintSteps(g, spec, active, area, k, mo);
     else if (spec.kind === 'photo') paintPhoto(g, photo, { x: area.x + 6 * k, y: area.y, w: area.w - 12 * k, h: area.h }, k);
-    else paintScript(g, active, area, k);
+    else if (spec.kind === 'svg') paintPhoto(g, photo, { x: area.x + 6 * k, y: area.y, w: area.w - 12 * k, h: area.h }, k, true);
+    else if (spec.kind === 'stat') paintStat(g, spec, area, k, mo);
+    else paintScript(g, active, area, k, mo);
   }
+  g.restore();
   if (spec.handle.trim()) {
+    g.save(); g.globalAlpha = mo.alpha;
     g.textAlign = 'left'; g.textBaseline = 'alphabetic'; g.fillStyle = '#fff';
     g.font = `800 ${Math.round(26 * k)}px ${SANS}`;
     // above the window; when the window is at the top of the frame there is no room above it, so the tag goes under it
     const y = geo.video.y > 60 * k ? geo.video.y - 14 * k : geo.video.y + geo.video.h + 34 * k;
     g.fillText(spec.handle.trim().toUpperCase(), geo.video.x + 8 * k, y);
+    g.restore();
   }
   // window for the talking head
   g.save();
   g.globalCompositeOperation = 'destination-out';
+  g.globalAlpha = 1;
   rr(g, geo.video.x, geo.video.y, geo.video.w, geo.video.h, RADIUS * k);
   g.fillStyle = '#000'; g.fill();
   g.restore();
 }
-
 
 async function savePng(c: HTMLCanvasElement, id: string): Promise<{ url: string; path?: string }> {
   if (!Capacitor.isNativePlatform()) return { url: c.toDataURL('image/png') };
@@ -341,21 +447,32 @@ function loadPhoto(src: string): Promise<HTMLImageElement | undefined> {
   });
 }
 
+/** How many beats a spec makes: one per point (steps), three (Hook, Body, CTA) or one. */
+export function kallawayCount(spec: KallawaySpec): number {
+  return spec.kind === 'steps' ? spec.steps.filter((x) => x.trim()).slice(0, 5).length : spec.kind === 'script' ? 3 : 1;
+}
+
 /**
- * Builds the beats for [start, end): one per step (steps), three (Hook, Body, CTA) or one (photo).
+ * Builds the beats for [start, end): one per step (steps), three (Hook, Body, CTA) or one (the other cards).
  * Steps start at `spec.stepStarts` when given (synced to the speech), else each gets an equal share.
- * The caller puts them on p.docu (after removing docu beats that overlap).
+ * Each beat also gets a short run of baked pictures for its first moments (the pop, the red wipe, the count-up), so it moves
+ * in the preview and in the export. The caller puts the beats on p.docu (after removing docu beats that overlap).
  */
 export async function makeKallawayBeats(aspect: Aspect, spec: KallawaySpec, start: number, end: number): Promise<DocuBeat[]> {
   const steps = spec.steps.filter((s) => s.trim()).slice(0, 5);
-  const count = spec.kind === 'steps' ? steps.length : spec.kind === 'photo' ? 1 : 3;
+  const count = kallawayCount(spec);
   if (!count) throw new Error('Add at least one point.');
   let photo: HTMLImageElement | undefined;
   if (spec.kind === 'photo') {
     if (!spec.photo) throw new Error('Pick a picture first.');
     photo = await loadPhoto(spec.photo);
     if (!photo) throw new Error('Could not open that picture.');
-  }
+  } else if (spec.kind === 'svg') {
+    const clean = sanitizeSvg(spec.svg ?? '');
+    if (!clean) throw new Error('That graphic cannot be used (it must be one <svg> with a viewBox, no scripts).');
+    photo = await loadPhoto(svgDataUrl(clean));
+    if (!photo) throw new Error('Could not draw that graphic.');
+  } else if (spec.kind === 'stat' && !(spec.stat?.big ?? '').trim()) throw new Error('Type the big number.');
   // the fonts must be ready before the picture is drawn
   try {
     await Promise.all([
@@ -370,22 +487,32 @@ export async function makeKallawayBeats(aspect: Aspect, spec: KallawaySpec, star
   const starts: number[] = [];
   const sync = spec.kind === 'steps' && spec.stepStarts?.length === count ? spec.stepStarts : undefined;
   for (let i = 0; i < count; i++) starts.push(sync ? Math.round(sync[i]!) : Math.round(start + per * i));
-  const out: DocuBeat[] = [];
-  for (let i = 0; i < count; i++) {
+  const counting = spec.kind === 'stat';
+  const draw = async (name: string, active: number, mo: Motion) => {
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const g = c.getContext('2d');
     if (!g) throw new Error('Could not draw the card.');
-    paintKallaway(g, { ...spec, steps }, i, aspect, w, h, photo);
+    paintKallaway(g, { ...spec, steps }, active, aspect, w, h, photo, mo);
+    return savePng(c, name);
+  };
+  const out: DocuBeat[] = [];
+  for (let i = 0; i < count; i++) {
     const id = uid();
-    const image = await savePng(c, `kw_${id}`);
+    const bs = starts[i]!, be = i === count - 1 ? Math.round(end) : starts[i + 1]!;
+    const image = await draw(`kw_${id}`, i, REST);
+    // the first moments: pop in (first beat only), wipe from the previous point, count up
+    const { ms, n } = introPlan(counting, be - bs);
+    const frames: { url: string; path?: string }[] = [];
+    for (let j = 0; j < n; j++) frames.push(await draw(`kw_${id}_f${j}`, i, motionAt((j * ms) / n, { entry: i === 0, prev: i - 1, counting })));
     const label = [spec.a, spec.b, spec.c].map((x) => x.trim()).filter(Boolean).join(' ');
+    const subtext = spec.kind === 'steps' ? steps[i] : spec.kind === 'stat' ? spec.stat?.big : spec.kind === 'script' ? ['Hook', 'Body', 'CTA'][i] : spec.kind === 'quote' ? spec.sub : 'Picture';
     out.push({
-      id, type: 'split_screen', start: starts[i]!, end: i === count - 1 ? Math.round(end) : starts[i + 1]!,
+      id, type: 'split_screen', start: bs, end: be,
       layout, video_position: pos, card_radius: RADIUS,
-      headline: label || (spec.kind === 'photo' ? 'Picture' : 'Kallaway'),
-      subtext: spec.kind === 'steps' ? steps[i] : spec.kind === 'photo' ? 'Picture' : ['Hook', 'Body', 'CTA'][i], accent_color: KALLAWAY_RED, theme: 'noir',
-      share, image,
+      headline: label || (spec.kind === 'stat' ? spec.stat?.big ?? 'Number' : spec.kind === 'photo' || spec.kind === 'svg' ? 'Picture' : 'Kallaway'),
+      subtext, accent_color: KALLAWAY_RED, theme: 'noir',
+      share, image, frames, framesMs: ms,
     });
   }
   return out;

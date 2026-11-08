@@ -250,3 +250,10 @@ The AI Agent tab uses Google's Antigravity CLI **inside Editorr**. No other app 
 - **Export:** all video beats share ONE extra video track in the Media3 composition (`brollVideos` in `native.ts`, "B-roll video clips" in `EditorrNativePlugin.java`), so the 4-overlay limit does not apply. Photos and cards still use `BrollOverlay`, which now also draws the blur frame and slow zoom (same numbers as `brollRenderer.ts`).
 - **Not done / differences from the plan:** no Pexels/Mixkit scraper (no stable key-free API); the Receipts route draws an article card from Wikipedia instead of a headless-browser screenshot of a live news page (a phone cannot run one); concept cards are still pictures (zoom only), not animated counters; video clips are full frame only (no rounded corners or card frame in the export). Use the Credits button: Commons / archive.org / Wikipedia items need attribution.
 - Typechecked and the routing / card-text / in-point / blur-box logic unit-tested in Node with stubbed Capacitor. **Not compiled with Gradle and not run on a device:** send the Actions log if the Java fails, and test first with a 30 s export that has one clip, one photo with blur fill and one card.
+
+## Kallaway motion cards (v15)
+Docu tab > Kallaway frame. Cards: Step list, Script card, Number (counts up), Quote, Picture, Graphic (SVG, cleaned first).
+- Each beat plays a few baked pictures at its start (spring pop, red wipe + un-blur on the spoken point, count-up) then holds the final picture.
+  Preview (`docuRenderer.drawDocuFrame`) and export (`DocuOverlay.frameIndex` in EditorrNativePlugin.java) use the same pictures.
+- "Generate Kallaway cards (AI)" = `kallawayDirector.ts`: Antigravity picks 2-4 moments + template; built-in rules (spoken lists, numbers, big claims) when it is not signed in.
+- Step timing follows the captions (`syncStepStarts`).

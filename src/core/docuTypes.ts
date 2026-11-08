@@ -36,6 +36,9 @@ export interface DocuBeat {
   share?: number;
   /** A finished picture of the whole frame with the video window cut out (Kallaway step list / script card). It replaces the drawn card. */
   image?: { url: string; path?: string };
+  /** Kallaway motion: baked pictures that play over the first `framesMs` of the beat (pop, red wipe, count-up), then `image` stays. */
+  frames?: { url: string; path?: string }[];
+  framesMs?: number;
 }
 
 export type DocuFont = 'inter' | 'oswald' | 'playfair' | 'jetbrains';

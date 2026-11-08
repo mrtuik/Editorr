@@ -2,6 +2,7 @@ import type { CapWord } from '../core/captions';
 import { fixDocuLayout } from '../core/docuApply';
 import { planDocuBeats } from '../core/docuPlanner';
 import { KALLAWAY_SHARES, makeKallawayBeats, syncStepStarts, type KallawaySpec } from '../core/kallaway';
+import { planKallaway } from '../core/kallawayDirector';
 import {
   DEFAULT_CARD_RADIUS, DOCU_ACCENTS, DOCU_FONT_CSS, DOCU_FONT_LABEL, DOCU_FONT_SUB, DOCU_FONT_WEIGHT, DOCU_TEMPLATES, DOCU_TYPE_LABEL, MAX_CARD_RADIUS,
   defaultPos, docuLayoutFor, posChoices,
@@ -153,6 +154,35 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     finally { busy = false; render(); }
   }
 
+  /** The director picks the moments and templates from the transcript; every card is drawn and put on the timeline. */
+  async function runKallawayAi() {
+    if (busy) return;
+    const words = ctx.words();
+    if (!words.length) { toast('No transcript yet. Make Auto captions first, then tap Generate.', 5000); return; }
+    busy = true; render();
+    try {
+      const r = await planKallaway(words, ctx.durationMs(), true);
+      if (!r.picks.length) { toast('No good moments found for cards. Add one by hand at the playhead.', 5000); return; }
+      const made: DocuBeat[] = [];
+      for (const pk of r.picks) {
+        const spec: KallawaySpec = { ...pk.spec, handle: kw.handle, share: kw.share, speaker: kw.speaker };
+        made.push(...await makeKallawayBeats(ctx.p.aspect, spec, pk.start, pk.end));
+      }
+      ctx.p.docu = [...beats().filter((x) => r.picks.every((pk) => x.end <= pk.start || x.start >= pk.end)), ...made].sort((a, b) => a.start - b.start);
+      sel = made[0]?.id ?? null;
+      ctx.changed(); ctx.seek((r.picks[0]?.start ?? 0) + 200);
+      toast(r.note ?? `${r.picks.length} Kallaway cards added (${r.source === 'llm' ? 'Antigravity' : 'built-in rules'}). Undo is in the timeline menu.`, r.note ? 7000 : 4000);
+    } catch (e) { toast(`Could not make the cards: ${(e as Error).message || 'failed'}`, 6000); }
+    finally { busy = false; render(); }
+  }
+
+  function svgBox(): Node {
+    const el = h('textarea', { class: 'ts-input', rows: 6, 'aria-label': 'SVG markup', placeholder: '<svg viewBox="0 0 400 300">...</svg>', style: 'width:100%;margin-top:6px;background:#242424;border-radius:2px;padding:10px;resize:none;font-family:monospace;font-size:12px' }) as HTMLTextAreaElement;
+    el.value = kw.svg ?? '';
+    el.addEventListener('input', () => { kw.svg = el.value; });
+    return el;
+  }
+
   function pickPhoto() {
     const inp = document.createElement('input');
     inp.type = 'file'; inp.accept = 'image/*';
@@ -176,13 +206,24 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     stepsBox.addEventListener('input', () => { kw.steps = stepsBox.value.split('\n'); });
     return h('div', { class: 'at-sec', style: 'margin-top:18px;border-top:1px solid #2c2c2e;padding-top:14px' },
       h('div', { class: 'at-label' }, 'Kallaway frame'),
-      h('div', { class: 'at-hint' }, 'Dot-grid background, a step list or script card on top, and you in a rounded window at the bottom. The red bar follows each point.'),
-      chipRow<KallawaySpec['kind']>('Card', [['steps', 'Step list'], ['script', 'Script card'], ['photo', 'Picture']], kw.kind, (v) => { kw.kind = v; render(); }),
+      h('div', { class: 'at-hint' }, 'Dot-grid background, a card on top and you in a rounded window. The card pops in, the red bar wipes to each point as you say it, and numbers count up.'),
+      h('button', { class: 'btn primary', style: 'width:100%;min-height:46px;margin-top:8px', disabled: busy ? 'true' : undefined, onclick: () => void runKallawayAi() }, busy ? 'Working...' : 'Generate Kallaway cards (AI)'),
+      h('div', { class: 'at-hint', style: 'margin-top:4px' }, 'Reads your captions, picks 2 to 4 moments and the best card for each. Or make one by hand below.'),
+      chipRow<KallawaySpec['kind']>('Card', [['steps', 'Step list'], ['script', 'Script card'], ['stat', 'Number'], ['quote', 'Quote'], ['photo', 'Picture'], ['svg', 'Graphic']], kw.kind, (v) => { kw.kind = v; render(); }),
       chipRow<string>('Card size', KALLAWAY_SHARES.map(([v, l]) => [String(v), l] as [string, string]), String(kw.share ?? (docuLayoutFor(ctx.p.aspect) === 'updown' ? 0.6 : 0.52)), (v) => { kw.share = Number(v); render(); }),
       chipRow<string>('You sit', (docuLayoutFor(ctx.p.aspect) === 'updown' ? [['bottom', 'Bottom'], ['top', 'Top']] : [['right', 'Right'], ['left', 'Left']]) as [string, string][], kw.speaker ?? (docuLayoutFor(ctx.p.aspect) === 'updown' ? 'bottom' : 'right'), (v) => { kw.speaker = v as KallawaySpec['speaker']; render(); }),
       kw.kind === 'photo' ? h('div', { style: 'margin-top:10px' }, h('button', { class: 'btn', style: 'width:100%;min-height:44px', onclick: pickPhoto }, kw.photo ? `Picture: ${kwPhotoName || 'chosen'} (tap to change)` : 'Pick a picture')) : (null as unknown as Node),
       kw.kind === 'steps' ? chipRow<string>('Timing', [['on', 'Follow my words'], ['off', 'Equal parts']], kwSync ? 'on' : 'off', (v) => { kwSync = v === 'on'; render(); }) : (null as unknown as Node),
-      h('div', { class: 'at-label', style: 'margin-top:10px' }, 'Title (bold + italic + bold)'),
+      kw.kind === 'stat' ? h('div', {},
+        h('div', { class: 'at-label', style: 'margin-top:10px' }, 'Number card'),
+        text('Big number, e.g. 40% or $1.2M', kw.stat?.big ?? '', (v) => { kw.stat = { ...(kw.stat ?? { big: '' }), big: v }; }),
+        text('Line under it (optional)', kw.stat?.label ?? '', (v) => { kw.stat = { ...(kw.stat ?? { big: '' }), label: v || undefined }; }),
+        chipRow<string>('Trend', [['none', 'None'], ['up', 'Up'], ['down', 'Down']], kw.stat?.trend ?? 'none', (v) => { kw.stat = { ...(kw.stat ?? { big: '' }), trend: v === 'none' ? undefined : (v as 'up' | 'down') }; render(); })) : (null as unknown as Node),
+      kw.kind === 'quote' ? h('div', {}, text('Supporting line under the headline', kw.sub ?? '', (v) => { kw.sub = v; })) : (null as unknown as Node),
+      kw.kind === 'svg' ? h('div', {},
+        h('div', { class: 'at-hint', style: 'margin-top:10px' }, 'Paste one <svg> with a viewBox (plain shapes and text). Scripts, pictures and links are removed.'),
+        svgBox()) : (null as unknown as Node),
+      h('div', { class: 'at-label', style: 'margin-top:10px' }, kw.kind === 'quote' ? 'Headline (bold + italic + bold)' : 'Title (bold + italic + bold)'),
       text('Bold start, e.g. The', kw.a, (v) => { kw.a = v; }),
       text('Italic part, e.g. Desire Hook', kw.b, (v) => { kw.b = v; }),
       text('Second line, e.g. Method', kw.c, (v) => { kw.c = v; }),

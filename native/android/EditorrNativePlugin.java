@@ -1966,7 +1966,8 @@ public class EditorrNativePlugin extends Plugin {
             if (bi >= 0) {
                 long fade = Math.max(1, Math.round(beats.get(bi).optDouble("fadeMs", 250)));
                 long into = tc - times.get(bi)[0];
-                key = (long) bi * 64 + (into < fade ? 1 + (into * 20 / fade) : 0);
+                int fi = frameIndex(beats.get(bi), into);
+                key = (long) bi * 64 + (fi >= 0 ? 1 + fi : (into < fade ? 1 + (into * 20 / fade) : 0));
             }
             if (key == lastKey && lastBmp != null) return lastBmp;
             Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
@@ -1974,7 +1975,10 @@ public class EditorrNativePlugin extends Plugin {
                 JSONObject b = beats.get(bi);
                 long fade = Math.max(1, Math.round(b.optDouble("fadeMs", 250)));
                 float a = (float) Math.max(0, Math.min(1, (tc - times.get(bi)[0]) / (double) fade));
-                if (a > 0f) draw(new Canvas(bmp), b, a);
+                long intoF = tc - times.get(bi)[0];
+                int fi2 = frameIndex(b, intoF);
+                String framePath = fi2 >= 0 ? b.optJSONArray("frames").optString(fi2, null) : null;
+                if (a > 0f) draw(new Canvas(bmp), b, a, framePath);
             }
             lastKey = key;
             lastBmp = bmp;
@@ -2020,9 +2024,17 @@ public class EditorrNativePlugin extends Plugin {
                     Color.argb(alpha, Color.red(col), Color.green(col), Color.blue(col)));
         }
 
-        private void draw(Canvas c, JSONObject b, float a) {
-            // Kallaway step list / script card: JS already drew the whole frame (video window cut out) as a picture
-            String imagePath = b.optString("image", "");
+        /** Kallaway motion: which baked picture shows `into` ms after the beat starts (-1 = none, the final picture shows). */
+        private static int frameIndex(JSONObject b, long into) {
+            org.json.JSONArray fr = b.optJSONArray("frames");
+            long fms = Math.round(b.optDouble("framesMs", 0));
+            if (fr == null || fr.length() == 0 || fms <= 0 || into < 0 || into >= fms) return -1;
+            return (int) Math.min(fr.length() - 1, into * fr.length() / fms);
+        }
+
+        private void draw(Canvas c, JSONObject b, float a, String framePath) {
+            // Kallaway card: JS already drew the whole frame (video window cut out) as a picture; a motion picture replaces it for the first moments
+            String imagePath = (framePath != null && !framePath.isEmpty()) ? framePath : b.optString("image", "");
             if (!imagePath.isEmpty()) {
                 android.graphics.Bitmap im = android.graphics.BitmapFactory.decodeFile(imagePath);
                 if (im != null) {
