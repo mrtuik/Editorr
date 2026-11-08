@@ -1,6 +1,7 @@
 import type { CapWord } from '../core/captions';
 import { fixDocuLayout } from '../core/docuApply';
 import { planDocuBeats } from '../core/docuPlanner';
+import { KALLAWAY_SHARES, makeKallawayBeats, syncStepStarts, type KallawaySpec } from '../core/kallaway';
 import {
   DEFAULT_CARD_RADIUS, DOCU_ACCENTS, DOCU_FONT_CSS, DOCU_FONT_LABEL, DOCU_FONT_SUB, DOCU_FONT_WEIGHT, DOCU_TEMPLATES, DOCU_TYPE_LABEL, MAX_CARD_RADIUS,
   defaultPos, docuLayoutFor, posChoices,
@@ -119,6 +120,76 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     ctx.p.docu = beats().filter((x) => x.id !== b.id);
     sel = sorted()[0]?.id ?? null;
     ctx.changed(); render();
+  }
+
+  // ------------------------------------------------------------ Kallaway frame (dot grid, step list / script card, video in a rounded window)
+  const kw: KallawaySpec = { kind: 'steps', a: 'The', b: 'Desire Hook', c: 'Method', steps: ['Lead with the desired outcome', 'Tie the outcome to a relatable character', 'Hook formula one', 'Hook formula two', 'Hook formula three'], handle: '' };
+  let kwSeconds = 10;
+  let kwSync = true;
+  let kwPhotoName = '';
+
+  async function addKallaway() {
+    if (busy) return;
+    busy = true; render();
+    try {
+      const dur = ctx.durationMs();
+      const start = Math.max(0, Math.min(ctx.playMs(), Math.max(0, dur - 3000)));
+      const end = Math.min(dur || start + kwSeconds * 1000, start + Math.round(kwSeconds * 1000));
+      // steps follow the speech when captions exist (or the agent's words) and the switch is on
+      const spec: KallawaySpec = { ...kw, stepStarts: undefined };
+      let synced = false;
+      if (kw.kind === 'steps' && kwSync) {
+        const words = ctx.p.captions?.words.length ? ctx.p.captions.words : ctx.p.agentWords?.words;
+        const st = syncStepStarts(kw.steps.filter((x) => x.trim()).slice(0, 5), words, start, end);
+        if (st) { spec.stepStarts = st; synced = true; }
+      }
+      const nb = await makeKallawayBeats(ctx.p.aspect, spec, start, end);
+      // the new frame wins over documentary beats it overlaps
+      ctx.p.docu = [...beats().filter((x) => x.end <= start || x.start >= end), ...nb].sort((a, b) => a.start - b.start);
+      sel = nb[0]!.id;
+      ctx.changed(); ctx.seek(start + 200);
+      toast(`${nb.length} Kallaway frame${nb.length > 1 ? 's' : ''} added${synced ? ', timed to your words' : kw.kind === 'steps' && kwSync ? ' (no captions to time them, equal shares used)' : ''}.`, 4000);
+    } catch (e) { toast(`Could not add it: ${(e as Error).message || 'failed'}`, 5000); }
+    finally { busy = false; render(); }
+  }
+
+  function pickPhoto() {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.onchange = () => {
+      const f = inp.files?.[0]; if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => { kw.photo = String(rd.result); kwPhotoName = f.name; render(); };
+      rd.readAsDataURL(f);
+    };
+    inp.click();
+  }
+
+  function kallawayForm(): Node {
+    const text = (label: string, value: string, onInput: (v: string) => void) => {
+      const el = h('input', { type: 'text', class: 'ts-input', value, 'aria-label': label, placeholder: label, enterkeyhint: 'done', style: 'width:100%;margin-top:6px' }) as HTMLInputElement;
+      el.addEventListener('input', () => onInput(el.value));
+      return el;
+    };
+    const stepsBox = h('textarea', { class: 'ts-input', rows: 5, 'aria-label': 'Points, one per line', placeholder: 'One point per line (up to 5)', style: 'width:100%;margin-top:6px;background:#242424;border-radius:2px;padding:10px;resize:none' }) as HTMLTextAreaElement;
+    stepsBox.value = kw.steps.join('\n');
+    stepsBox.addEventListener('input', () => { kw.steps = stepsBox.value.split('\n'); });
+    return h('div', { class: 'at-sec', style: 'margin-top:18px;border-top:1px solid #2c2c2e;padding-top:14px' },
+      h('div', { class: 'at-label' }, 'Kallaway frame'),
+      h('div', { class: 'at-hint' }, 'Dot-grid background, a step list or script card on top, and you in a rounded window at the bottom. The red bar follows each point.'),
+      chipRow<KallawaySpec['kind']>('Card', [['steps', 'Step list'], ['script', 'Script card'], ['photo', 'Picture']], kw.kind, (v) => { kw.kind = v; render(); }),
+      chipRow<string>('Card size', KALLAWAY_SHARES.map(([v, l]) => [String(v), l] as [string, string]), String(kw.share ?? (docuLayoutFor(ctx.p.aspect) === 'updown' ? 0.6 : 0.52)), (v) => { kw.share = Number(v); render(); }),
+      chipRow<string>('You sit', (docuLayoutFor(ctx.p.aspect) === 'updown' ? [['bottom', 'Bottom'], ['top', 'Top']] : [['right', 'Right'], ['left', 'Left']]) as [string, string][], kw.speaker ?? (docuLayoutFor(ctx.p.aspect) === 'updown' ? 'bottom' : 'right'), (v) => { kw.speaker = v as KallawaySpec['speaker']; render(); }),
+      kw.kind === 'photo' ? h('div', { style: 'margin-top:10px' }, h('button', { class: 'btn', style: 'width:100%;min-height:44px', onclick: pickPhoto }, kw.photo ? `Picture: ${kwPhotoName || 'chosen'} (tap to change)` : 'Pick a picture')) : (null as unknown as Node),
+      kw.kind === 'steps' ? chipRow<string>('Timing', [['on', 'Follow my words'], ['off', 'Equal parts']], kwSync ? 'on' : 'off', (v) => { kwSync = v === 'on'; render(); }) : (null as unknown as Node),
+      h('div', { class: 'at-label', style: 'margin-top:10px' }, 'Title (bold + italic + bold)'),
+      text('Bold start, e.g. The', kw.a, (v) => { kw.a = v; }),
+      text('Italic part, e.g. Desire Hook', kw.b, (v) => { kw.b = v; }),
+      text('Second line, e.g. Method', kw.c, (v) => { kw.c = v; }),
+      kw.kind === 'steps' ? h('div', {}, h('div', { class: 'at-label', style: 'margin-top:10px' }, 'Points'), stepsBox) : (null as unknown as Node),
+      h('div', { style: 'margin-top:10px' }, text('@handle above the video (optional)', kw.handle, (v) => { kw.handle = v; })),
+      slider('Total length', 3, 40, 1, kwSeconds, (v) => `${v}s`, (v) => { kwSeconds = v; }),
+      h('button', { class: 'btn primary', style: 'width:100%;min-height:46px;margin-top:6px', disabled: busy ? 'true' : undefined, onclick: () => void addKallaway() }, busy ? 'Drawing...' : 'Add at playhead'));
   }
 
   const input = (label: string, value: string, onInput: (v: string) => void) => {
@@ -262,7 +333,11 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       kids.push(h('div', { class: 'schips', style: 'margin-top:14px;flex-wrap:nowrap;overflow-x:auto' }, ...list.map((x, i) =>
         h('button', { class: 'chip' + (x.id === sel ? ' on' : ''), onclick: () => pick(x.id) }, `${i + 1} · ${x.headline.slice(0, 14) || 'Beat'}`))));
     }
-    if (b) {
+    if (b && b.image) {
+      kids.push(
+        h('div', { class: 'at-hint', style: 'margin-top:10px' }, 'This is a Kallaway frame (a finished picture). To change its words, delete the frames and add it again below.'),
+        slider('Length', 1, 10, 0.5, (b.end - b.start) / 1000, (v) => `${v}s`, (v) => { b.end = Math.min(ctx.durationMs() || b.start + v * 1000, b.start + Math.round(v * 1000)); ctx.changed(); }));
+    } else if (b) {
       kids.push(
         input('Headline', b.headline, (v) => { b.headline = v; ctx.changed(); }),
         input('Supporting line', b.subtext ?? '', (v) => { b.subtext = v || undefined; ctx.changed(); }),
@@ -270,6 +345,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
         h('div', { class: 'at-hint' }, 'Look, video side and padding: Layout tab. Ready-made looks: Templates tab.'),
       );
     }
+    kids.push(kallawayForm());
     body.replaceChildren(...kids);
   }
   let tabBrollId: string | undefined = tab === 'broll' ? startId : undefined;

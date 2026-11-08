@@ -101,7 +101,7 @@ import java.util.List;
  * Media3 multi-sequence compositor and MUST be verified on a real device (the "spike" in the PRD).
  */
 @CapacitorPlugin(name = "EditorrNative", permissions = {
-        @Permission(alias = "media", strings = { android.Manifest.permission.READ_MEDIA_VIDEO }),
+        @Permission(alias = "media", strings = { android.Manifest.permission.READ_MEDIA_VIDEO, android.Manifest.permission.READ_MEDIA_IMAGES }),
         @Permission(alias = "mediaLegacy", strings = { android.Manifest.permission.READ_EXTERNAL_STORAGE })
 })
 public class EditorrNativePlugin extends Plugin {
@@ -178,22 +178,27 @@ public class EditorrNativePlugin extends Plugin {
     }
 
     private void doListVideos(PluginCall call) {
+        final boolean photos = "image".equals(call.getString("kind", "video"));
         new Thread(() -> {
             try {
                 JSArray items = new JSArray();
-                String[] proj = { MediaStore.Video.Media._ID, MediaStore.Video.Media.DISPLAY_NAME, MediaStore.Video.Media.DURATION,
-                        MediaStore.Video.Media.BUCKET_ID, MediaStore.Video.Media.BUCKET_DISPLAY_NAME };
-                try (Cursor c = getContext().getContentResolver().query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, proj, null, null,
-                        MediaStore.Video.Media.DATE_ADDED + " DESC")) {
+                Uri base = photos ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI : MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+                String[] proj = photos
+                        ? new String[] { MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME, MediaStore.Images.Media.BUCKET_ID, MediaStore.Images.Media.BUCKET_DISPLAY_NAME }
+                        : new String[] { MediaStore.Video.Media._ID, MediaStore.Video.Media.DISPLAY_NAME, MediaStore.Video.Media.DURATION,
+                                MediaStore.Video.Media.BUCKET_ID, MediaStore.Video.Media.BUCKET_DISPLAY_NAME };
+                String order = (photos ? MediaStore.Images.Media.DATE_ADDED : MediaStore.Video.Media.DATE_ADDED) + " DESC";
+                try (Cursor c = getContext().getContentResolver().query(base, proj, null, null, order)) {
                     if (c != null) {
                         while (c.moveToNext()) {
-                            long dur = c.isNull(2) ? 0 : c.getLong(2);
+                            int k = photos ? 0 : 1; // video rows have an extra duration column
+                            long dur = photos || c.isNull(2) ? 0 : c.getLong(2);
                             JSObject o = new JSObject();
                             o.put("id", c.getLong(0));
                             o.put("name", c.getString(1));
                             o.put("durationMs", dur);
-                            o.put("albumId", c.isNull(3) ? "0" : c.getString(3));
-                            o.put("album", c.isNull(4) ? "Other" : c.getString(4));
+                            o.put("albumId", c.isNull(2 + k) ? "0" : c.getString(2 + k));
+                            o.put("album", c.isNull(3 + k) ? "Other" : c.getString(3 + k));
                             items.put(o);
                         }
                     }
@@ -207,33 +212,53 @@ public class EditorrNativePlugin extends Plugin {
         }).start();
     }
 
-    /** Small picture of one gallery video, saved in cache. Returns its file path. */
+    /** Small picture of one gallery video or photo (kind = "image"), saved in cache. Returns its file path (and a data url when inline = true). */
     @PluginMethod
     public void videoThumb(PluginCall call) {
         final long id = call.getLong("id", -1L);
+        final boolean photo = "image".equals(call.getString("kind", "video"));
+        final boolean inline = Boolean.TRUE.equals(call.getBoolean("inline", false));
         if (id < 0) { call.reject("no id"); return; }
         thumbPool.execute(() -> {
             try {
                 File dir = new File(getContext().getCacheDir(), "pickthumbs");
                 if (!dir.exists()) dir.mkdirs();
-                File out = new File(dir, id + ".jpg");
+                File out = new File(dir, (photo ? "p" : "v") + id + ".jpg");
                 if (!out.exists() || out.length() == 0) {
-                    Uri uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id);
+                    Uri uri = ContentUris.withAppendedId(photo ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI : MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id);
                     Bitmap bmp = null;
                     if (Build.VERSION.SDK_INT >= 29) {
-                        try { bmp = getContext().getContentResolver().loadThumbnail(uri, new android.util.Size(320, 320), null); } catch (Exception ignored) { bmp = null; }
+                        try { bmp = getContext().getContentResolver().loadThumbnail(uri, new android.util.Size(320, 320), null); } catch (Throwable ignored) { bmp = null; }
                     }
-                    if (bmp == null) {
+                    if (bmp == null && !photo) {
                         try {
                             //noinspection deprecation
                             bmp = MediaStore.Video.Thumbnails.getThumbnail(getContext().getContentResolver(), id, MediaStore.Video.Thumbnails.MINI_KIND, null);
-                        } catch (Exception ignored) { bmp = null; }
+                        } catch (Throwable ignored) { bmp = null; }
                     }
-                    if (bmp == null) {
-                        // some phones refuse both: grab a frame ourselves
+                    if (bmp == null && photo) {
+                        // decode a small version of the photo ourselves
+                        try {
+                            android.graphics.BitmapFactory.Options bo = new android.graphics.BitmapFactory.Options();
+                            bo.inJustDecodeBounds = true;
+                            try (InputStream in = getContext().getContentResolver().openInputStream(uri)) { android.graphics.BitmapFactory.decodeStream(in, null, bo); }
+                            int sample = 1;
+                            while (Math.max(bo.outWidth, bo.outHeight) / (sample * 2) >= 320) sample *= 2;
+                            android.graphics.BitmapFactory.Options bo2 = new android.graphics.BitmapFactory.Options();
+                            bo2.inSampleSize = sample;
+                            try (InputStream in = getContext().getContentResolver().openInputStream(uri)) { bmp = android.graphics.BitmapFactory.decodeStream(in, null, bo2); }
+                        } catch (Throwable ignored) { bmp = null; }
+                    }
+                    if (bmp == null && !photo) {
+                        // some phones refuse all of the above: grab a frame ourselves
                         MediaMetadataRetriever mmr = new MediaMetadataRetriever();
                         try {
-                            mmr.setDataSource(getContext(), uri);
+                            try {
+                                mmr.setDataSource(getContext(), uri);
+                            } catch (Throwable first) {
+                                android.os.ParcelFileDescriptor pfd = getContext().getContentResolver().openFileDescriptor(uri, "r");
+                                try { mmr.setDataSource(pfd.getFileDescriptor()); } finally { try { pfd.close(); } catch (Exception ignored) { /* nothing */ } }
+                            }
                             String d = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
                             long atUs = 0;
                             try { atUs = Math.min(1_000_000L, Long.parseLong(d) * 500L); } catch (Exception ignored) { /* first frame */ }
@@ -249,7 +274,7 @@ public class EditorrNativePlugin extends Plugin {
                                 }
                                 bmp = f;
                             }
-                        } catch (Exception ignored) { bmp = null; }
+                        } catch (Throwable ignored) { bmp = null; }
                         finally { try { mmr.release(); } catch (Exception ignored) { /* nothing */ } }
                     }
                     if (bmp == null) { call.reject("no thumbnail"); return; }
@@ -258,34 +283,95 @@ public class EditorrNativePlugin extends Plugin {
                 }
                 JSObject res = new JSObject();
                 res.put("path", out.getAbsolutePath());
+                if (inline) {
+                    byte[] bytes = java.nio.file.Files.readAllBytes(out.toPath());
+                    res.put("data", "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP));
+                }
                 call.resolve(res);
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 call.reject("thumb failed");
             }
         });
     }
 
-    /** Copy the chosen gallery videos (by id, in the order given) into the app and read their info. Emits 'copyProgress'. */
+    /** Copy the chosen gallery videos (by id, in the order given) into the app and read their info. Emits 'copyProgress'.
+     *  kinds (optional, same length as ids): "video" or "image". A photo is turned into a short silent video clip. */
     @PluginMethod
     public void importVideos(PluginCall call) {
         JSArray ids = call.getArray("ids");
+        JSArray kinds = call.getArray("kinds");
         if (ids == null || ids.length() == 0) { call.reject("Cancelled"); return; }
         final List<Uri> uris = new ArrayList<>();
+        final List<Boolean> isPhoto = new ArrayList<>();
         try {
-            for (int k = 0; k < ids.length(); k++) uris.add(ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, ids.getLong(k)));
+            for (int k = 0; k < ids.length(); k++) {
+                boolean photo = kinds != null && k < kinds.length() && "image".equals(kinds.getString(k));
+                isPhoto.add(photo);
+                uris.add(ContentUris.withAppendedId(photo ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI : MediaStore.Video.Media.EXTERNAL_CONTENT_URI, ids.getLong(k)));
+            }
         } catch (JSONException e) { call.reject("bad ids"); return; }
         new Thread(() -> {
             try {
                 JSArray videos = new JSArray();
-                for (int idx = 0; idx < uris.size(); idx++) videos.put(copyAndProbe(uris.get(idx), idx, uris.size()));
+                for (int idx = 0; idx < uris.size(); idx++) {
+                    videos.put(isPhoto.get(idx) ? importPhoto(uris.get(idx), idx, uris.size()) : copyAndProbe(uris.get(idx), idx, uris.size()));
+                }
                 JSObject res = new JSObject();
                 res.put("videos", videos);
                 res.put("ignored", 0);
                 call.resolve(res);
             } catch (Exception e) {
-                call.reject("Could not read this video: " + e.getMessage());
+                call.reject("Could not read this file: " + e.getMessage());
             }
         }).start();
+    }
+
+    private static final long PHOTO_CLIP_US = 5_000_000L;
+
+    /** A photo becomes a 5 second still clip (H.264, up to 1080 high, no sound) so the editor can use it like any video. */
+    private JSObject importPhoto(Uri uri, int index, int count) throws Exception {
+        String name = displayName(uri);
+        if (name == null || name.isEmpty()) name = "photo.jpg";
+        final File img = new File(getContext().getCacheDir(), "photo_" + System.currentTimeMillis() + "_" + index + ".jpg");
+        emitCopy(index, count, 0);
+        try (InputStream in = getContext().getContentResolver().openInputStream(uri);
+             OutputStream os = new FileOutputStream(img)) {
+            if (in == null) throw new Exception("the photo cannot be opened");
+            byte[] buf = new byte[1 << 16];
+            int n;
+            while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+        }
+        emitCopy(index, count, 30);
+        final File out = new File(videoDir(), System.currentTimeMillis() + "_" + index + "_photo.mp4");
+        final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        final String[] err = new String[1];
+        main.post(() -> {
+            try {
+                MediaItem mi = MediaItem.fromUri(Uri.fromFile(img));
+                EditedMediaItem item = new EditedMediaItem.Builder(mi)
+                        .setDurationUs(PHOTO_CLIP_US)
+                        .setFrameRate(30)
+                        .setEffects(new Effects(ImmutableList.of(), ImmutableList.<Effect>of(Presentation.createForHeight(1080))))
+                        .build();
+                Transformer t = new Transformer.Builder(getContext())
+                        .setVideoMimeType(MimeTypes.VIDEO_H264)
+                        .addListener(new Transformer.Listener() {
+                            @Override public void onCompleted(@NonNull Composition c, @NonNull ExportResult r) { done.countDown(); }
+                            @Override public void onError(@NonNull Composition c, @NonNull ExportResult r, @NonNull ExportException e) { err[0] = String.valueOf(e.getMessage()); done.countDown(); }
+                        })
+                        .build();
+                t.start(item, out.getAbsolutePath());
+            } catch (Throwable e) {
+                err[0] = String.valueOf(e.getMessage());
+                done.countDown();
+            }
+        });
+        boolean finished = done.await(180, java.util.concurrent.TimeUnit.SECONDS);
+        img.delete();
+        if (!finished) { out.delete(); throw new Exception("the photo took too long to convert"); }
+        if (err[0] != null) { out.delete(); throw new Exception("could not turn the photo into a clip (" + err[0] + ")"); }
+        emitCopy(index, count, 100);
+        return probeFile(out, name);
     }
 
     // ---- Antigravity, built in. Editorr runs Google's official Antigravity CLI inside its own private Linux (PRoot).
@@ -556,6 +642,11 @@ public class EditorrNativePlugin extends Plugin {
             }
         }
         emitCopy(index, count, 100);
+        return probeFile(out, name);
+    }
+
+    /** Reads size, length, fps and codec of a video file that is already inside the app. */
+    private JSObject probeFile(File out, String name) throws Exception {
         MediaMetadataRetriever r = new MediaMetadataRetriever();
         long dur;
         int w, hgt, rot;
@@ -823,6 +914,25 @@ public class EditorrNativePlugin extends Plugin {
                     MediaFormat f = ex.getTrackFormat(i);
                     String mime = f.getString(MediaFormat.KEY_MIME);
                     if (mime != null && mime.startsWith("audio/")) { track = i; fmt = f; break; }
+                }
+                if (track < 0 && srcFile.getName().contains("_photo")) {
+                    // a photo clip has no sound: hand the editor silence of the same length
+                    MediaMetadataRetriever mr = new MediaMetadataRetriever();
+                    long durMs = 0;
+                    try { mr.setDataSource(srcFile.getAbsolutePath()); durMs = parseLong(mr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)); }
+                    finally { mr.release(); }
+                    long nSamples = Math.max(1, durMs * TARGET_RATE / 1000);
+                    try (FileOutputStream fz = new FileOutputStream(cachedPcm)) {
+                        byte[] z = new byte[1 << 16];
+                        long left = nSamples * 2;
+                        while (left > 0) { int kk = (int) Math.min(z.length, left); fz.write(z, 0, kk); left -= kk; }
+                    }
+                    java.nio.file.Files.write(cachedMeta.toPath(), String.valueOf(srcFile.length()).getBytes("UTF-8"));
+                    JSObject sil = new JSObject();
+                    sil.put("pcmPath", cachedPcm.getAbsolutePath());
+                    sil.put("samples", nSamples);
+                    call.resolve(sil);
+                    return;
                 }
                 if (track < 0) { call.reject("This video has no audio track."); return; }
                 ex.selectTrack(track);
@@ -1911,6 +2021,16 @@ public class EditorrNativePlugin extends Plugin {
         }
 
         private void draw(Canvas c, JSONObject b, float a) {
+            // Kallaway step list / script card: JS already drew the whole frame (video window cut out) as a picture
+            String imagePath = b.optString("image", "");
+            if (!imagePath.isEmpty()) {
+                android.graphics.Bitmap im = android.graphics.BitmapFactory.decodeFile(imagePath);
+                if (im != null) {
+                    c.drawBitmap(im, null, new RectF(0, 0, w, h), new Paint(Paint.FILTER_BITMAP_FLAG));
+                    im.recycle();
+                }
+                return;
+            }
             String type = b.optString("type", "split_screen");
             String th = b.optString("theme", "noir");
             int accent = CaptionOverlay.css(b.optString("accent", "#C6F277"), Color.rgb(198, 242, 119));

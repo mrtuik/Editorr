@@ -32,6 +32,10 @@ export interface DocuBeat {
   theme: DocuTheme;
   /** Optional look set by the Templates / Fonts / Colors tabs. Missing = the old theme look. */
   style?: DocuStyle;
+  /** Share of the frame the card takes (missing = CARD_SHARE_SIDE / CARD_SHARE_UPDOWN). Kallaway beats make the video window smaller. */
+  share?: number;
+  /** A finished picture of the whole frame with the video window cut out (Kallaway step list / script card). It replaces the drawn card. */
+  image?: { url: string; path?: string };
 }
 
 export type DocuFont = 'inter' | 'oswald' | 'playfair' | 'jetbrains';

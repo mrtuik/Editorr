@@ -61,7 +61,7 @@ export function openCaptionSheet(ctx: CaptionCtx, startWord = -1, single = false
       const ok = await ctx.generate(normLang(s.captionLang));
       box.style.display = ''; sheet.classList.remove('out');
       if (ok) renderStyle();
-    } }, icon('wand', 20), 'Generate captions'));
+    } }, icon('subtitles', 20), 'Generate captions'));
     const tokenBox = h('div', { class: 'at-sec' },
       h('div', { class: 'at-label' }, 'Hugging Face token (Bangla model)'),
       h('input', { type: 'password', class: 'cap-input', placeholder: 'hf_...', value: s.whistleHfToken ?? '',
@@ -70,9 +70,18 @@ export function openCaptionSheet(ctx: CaptionCtx, startWord = -1, single = false
     const sync = () => { tokenBox.style.display = normLang(s.captionLang) === 'bengali' ? '' : 'none'; };
     const langName = (l?: string) => { const m = WHISTLE_MODELS[normLang(l)]; return `${m.name}, ${m.sizeMb} MB, downloads once`; };
     sync();
+    // every language shows its name (the old dot picker hid the ones that were not selected)
+    const langRow = h('div', { class: 'chips', style: 'flex-wrap:wrap;overflow:visible' });
+    const langHint = h('div', { class: 'at-hint' }, '');
+    const drawLang = () => {
+      const cur = normLang(s.captionLang);
+      langRow.replaceChildren(...LANGS.map(([v, l]) =>
+        h('button', { class: 'chip' + (v === cur ? ' on' : ''), onclick: () => { s.captionLang = v; save(); sync(); drawLang(); } }, l)));
+      langHint.textContent = 'Whistle is a tiny speech engine (17-30 MB) that runs on the phone. ' + langName(cur);
+    };
+    drawLang();
     body.replaceChildren(
-      chips<string>('Spoken language', 'Whistle is a tiny speech engine (17-30 MB) that runs on the phone. ' + langName(s.captionLang),
-        LANGS.map(([v, l]) => [v, l] as [string, string]), normLang(s.captionLang), (v) => { s.captionLang = v; save(); sync(); }),
+      h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Spoken language'), langRow, langHint),
       tokenBox,
       h('div', { class: 'at-hint' }, 'Bangla is shown as Banglish and Hindi as Hinglish. You can switch to the original script later.'));
   }

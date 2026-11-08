@@ -5,6 +5,7 @@
  * Split beats: the whole frame is covered by the dark card colour and a rounded WINDOW is cut out where the talking head
  * shows through. The video underneath is shifted by `docuShift()` so the window shows the middle of the picture.
  */
+import { Capacitor } from '@capacitor/core';
 import { CARD_SHARE_SIDE, CARD_SHARE_UPDOWN, DOCU_FADE_MS, DEFAULT_CARD_RADIUS, DOCU_FONT_CSS, DOCU_FONT_WEIGHT, type DocuBeat, type DocuLayout, type DocuPos } from './docuTypes';
 
 export interface Rect { x: number; y: number; w: number; h: number }
@@ -14,17 +15,17 @@ export interface DocuGeo { vertical: boolean; video: Rect; card: Rect }
 const GAP = 0.018;
 
 /** Where the video window and the typography card sit, as fractions (0..1) of the frame. */
-export function docuGeometry(layout: DocuLayout, pos: DocuPos, w: number, h: number): DocuGeo {
+export function docuGeometry(layout: DocuLayout, pos: DocuPos, w: number, h: number, share?: number): DocuGeo {
   const vertical = layout === 'updown';
   const g = GAP * Math.min(w, h);
   if (!vertical) {
-    const cw = w * CARD_SHARE_SIDE;
+    const cw = w * (share ?? CARD_SHARE_SIDE);
     const videoLeft = pos !== 'right';
     const video: Rect = videoLeft ? { x: g, y: g, w: w - cw - g * 1.5, h: h - 2 * g } : { x: cw + g * 0.5, y: g, w: w - cw - g * 1.5, h: h - 2 * g };
     const card: Rect = videoLeft ? { x: w - cw + g * 0.5, y: g, w: cw - g * 1.5, h: h - 2 * g } : { x: g, y: g, w: cw - g * 1.5, h: h - 2 * g };
     return { vertical, video, card };
   }
-  const ch = h * CARD_SHARE_UPDOWN;
+  const ch = h * (share ?? CARD_SHARE_UPDOWN);
   const videoTop = pos !== 'bottom';
   const video: Rect = videoTop ? { x: g, y: g, w: w - 2 * g, h: h - ch - g * 1.5 } : { x: g, y: ch + g * 0.5, w: w - 2 * g, h: h - ch - g * 1.5 };
   const card: Rect = videoTop ? { x: g, y: h - ch + g * 0.5, w: w - 2 * g, h: ch - g * 1.5 } : { x: g, y: g, w: w - 2 * g, h: ch - g * 1.5 };
@@ -35,10 +36,10 @@ export function docuGeometry(layout: DocuLayout, pos: DocuPos, w: number, h: num
  * How far the video underneath is moved so its middle sits in the window: { px, py } in frame fractions
  * (same meaning as CropState.px / py: a move in slot sizes, + = right / down). Only the frame SHAPE matters (width / height).
  */
-export function docuShift(layout: DocuLayout, pos: DocuPos, ratio: number): { px: number; py: number } {
+export function docuShift(layout: DocuLayout, pos: DocuPos, ratio: number, share?: number): { px: number; py: number } {
   if (layout === 'one') return { px: 0, py: 0 };
   const w = Math.max(0.1, ratio) * 1000, h = 1000;
-  const v = docuGeometry(layout, pos, w, h).video;
+  const v = docuGeometry(layout, pos, w, h, share).video;
   return { px: (v.x + v.w / 2) / w - 0.5, py: (v.y + v.h / 2) / h - 0.5 };
 }
 
@@ -148,8 +149,28 @@ function drawLower(g: CanvasRenderingContext2D, b: DocuBeat, w: number, h: numbe
   g.restore();
 }
 
-/** Draw `beat` at timeline time `ms` on a w x h canvas (clear it first). */
-export function drawDocuFrame(g: CanvasRenderingContext2D, beat: DocuBeat, ms: number, w: number, h: number): void {
+const frameImgs = new Map<string, { img: HTMLImageElement; ok: boolean }>();
+function frameImage(src: string, onLoad?: () => void): HTMLImageElement | undefined {
+  let e = frameImgs.get(src);
+  if (!e) {
+    const img = new Image();
+    e = { img, ok: false };
+    frameImgs.set(src, e);
+    img.onload = () => { e!.ok = true; onLoad?.(); };
+    img.src = src;
+    if (frameImgs.size > 24) { const k = frameImgs.keys().next().value; if (k !== undefined && k !== src) frameImgs.delete(k); }
+  }
+  return e.ok ? e.img : undefined;
+}
+
+/** Draw `beat` at timeline time `ms` on a w x h canvas (clear it first). `onLoad` redraws when a Kallaway picture has just arrived. */
+export function drawDocuFrame(g: CanvasRenderingContext2D, beat: DocuBeat, ms: number, w: number, h: number, onLoad?: () => void): void {
+  if (beat.image) {
+    // finished picture (no fade: the steps of a list follow each other without a flash)
+    const im = frameImage(beat.image.path ? Capacitor.convertFileSrc('file://' + beat.image.path) : beat.image.url, onLoad);
+    if (im) g.drawImage(im, 0, 0, w, h);
+    return;
+  }
   const a = docuAlpha(beat, ms);
   if (a <= 0) return;
   g.save();
@@ -173,7 +194,7 @@ export function drawDocuFrame(g: CanvasRenderingContext2D, beat: DocuBeat, ms: n
     return;
   }
   // split_screen
-  const geo = docuGeometry(beat.layout === 'one' ? 'side' : beat.layout, beat.video_position, w, h);
+  const geo = docuGeometry(beat.layout === 'one' ? 'side' : beat.layout, beat.video_position, w, h, beat.share);
   const r = radiusPx(beat, w, h);
   const st = beat.style ?? {}, sc = Math.min(w, h) / 1080;
   g.globalAlpha = a;
@@ -200,10 +221,12 @@ export function exportDocu(beats: DocuBeat[] | undefined, outW: number, outH: nu
   const out: unknown[] = [];
   for (const b of beats ?? []) {
     if (b.end - b.start < 300 || !b.headline.trim()) continue;
-    const geo = b.type === 'split_screen' ? docuGeometry(b.layout === 'one' ? 'side' : b.layout, b.video_position, outW, outH) : null;
+    if (b.image && !b.image.path) continue; // a Kallaway picture that only exists in the browser cannot be exported
+    const geo = b.type === 'split_screen' ? docuGeometry(b.layout === 'one' ? 'side' : b.layout, b.video_position, outW, outH, b.share) : null;
     out.push({
       type: b.type, s: Math.round(b.start), e: Math.round(b.end), headline: b.headline, subtext: b.subtext ?? '', accent: b.accent_color, theme: b.theme,
-      radius: radiusPx(b, outW, outH), fadeMs: DOCU_FADE_MS,
+      radius: radiusPx(b, outW, outH), fadeMs: b.image ? 1 : DOCU_FADE_MS,
+      ...(b.image?.path ? { image: b.image.path } : {}),
       ...(geo ? { video: geo.video, card: geo.card } : {}),
       ...exportStyle(b, outW, outH),
     });

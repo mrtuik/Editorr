@@ -10,7 +10,7 @@ const isSplit = (b: DocuBeat | undefined): b is DocuBeat => !!b && b.type === 's
 
 /** The crop of `base` plus the move that brings the video into the window of this beat. */
 export function docuCrop(base: CropState, b: DocuBeat, ratio: number): CropState {
-  const m = docuShift(b.layout, b.video_position, ratio);
+  const m = docuShift(b.layout, b.video_position, ratio, b.share);
   return { ...base, px: (base.px ?? 0) + m.px, py: (base.py ?? 0) + m.py };
 }
 
@@ -54,7 +54,7 @@ export function docuSegments(p: Project): Segment[] {
 export function fixDocuLayout(p: Project): void {
   const layout = docuLayoutFor(p.aspect);
   for (const b of p.docu ?? []) {
-    if (b.layout === layout) continue;
+    if (b.layout === layout || b.image) continue; // a Kallaway picture was drawn for one frame shape
     b.layout = layout;
     b.video_position = defaultPos(layout);
   }

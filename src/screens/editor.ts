@@ -2445,7 +2445,7 @@ export function editorScreen() {
     if (brollBeat) drawBrollFrame(g, brollBeat, playMs, w, hh, drawCaptionsPreview, playing);
     else pauseBrollVideos();
     const beat = docuBeatAt(p.docu, playMs);
-    if (beat) drawDocuFrame(g, beat, playMs, w, hh);
+    if (beat) drawDocuFrame(g, beat, playMs, w, hh, drawCaptionsPreview);
     const box = (hits: HitRect[]) => {
       const x0 = Math.min(...hits.map((r) => r.x)), y0 = Math.min(...hits.map((r) => r.y));
       const x1 = Math.max(...hits.map((r) => r.x + r.w)), y1 = Math.max(...hits.map((r) => r.y + r.h));

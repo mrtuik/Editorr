@@ -75,6 +75,8 @@ export interface PickedVideo {
 }
 
 export interface GalleryVideo { id: number; name: string; durationMs: number; albumId: string; album: string }
+/** 'video' (default) or 'image': the in-app gallery lists both. */
+export type GalleryKind = 'video' | 'image';
 
 export type NativeEvent = 'audioProgress' | 'denoiseProgress' | 'exportProgress' | 'proxyProgress' | 'copyProgress' | 'thumb' | 'ytProgress' | 'agyInstall' | 'agyAuth' | 'whistleDownload' | 'whistleProgress';
 
@@ -122,11 +124,11 @@ export interface EditorrNativePlugin {
    */
   pickVideos(opts: { multiple: boolean; max?: number }): Promise<{ videos: PickedVideo[]; ignored: number }>;
   /** In-app gallery: every video on the phone (newest first). Asks for the media permission; rejects 'PERMISSION_DENIED'. */
-  listVideos(): Promise<{ items: GalleryVideo[] }>;
+  listVideos(opts?: { kind?: GalleryKind }): Promise<{ items: GalleryVideo[] }>;
   /** Small jpeg of one gallery video (cached). */
-  videoThumb(opts: { id: number }): Promise<{ path: string }>;
-  /** Copy the chosen gallery videos (in this order) into the app. Emits 'copyProgress'. */
-  importVideos(opts: { ids: number[] }): Promise<{ videos: PickedVideo[]; ignored: number }>;
+  videoThumb(opts: { id: number; kind?: GalleryKind; inline?: boolean }): Promise<{ path: string; data?: string }>;
+  /** Copy the chosen gallery videos (in this order) into the app. A photo (kind 'image') becomes a 5 second silent clip. Emits 'copyProgress'. */
+  importVideos(opts: { ids: number[]; kinds?: GalleryKind[] }): Promise<{ videos: PickedVideo[]; ignored: number }>;
   /** Decodes the audio track to mono 16 kHz PCM16 (little endian) in a cache file. */
   extractAudio(opts: { path: string }): Promise<{ pcmPath: string; samples: number }>;
   /** Builds a denoised mono WAV at the source audio sample rate in app cache for export. */
