@@ -2004,6 +2004,7 @@ public class EditorrNativePlugin extends Plugin {
             if ("zoom_out".equals(m)) s = (float) (1.12 - 0.12 * e);
             else if ("pan_left".equals(m)) { s = 1.06f; tx = (float) (0.02 - 0.04 * e); }
             else if ("pan_right".equals(m)) { s = 1.06f; tx = (float) (-0.02 + 0.04 * e); }
+            else if ("slow_zoom".equals(m)) s = (float) (1 + 0.04 * p);
             else s = (float) (1 + 0.12 * e);
             float fin = (float) Math.max(0, Math.min(1, (tc - os) / 160.0));
             float fout = (float) Math.max(0, Math.min(1, (oe - tc) / 120.0));
@@ -2024,6 +2025,40 @@ public class EditorrNativePlugin extends Plugin {
             return android.graphics.BitmapFactory.decodeFile(f, o);
         }
 
+        /**
+         * Blur frame (same recipe as paintBlurFrame in brollRenderer.ts): a tiny copy of the picture (1/28 of the frame) stretched back
+         * over the whole frame is the blurred background, darkened by 38 %; the WHOLE picture sits in front, rounded, with a shadow.
+         */
+        private void renderBlur(Canvas c, Bitmap src, RectF box, float radius, float shadowBlur, float shadowDy) {
+            int tw = Math.max(8, Math.round(w / 28f)), th = Math.max(8, Math.round(h / 28f));
+            Bitmap tiny = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888);
+            Canvas tc = new Canvas(tiny);
+            float bsc = Math.max(tw / (float) src.getWidth(), th / (float) src.getHeight());
+            RectF cover = new RectF((tw - src.getWidth() * bsc) / 2f, (th - src.getHeight() * bsc) / 2f,
+                    (tw + src.getWidth() * bsc) / 2f, (th + src.getHeight() * bsc) / 2f);
+            Paint fp = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+            tc.drawBitmap(src, null, cover, fp);
+            c.drawBitmap(tiny, null, new RectF(0, 0, w, h), fp);
+            tiny.recycle();
+            c.drawColor(Color.argb(Math.round(0.38f * 255f), 0, 0, 0));
+            float fsc = Math.min(box.width() / src.getWidth(), box.height() / src.getHeight());
+            float fw = src.getWidth() * fsc, fh = src.getHeight() * fsc;
+            float fx = box.left + (box.width() - fw) / 2f, fy = box.top + (box.height() - fh) / 2f;
+            RectF fr = new RectF(fx, fy, fx + fw, fy + fh);
+            Paint sp = new Paint(Paint.ANTI_ALIAS_FLAG);
+            sp.setColor(Color.BLACK);
+            sp.setShadowLayer(shadowBlur / 2f, 0f, shadowDy, Color.argb(140, 0, 0, 0));
+            c.drawRoundRect(fr, radius, radius, sp);
+            Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+            android.graphics.BitmapShader sh = new android.graphics.BitmapShader(src, android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP);
+            android.graphics.Matrix mx = new android.graphics.Matrix();
+            mx.setScale(fsc, fsc);
+            mx.postTranslate(fx, fy);
+            sh.setLocalMatrix(mx);
+            p.setShader(sh);
+            c.drawRoundRect(fr, radius, radius, p);
+        }
+
         private Bitmap render(JSONObject b) {
             Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
             try {
@@ -2036,6 +2071,11 @@ public class EditorrNativePlugin extends Plugin {
                 boolean card = "card".equals(b.optString("frame", "card"));
                 float r = (float) b.optDouble("radius", 0);
                 RectF rect = new RectF(bx, by, bx + bw, by + bh);
+                if ("blur".equals(b.optString("frame", "card"))) {
+                    renderBlur(c, src, rect, (float) b.optDouble("radius", 0), (float) b.optDouble("shadowBlur", 0), (float) b.optDouble("shadowDy", 0));
+                    src.recycle();
+                    return out;
+                }
                 if (card) {
                     c.drawColor(Color.argb((int) Math.round(b.optDouble("scrim", 0) * 255.0), 0, 0, 0));
                     Paint sp = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -2177,6 +2217,26 @@ public class EditorrNativePlugin extends Plugin {
         });
     }
 
+    /** B-roll: saves the video track of one YouTube video (a small MP4, no sound needed) in the app's broll/ folder. */
+    @PluginMethod
+    public void youtubeDownloadVideo(PluginCall call) {
+        final String id = call.getString("id");
+        if (id == null || id.isEmpty()) { call.reject("No video chosen."); return; }
+        final File dir = new File(getContext().getFilesDir(), "broll");
+        ytPool.execute(() -> {
+            try {
+                JSONObject r = YouTubeBridge.downloadVideo(id, dir, pct -> { /* no progress bar for a short clip */ });
+                JSObject o = new JSObject();
+                o.put("path", r.optString("path"));
+                o.put("title", r.optString("title"));
+                o.put("durationMs", r.optLong("durationMs", 0));
+                call.resolve(o);
+            } catch (Exception e) {
+                call.reject(e.getMessage() != null ? e.getMessage() : "Download failed.");
+            }
+        });
+    }
+
     @PluginMethod
     public void youtubeCancel(PluginCall call) {
         YouTubeBridge.cancel();
@@ -2231,6 +2291,7 @@ public class EditorrNativePlugin extends Plugin {
             final JSONArray textsJson = call.getData().optJSONArray("texts");
             final JSONArray docuJson = call.getData().optJSONArray("docu");
             final JSONArray brollJson = call.getData().optJSONArray("broll");
+            final JSONArray brollVideosJson = call.getData().optJSONArray("brollVideos");
             final float gain = (float) Math.max(0.0, Math.min(10.0, call.getDouble("gain", 1.0)));
             // Enhanced Audio: EQ + de-esser + compressor + limiter on the audio-source mic ("voice") and on the final mix ("master")
             final JSONObject fxJson = call.getData().optJSONObject("fx");
@@ -2255,7 +2316,7 @@ public class EditorrNativePlugin extends Plugin {
             final long durationMs = durationRaw;
             cancelProxyJobs();
             exportHandler().post(() ->
-                    startTransformer(call, hostUri, constUri, cleanAudioUri, captionsJson, textsJson, docuJson, bgmUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate, voiceFx, masterFx, overlaysJson, brollJson));
+                    startTransformer(call, hostUri, constUri, cleanAudioUri, captionsJson, textsJson, docuJson, bgmUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate, voiceFx, masterFx, overlaysJson, brollJson, brollVideosJson));
         } catch (JSONException e) {
             call.reject("Bad export request: " + e.getMessage());
         }
@@ -2264,7 +2325,7 @@ public class EditorrNativePlugin extends Plugin {
     private void startTransformer(PluginCall call, String hostUri, String constUri, String cleanAudioUri, JSONObject captionsJson, JSONArray textsJson, JSONArray docuJson, String bgmUri, long offsetMs, long durationMs,
                                   int outW, int outH, boolean hostAudio, List<Seg> segs,
                                   CropSpec cropHost, CropSpec cropConst, boolean mirrorHost, boolean mirrorConst,
-                                  float gain, int fps, int bitrate, FxCfg voiceFx, FxCfg masterFx, JSONArray overlaysJson, JSONArray brollJson) {
+                                  float gain, int fps, int bitrate, FxCfg voiceFx, FxCfg masterFx, JSONArray overlaysJson, JSONArray brollJson, JSONArray brollVideosJson) {
         try {
             // Timeline time = Host time. The Constant video is offsetMs ahead of it.
             final long hostStart = Math.max(0, -offsetMs);
@@ -2378,6 +2439,50 @@ public class EditorrNativePlugin extends Plugin {
                         (float) Math.max(0.0, Math.min(1.0, oj.optDouble("cx", 0.5))),
                         (float) Math.max(0.0, Math.min(1.0, oj.optDouble("cy", 0.5))) });
                 ovWin.add(wins);
+            }
+
+            // ---- B-roll video clips (Docu > B-roll): ALL clips share ONE extra sequence, so the 4-overlay limit above does not apply.
+            // It plays a hidden stand-in piece of the Host video (alpha 0) between the clips, exactly like the overlay videos do.
+            // Each clip fills the frame (Presentation scale-to-fit-with-crop in item()), without its own sound, from inMs into its file.
+            if (brollVideosJson != null && brollVideosJson.length() > 0) {
+                final List<String> bvUri = new ArrayList<>();
+                final List<long[]> bv = new ArrayList<>();          // start, end, inMs (timeline ms)
+                for (int bi = 0; bi < brollVideosJson.length(); bi++) {
+                    JSONObject bj = brollVideosJson.optJSONObject(bi);
+                    if (bj == null) continue;
+                    String bu = bj.optString("uri", "");
+                    long bs = Math.round(bj.optDouble("startMs", 0)), be = Math.round(bj.optDouble("endMs", 0));
+                    if (bu.isEmpty() || be - bs < 300) continue;
+                    bvUri.add(bu);
+                    bv.add(new long[] { bs, be, Math.max(0, Math.round(bj.optDouble("inMs", 0))) });
+                }
+                List<EditedMediaItem> bItems = new ArrayList<>();
+                List<long[]> bWins = new ArrayList<>();
+                for (int ri = 0; ri < ranges.size(); ri++) {
+                    Range r = ranges.get(ri);
+                    long cursor = r.a;
+                    for (int k = 0; k < bv.size(); k++) {
+                        long bs = bv.get(k)[0], be = bv.get(k)[1], inMs = bv.get(k)[2];
+                        long ia = Math.max(bs, Math.max(r.a, cursor)), ib = Math.min(be, r.b);
+                        if (ib - ia < 100) continue;
+                        long pa = ia;
+                        if (pa - cursor < 100) pa = cursor;                // gap too small for a stand-in piece: the clip starts at the cursor
+                        long pe = ib;
+                        if (r.b - pe < 100) pe = r.b;                      // tail too small: the clip runs to the end of the part
+                        if (pa > cursor) bItems.add(item(hostUri, cursor, pa - cursor, outW, outH, true, false, null, 1f, null, r.speed));
+                        long srcStart = inMs + Math.max(0, pa - bs);
+                        bItems.add(item(bvUri.get(k), srcStart, pe - pa, outW, outH, true, false, null, 1f, null, r.speed));
+                        long outA = cumStart[ri] + Math.round((pa - r.a) / (double) r.speed);
+                        bWins.add(new long[] { outA, outA + Math.round((pe - pa) / (double) r.speed) });
+                        cursor = pe;
+                    }
+                    if (cursor < r.b) bItems.add(item(hostUri, cursor, r.b - cursor, outW, outH, true, false, null, 1f, null, r.speed));
+                }
+                if (!bWins.isEmpty() && !bItems.isEmpty()) {
+                    overlaySeqs.add(new EditedMediaItemSequence.Builder(bItems.toArray(new EditedMediaItem[0])).build());
+                    ovCfg.add(new float[] { 1f, 0.5f, 0.5f });
+                    ovWin.add(bWins);
+                }
             }
 
             EditedMediaItemSequence hostSeq = new EditedMediaItemSequence.Builder(hostItems.toArray(new EditedMediaItem[0])).build();

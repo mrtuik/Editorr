@@ -17,6 +17,8 @@ export interface DocuCtx {
   /** Something changed: redraw the preview and save. */
   changed: () => void;
   seek: (ms: number) => void;
+  /** width / height of the output frame (B-roll cards are drawn in this shape) */
+  aspect?: () => number;
   /** Words with times for the AI director (captions or the agent's own transcript). */
   words: () => CapWord[];
   onClosed?: () => void;
@@ -128,7 +130,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: 'beats' | 'broll' = 'beats
   function render() {
     renderTabs();
     if (tab === 'broll') {
-      brollPane ??= buildBrollPane({ p: ctx.p, playMs: ctx.playMs, durationMs: ctx.durationMs, changed: ctx.changed, seek: ctx.seek, words: ctx.words });
+      brollPane ??= buildBrollPane({ p: ctx.p, playMs: ctx.playMs, durationMs: ctx.durationMs, changed: ctx.changed, seek: ctx.seek, words: ctx.words, aspect: ctx.aspect });
       body.replaceChildren(brollPane.el);
       return;
     }

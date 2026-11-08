@@ -198,6 +198,100 @@ public final class YouTubeBridge {
     }
 
 
+    private static final long MAX_VIDEO_BYTES = 45L * 1024 * 1024;
+
+    /**
+     * B-roll: downloads ONE small MP4 video stream (H.264, 240-720 p, closest to 480 p, lowest bitrate first) of a video into `dir`.
+     * The sound is not needed (B-roll clips play muted), so a video-only stream is fine. Files over 45 MB are skipped.
+     * Same clients and same chunked download as the audio path.
+     */
+    public static JSONObject downloadVideo(String videoId, File dir, Progress progress) throws Exception {
+        if (videoId == null || !videoId.matches("[A-Za-z0-9_-]{11}")) throw new IOException("Bad video link.");
+        cancelled = false;
+        if (!dir.exists() && !dir.mkdirs()) throw new IOException("Cannot make the b-roll folder.");
+        String title = "";
+        long durationMs = 0;
+        String lastError = "no direct video link";
+        File out = null;
+        outer:
+        for (String spec : CLIENTS) {
+            if (cancelled) throw new IOException("Cancelled");
+            try {
+                boolean vr = spec.startsWith("ANDROID_VR");
+                boolean tv = spec.startsWith("TV:");
+                String ver = (vr || tv) ? spec.substring(spec.indexOf(':') + 1) : IOS_VERSION;
+                String ua = vr ? vrUa(ver) : tv ? TV_UA : IOS_UA;
+                String name = vr ? "ANDROID_VR" : tv ? "TVHTML5" : IOS_NAME;
+                String id = vr ? "28" : tv ? "7" : "5";
+                JSONObject res = post("player", playerBody(name, ver, videoId), ua, id, ver);
+                JSONObject ps = res.optJSONObject("playabilityStatus");
+                String status = ps != null ? ps.optString("status", "") : "";
+                if (!"OK".equals(status)) { lastError = ps != null ? ps.optString("reason", status) : "not playable"; continue; }
+                JSONObject vd = res.optJSONObject("videoDetails");
+                if (vd != null) { title = vd.optString("title", ""); durationMs = vd.optLong("lengthSeconds", 0) * 1000L; }
+                for (Pick pick : pickVideo(res.optJSONObject("streamingData"))) {
+                    if (pick.size <= 0) { lastError = "YouTube did not tell the file size."; continue; }
+                    if (pick.size > MAX_VIDEO_BYTES) { lastError = "This video file is too big (over 45 MB)."; continue; }
+                    File o = new File(dir, "ytv_" + videoId + ".mp4");
+                    try {
+                        fetch(pick, ua, new File(dir, "ytv_" + videoId + ".part"), o, progress);
+                        out = o;
+                        break outer;
+                    } catch (IOException e) {
+                        if ("Cancelled".equals(e.getMessage())) throw e;
+                        lastError = e.getMessage() != null ? e.getMessage() : "download failed";
+                    }
+                }
+            } catch (IOException e) {
+                if ("Cancelled".equals(e.getMessage())) throw e;
+                lastError = e.getMessage() != null ? e.getMessage() : "network error";
+            }
+        }
+        if (out == null) throw new IOException("YouTube gave no video: " + lastError);
+        JSONObject r = new JSONObject();
+        r.put("path", out.getAbsolutePath());
+        r.put("title", title.isEmpty() ? videoId : title);
+        r.put("durationMs", durationMs);
+        return r;
+    }
+
+    /** H.264 MP4 streams with a plain url (muxed or video-only), 240-720 p, nearest to 480 p first, then the lowest bitrate. Up to 3. */
+    private static java.util.List<Pick> pickVideo(JSONObject streaming) {
+        java.util.List<Pick> out = new java.util.ArrayList<>();
+        if (streaming == null) return out;
+        java.util.List<JSONObject> list = new java.util.ArrayList<>();
+        for (String key : new String[] { "formats", "adaptiveFormats" }) {
+            JSONArray arr = streaming.optJSONArray(key);
+            if (arr == null) continue;
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject f = arr.optJSONObject(i);
+                if (f == null) continue;
+                String mime = f.optString("mimeType", "");
+                if (!mime.startsWith("video/mp4") || !mime.contains("avc1")) continue;
+                if (f.optString("url", "").isEmpty()) continue;
+                int hgt = f.optInt("height", 0);
+                if (hgt < 240 || hgt > 720) continue;
+                list.add(f);
+            }
+        }
+        java.util.Collections.sort(list, (x, y) -> {
+            int dx = Math.abs(x.optInt("height", 0) - 480), dy = Math.abs(y.optInt("height", 0) - 480);
+            if (dx != dy) return Integer.compare(dx, dy);
+            return Long.compare(x.optLong("bitrate", 0), y.optLong("bitrate", 0));
+        });
+        for (JSONObject f : list) {
+            if (out.size() >= 3) break;
+            Pick p = new Pick();
+            p.url = f.optString("url");
+            p.mime = f.optString("mimeType");
+            p.ext = "mp4";
+            try { p.size = Long.parseLong(f.optString("contentLength", "0").replaceAll("[^0-9]", "0")); } catch (NumberFormatException e) { p.size = 0; }
+            if (p.size <= 0) p.size = clenFromUrl(p.url);
+            out.add(p);
+        }
+        return out;
+    }
+
     /** Download one stream in 10 MB pieces into tmp, then move it to out. Throws on 403 etc. so the caller can try another link. */
     private static void fetch(Pick pick, String ua, File tmp, File out, Progress progress) throws IOException {
         byte[] buf = new byte[64 * 1024];

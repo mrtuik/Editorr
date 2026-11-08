@@ -11,7 +11,7 @@ import { openTextItemsSheet, type TextSheetHandle } from './textSheet';
 import { openDocuSheet, type DocuSheetHandle } from './docuSheet';
 import { docuCrop, fixDocuLayout, splitBeatAt } from '../core/docuApply';
 import { drawDocuFrame } from '../core/docuRenderer';
-import { drawBrollFrame } from '../core/brollRenderer';
+import { drawBrollFrame, pauseBrollVideos } from '../core/brollRenderer';
 import { brollBeatAt } from '../core/brollTypes';
 import { docuBeatAt } from '../core/docuTypes';
 import { openReactionSheet } from './reactionSheet';
@@ -2334,7 +2334,8 @@ export function editorScreen() {
     previewHits = [];
     // B-roll photos sit under the documentary cards, captions and texts
     const brollBeat = brollBeatAt(p.broll, playMs);
-    if (brollBeat) drawBrollFrame(g, brollBeat, playMs, w, hh, drawCaptionsPreview);
+    if (brollBeat) drawBrollFrame(g, brollBeat, playMs, w, hh, drawCaptionsPreview, playing);
+    else pauseBrollVideos();
     const beat = docuBeatAt(p.docu, playMs);
     if (beat) drawDocuFrame(g, beat, playMs, w, hh);
     const box = (hits: HitRect[]) => {
@@ -2425,6 +2426,7 @@ export function editorScreen() {
       p, playMs: () => playMs, durationMs: () => p.durationMs,
       changed: () => { applyLayout(segmentAt(p.segments, playMs)); drawCaptionsPreview(); scheduleSave(); },
       seek: (ms) => seek(ms),
+      aspect: () => aspectValue(p.aspect),
       words: () => p.captions?.words?.length ? p.captions.words : p.agentWords?.words ?? [],
       onClosed: () => { docuHandle = null; },
     }, startTab);

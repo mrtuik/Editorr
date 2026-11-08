@@ -3,8 +3,9 @@
  * (Antigravity when signed in, built-in rules otherwise), searches the free sources, saves the pictures and returns the beats.
  */
 import type { CapWord } from './captions';
-import { bestForKeyword, downloadBroll } from './brollEngine';
-import { BROLL_DEFAULT_RADIUS, BROLL_MIN_MS, BROLL_MAX_MS, BROLL_MOTIONS, type BrollBeat, type BrollFrame, type BrollMotion } from './brollTypes';
+import { BROLL_AUTO_MOTIONS, BROLL_DEFAULT_RADIUS, BROLL_MIN_MS, BROLL_MAX_MS, BROLL_MOTIONS, type BrollBeat, type BrollFrame, type BrollMotion } from './brollTypes';
+import { applyQuotas, buildRoutePrompt, fetchForPlan, localRouteOf, parseRoutePlan, type RoutePlan, type VideoMode } from './brollRouter';
+import { conceptFromText } from './brollCards';
 import { EditorrNative, isNative } from './native';
 import { uid } from './speaker';
 
@@ -19,6 +20,10 @@ export interface AutoBrollOpts {
   /** timeline ranges that are already taken (docu beats, b-roll beats that stay) */
   busy: { start: number; end: number }[];
   maxBeats?: number;
+  /** photos = pictures only, mix = a real clip on every other beat that has one, video = a clip wherever one is found */
+  videoMode: VideoMode;
+  /** width / height of the output frame (cards are drawn in this shape) */
+  aspect: number;
   useAntigravity: boolean;
   signal: { cancelled: boolean };
   onProgress: (done: number, total: number, label: string) => void;
@@ -99,36 +104,48 @@ export function localKeyword(text: string, previous = ''): string {
 
 // ---------------------------------------------------------------- the whole run
 
-async function keywordsFromAntigravity(slots: BrollSlot[], signal: { cancelled: boolean }): Promise<{ map: Map<number, { keyword: string; motion?: BrollMotion }>; note?: string }> {
-  const map = new Map<number, { keyword: string; motion?: BrollMotion }>();
+async function routesFromAntigravity(slots: BrollSlot[], signal: { cancelled: boolean }): Promise<{ map: Map<number, Omit<RoutePlan, 'i'>>; note?: string }> {
+  const map = new Map<number, Omit<RoutePlan, 'i'>>();
   try {
     if (!isNative()) throw new Error('Antigravity works in the Android app only');
     const st = await EditorrNative.antigravityStatus();
     if (!st.installed) throw new Error('Antigravity is not set up yet');
     if (!st.signedIn) throw new Error('Antigravity is not signed in');
     for (let a = 0; a < slots.length && !signal.cancelled; a += 30) {
-      const { response } = await EditorrNative.askAntigravity({ prompt: buildBrollPrompt(slots.slice(a, a + 30)) });
-      for (const [k, v] of parseBrollJson(response)) map.set(k, v);
+      const { response } = await EditorrNative.askAntigravity({ prompt: buildRoutePrompt(slots.slice(a, a + 30)) });
+      for (const [k, v] of parseRoutePlan(response)) map.set(k, v);
     }
     return { map, note: map.size < slots.length ? 'Antigravity skipped some beats; the built-in rules filled them.' : undefined };
   } catch (e) { return { map, note: `Antigravity: ${(e as Error).message || 'no answer'}. The built-in rules were used.` }; }
+}
+
+/** Route + keyword for every beat: Antigravity's answer where it gave one, the built-in rules elsewhere, then the quotas. */
+export function planRoutes(slots: BrollSlot[], ai: Map<number, Omit<RoutePlan, 'i'>>): RoutePlan[] {
+  let prev = '';
+  const plans: RoutePlan[] = slots.map((s) => {
+    const a = ai.get(s.i);
+    if (a) { prev = a.keyword; return { i: s.i, ...a }; }
+    const kind = localRouteOf(s.text);
+    const kw = localKeyword(s.text, prev);
+    prev = kw || prev;
+    const route = kind === 'plain' ? 'entity' : kind;
+    const c = route === 'concept' ? conceptFromText(s.text, kw) : undefined;
+    return { i: s.i, route, keyword: kw, ...(c ? { big: c.big, trend: c.trend } : {}) };
+  });
+  return applyQuotas(plans);
 }
 
 export async function autoBroll(o: AutoBrollOpts): Promise<AutoBrollResult> {
   const slots = makeSlots(o.words, o.durationMs, o.lenMs, o.busy, o.coverage, o.maxBeats ?? 60);
   if (!slots.length) return { beats: [], missed: 0, note: 'No free beats with speech found.' };
   let note: string | undefined;
-  let kws = new Map<number, { keyword: string; motion?: BrollMotion }>();
+  let ai = new Map<number, Omit<RoutePlan, 'i'>>();
   if (o.useAntigravity) {
-    o.onProgress(0, slots.length, 'Asking the director for keywords...');
-    const r = await keywordsFromAntigravity(slots, o.signal);
-    kws = r.map; note = r.note;
+    o.onProgress(0, slots.length, 'Asking the director to pick the routes...');
+    const r = await routesFromAntigravity(slots, o.signal);
+    ai = r.map; note = r.note;
   }
-  let prev = '';
-  for (const s of slots) {
-    if (!kws.get(s.i)?.keyword) kws.set(s.i, { keyword: localKeyword(s.text, prev), motion: kws.get(s.i)?.motion });
-    prev = kws.get(s.i)!.keyword;
-  }
+  const plans = planRoutes(slots, ai);
 
   const used = new Set<string>();
   const beats: (BrollBeat | undefined)[] = new Array(slots.length).fill(undefined);
@@ -137,22 +154,26 @@ export async function autoBroll(o: AutoBrollOpts): Promise<AutoBrollResult> {
     while (!o.signal.cancelled) {
       const idx = next++;
       if (idx >= slots.length) return;
-      const s = slots[idx]!, kw = kws.get(s.i)!;
-      o.onProgress(done, slots.length, kw.keyword);
-      const item = kw.keyword ? await bestForKeyword(kw.keyword, used) : undefined;
-      if (item) {
-        used.add(item.url);
-        const path = await downloadBroll(item);
-        if (path || !isNative()) {
-          beats[idx] = {
-            id: uid(), start: s.start, end: s.end, keyword: kw.keyword, url: item.url, thumb: item.thumb, ...(path ? { path } : {}),
-            title: item.title, source: item.source, ...(item.credit ? { credit: item.credit } : {}),
-            motion: kw.motion ?? BROLL_MOTIONS[idx % BROLL_MOTIONS.length]!, frame: o.frame, radius: BROLL_DEFAULT_RADIUS,
-          };
-        } else missed++;
+      const s = slots[idx]!, plan = plans[idx]!;
+      const label = `${plan.route}: ${plan.keyword || plan.big || ''}`;
+      o.onProgress(done, slots.length, label);
+      let asset;
+      try { asset = await fetchForPlan(plan, s.end - s.start, { used, videoMode: o.videoMode, aspect: o.aspect, idx, text: s.text, signal: o.signal }, o.frame); }
+      catch { asset = undefined; }
+      if (asset && !o.signal.cancelled) {
+        const isVideo = asset.kind === 'video';
+        // a clip never runs past the end of its file
+        let end = s.end;
+        if (isVideo && asset.srcMs) end = Math.min(end, s.start + Math.max(BROLL_MIN_MS, asset.srcMs - (asset.inMs ?? 0) - 200));
+        beats[idx] = {
+          id: uid(), start: s.start, end, keyword: plan.keyword || plan.big || '', url: asset.url, thumb: asset.thumb, ...(asset.path ? { path: asset.path } : {}),
+          title: asset.title, source: asset.source, ...(asset.credit ? { credit: asset.credit } : {}),
+          kind: asset.kind, route: plan.route, ...(isVideo ? { inMs: asset.inMs ?? 0, ...(asset.srcMs ? { srcMs: asset.srcMs } : {}) } : {}),
+          motion: asset.motion ?? plan.motion ?? BROLL_AUTO_MOTIONS[idx % BROLL_AUTO_MOTIONS.length]!, frame: asset.frame ?? o.frame, radius: BROLL_DEFAULT_RADIUS,
+        };
       } else missed++;
       done++;
-      o.onProgress(done, slots.length, kw.keyword);
+      o.onProgress(done, slots.length, label);
     }
   };
   await Promise.all([worker(), worker(), worker()]);

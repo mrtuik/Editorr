@@ -234,3 +234,19 @@ The AI Agent tab uses Google's Antigravity CLI **inside Editorr**. No other app 
 - Preview: `src/core/brollRenderer.ts`. Export: `BrollOverlay` in `EditorrNativePlugin.java` (same numbers, from `src/core/brollTypes.ts`). Beats whose photo is not saved on the phone are left out of the export.
 - "Copy credits" puts author + licence lines on the clipboard. Creative Commons photos need attribution in the video description.
 - Written without a device or Android build: test it, and send the Actions log if the Java fails to compile.
+
+## B-roll v2: clips, 4 routes, cards, blur fill (Docu > B-roll)
+
+- **Auto B-roll now picks a route per beat** (`src/core/brollRouter.ts`). Antigravity answers `{route, keyword, motion, big, trend}` per beat; without it built-in rules decide. Quotas keep the mix lively: at most ~15% concept cards and ~30% article cards.
+  - `entity` (people, brands): YouTube clip (Android app) -> Commons video -> photo
+  - `receipt` (news, claims, studies): article card -> photo
+  - `concept` (numbers, rises, falls): concept card
+  - `archival` (old times, wars, events): archive.org film -> Commons video -> photo
+- **Clips setting** in the tab: Photos only / Clips + photos (a clip on every other beat) / Clips first. A beat that finds no clip falls back to a photo, so nothing is left empty.
+- **Real video clips (no key):** Wikimedia Commons video (small MP4/WebM transcodes), archive.org movies (Prelinger, NASA, public domain) and YouTube (video track only, under 45 MB, Android app). The file is saved in `broll/`; each beat starts a little inside the clip (`inMs`) and never runs past its end. Clips play muted and fill the frame.
+- **Cards the app draws itself** (`src/core/brollCards.ts`): Concept card (black, huge number or phrase, accent bar, faint up/down trend line, drawn in the video's own shape) and Article card (Wikipedia paper clipping with the key words highlighted). Saved as PNG in `broll/`. Manual: "Concept card" box and the "Article card" search type.
+- **Blur fill frame:** the whole picture sits in front of a blurred, darkened copy of itself (nothing is cropped). Used automatically for portrait / odd-shaped photos and for article cards. Motion `Slow zoom` (+4% over the beat) is used for article and concept cards.
+- **Manual search types:** Photos, Videos (Commons + archive.org), YouTube, Article card.
+- **Export:** all video beats share ONE extra video track in the Media3 composition (`brollVideos` in `native.ts`, "B-roll video clips" in `EditorrNativePlugin.java`), so the 4-overlay limit does not apply. Photos and cards still use `BrollOverlay`, which now also draws the blur frame and slow zoom (same numbers as `brollRenderer.ts`).
+- **Not done / differences from the plan:** no Pexels/Mixkit scraper (no stable key-free API); the Receipts route draws an article card from Wikipedia instead of a headless-browser screenshot of a live news page (a phone cannot run one); concept cards are still pictures (zoom only), not animated counters; video clips are full frame only (no rounded corners or card frame in the export). Use the Credits button: Commons / archive.org / Wikipedia items need attribution.
+- Typechecked and the routing / card-text / in-point / blur-box logic unit-tested in Node with stubbed Capacitor. **Not compiled with Gradle and not run on a device:** send the Actions log if the Java fails, and test first with a 30 s export that has one clip, one photo with blur fill and one card.
