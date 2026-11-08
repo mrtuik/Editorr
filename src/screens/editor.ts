@@ -1919,8 +1919,7 @@ export function editorScreen() {
     setPlaying(false);
     if (playMs < s0 || playMs >= e0) seek(Math.min(e0 - 1, s0 + 120));
     if (kind === 'text') { if (textHandle) textHandle.select(id); else openTexts(id); textSel = id; }
-    else if (docuHandle) docuHandle.select(kind === 'docu' ? 'beats' : 'broll', id);
-    else openDocu(kind === 'docu' ? 'beats' : 'broll', id);
+    else openDocu(kind === 'docu' ? 'beats' : 'broll', id, kind);
     laySel = { kind, id };
     drawCaptionsPreview(); requestDraw();
   }
@@ -1929,12 +1928,16 @@ export function editorScreen() {
     const lane = laneAt(y);
     if (lane === 'music') { openMusic(rowsNow.mus.length ? 'bgm' : 'home'); return; }
     if (lane === 'sfx') { openMusic('sfx'); return; }
-    if (lane === 'caption') { openCaptions(); return; }
+    if (lane === 'caption') {
+      const pg = x >= G ? capPages.find((q) => { const a = xOf(q.s), b = Math.max(xOf(q.e) - 1, a + 10); return x >= a - 2 && x <= b + 2; }) : undefined;
+      if (pg) { setPlaying(false); openCaptions(pg.from, true); } else openCaptions();
+      return;
+    }
     if (lane === 'text' || lane === 'docu' || lane === 'broll') {
       const hit = layerAt(lane, x, y);
       if (hit) selectLayer(lane, hit.id, hit.s, hit.e);
       else if (lane === 'text') openTexts();
-      else openDocu(lane === 'docu' ? 'beats' : 'broll');
+      else openDocu(lane === 'docu' ? 'beats' : 'broll', undefined, lane);
       return;
     }
     if (x < G) {
@@ -2498,7 +2501,7 @@ export function editorScreen() {
       return false;
     } finally { endTask('captions'); }
   }
-  function openCaptions(startWord = -1) {
+  function openCaptions(startWord = -1, single = false) {
     textHandle?.close();
     capHandle?.close();
     capHandle = openCaptionSheet({
@@ -2510,10 +2513,10 @@ export function editorScreen() {
       cut: (a, b) => { edit(dropSlivers(subtractRanges(p.segments, [{ startMs: a, endMs: b }]), 1)); capVersion++; drawCaptionsPreview(); },
       onSelect: (i) => { capSel = i; drawCaptionsPreview(); },
       onClosed: () => { capHandle = null; capSel = -1; drawCaptionsPreview(); },
-    }, startWord);
+    }, startWord, single);
   }
 
-  function openDocu(startTab: DocuTab = 'beats', startId?: string) {
+  function openDocu(startTab: DocuTab = 'beats', startId?: string, only?: 'docu' | 'broll') {
     capHandle?.close();
     textHandle?.close();
     docuHandle?.close();
@@ -2524,7 +2527,7 @@ export function editorScreen() {
       aspect: () => aspectValue(p.aspect),
       words: () => p.captions?.words?.length ? p.captions.words : p.agentWords?.words ?? [],
       onClosed: () => { docuHandle = null; laySel = null; requestDraw(); },
-    }, startTab, startId);
+    }, startTab, startId, only);
   }
 
   function openTexts(startId?: string) {
@@ -2583,7 +2586,7 @@ export function editorScreen() {
     if (tg.moved) { scheduleSave(); return; }
     setPlaying(false);
     if (tg.hit.kind === 'text') { if (textHandle) textHandle.select(tg.hit.id); else openTexts(tg.hit.id); }
-    else if (capHandle) capHandle.selectWord(tg.hit.word); else openCaptions(tg.hit.word);
+    else openCaptions(tg.hit.word, true);
   };
   preview.addEventListener('pointerup', endTextGesture);
   preview.addEventListener('pointercancel', endTextGesture);
@@ -3019,7 +3022,8 @@ export function editorScreen() {
         tool('autoframe', 'Autoframe', doAutoframe),
         tool('face', 'Faces', doFaces),
         tool('text', 'Text', () => openGroup('text')),
-        tool('layout', 'B-roll', () => openDocu('broll')),
+        tool('text', 'Docu beats', () => openDocu('beats', undefined, 'docu')),
+        tool('layout', 'B-roll', () => openDocu('broll', undefined, 'broll')),
         tool('reaction', 'Reaction', doReactionTool),
         tool('overlay', 'Overlay', () => { if (ovList().length) openPanel('overlay'); else void addOverlay(false); }),
         tool('punch', 'Auto zoom', doAutoZoom),

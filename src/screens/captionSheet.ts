@@ -36,10 +36,11 @@ export function swatches(label: string, value: string, onPick: (c: string) => vo
 }
 
 /** Text > Caption. First time: pick language, make captions. Then: looks and settings. */
-export function openCaptionSheet(ctx: CaptionCtx, startWord = -1): CaptionSheetHandle {
+/** `single`: opened by tapping one caption (timeline or video): only that caption's editor, Done closes the sheet. */
+export function openCaptionSheet(ctx: CaptionCtx, startWord = -1, single = false): CaptionSheetHandle {
   const { p, settings: s } = ctx;
   const save = () => { void saveSettings(s); };
-  const body = h('div', { class: 'at-body' });
+  const body = h('div', { class: 'at-body', style: 'padding:0 16px 8px' });
   const foot = h('div', { class: 'at-foot' });
   const title = h('div', { class: 'at-title' }, 'Captions');
   let closed = false;
@@ -211,7 +212,11 @@ export function openCaptionSheet(ctx: CaptionCtx, startWord = -1): CaptionSheetH
     const idx = Math.max(0, pages.findIndex((pg) => capRange!.from >= pg.from && capRange!.from <= pg.to));
     const go = (k: number) => { apply(true); const pg = buildPages(c, st)[k]; if (pg) selectCaption(pg.from); };
     const chipsEl = h('div', { class: 'cap-trans' }, ...range().map((w, k) => h('button', { class: 'cap-tw' + (!fxIsEmpty(w.fx) ? ' styled' : ''), onclick: () => { apply(true); selectWord(capRange!.from + k, 'caption'); } }, shown(w))));
-    const done = () => { apply(true); tidyFx(); selWord = -1; capRange = null; ctx.onSelect?.(-1); ctx.changed(); styleTab = 'Text'; renderStyle(); };
+    const done = () => {
+      apply(true); tidyFx(); selWord = -1; capRange = null; ctx.changed();
+      if (single) { close(); return; }
+      ctx.onSelect?.(-1); styleTab = 'Text'; renderStyle();
+    };
 
     body.replaceChildren(
       h('div', { class: 'cs-top' }, h('div', { class: 'ts-field' }, input), h('span', { class: 'cs-time' }, fmtClock(c.words[capRange.from]?.s ?? 0))),
@@ -263,7 +268,7 @@ export function openCaptionSheet(ctx: CaptionCtx, startWord = -1): CaptionSheetH
     };
     drawList(); drawTrans();
 
-    const tabsBar = h('div', { class: 'ts-tabs', style: 'padding:0;margin:0 0 4px' }, ...(['Style', 'Layout', 'Text', 'Words'] as STab[]).map((t) =>
+    const tabsBar = h('div', { class: 'ts-tabs', style: 'padding:0;margin:0 0 8px' }, ...(['Style', 'Layout', 'Text', 'Words'] as STab[]).map((t) =>
       h('button', { class: 'ts-tab' + (t === styleTab ? ' on' : ''), onclick: () => { styleTab = t; renderStyle(); } }, t)));
     const pane: Node[] = styleTab === 'Style' ? [
       h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Style'), looks),

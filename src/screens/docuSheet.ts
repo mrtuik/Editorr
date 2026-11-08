@@ -54,8 +54,8 @@ function chipRow<T extends string>(label: string, opts: [T, string][], value: T,
  * Docu: documentary typography beats. AI picks the moments, you flip which side the video sits on, round the corners,
  * and edit the words. Shows on the video straight away; the export draws the same.
  */
-export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId?: string): DocuSheetHandle {
-  let tab: DocuTab = startTab;
+export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId?: string, only?: 'docu' | 'broll'): DocuSheetHandle {
+  let tab: DocuTab = only === 'broll' ? 'broll' : (only === 'docu' && startTab === 'broll') ? 'beats' : startTab;
   let brollPane: BrollPane | null = null;
   let scopeAll = false;
   const beats = (): DocuBeat[] => (ctx.p.docu ??= []);
@@ -75,7 +75,8 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
   };
   const tabsEl = h('div', { class: 'br-tabs dt-tabs' });
   const renderTabs = () => {
-    tabsEl.replaceChildren(...TAB_LABEL.map(([k, l]) =>
+    const shownTabs = only === 'docu' ? TAB_LABEL.filter(([k]) => k !== 'broll') : only === 'broll' ? TAB_LABEL.filter(([k]) => k === 'broll') : TAB_LABEL;
+    tabsEl.replaceChildren(...shownTabs.map(([k, l]) =>
       h('button', { class: 'br-tab' + (tab === k ? ' on' : ''), onclick: () => { if (tab !== k) { tab = k; render(); } } }, l)));
     (tabsEl.querySelector('.on') as HTMLElement | null)?.scrollIntoView?.({ inline: 'center', block: 'nearest' });
   };
@@ -286,7 +287,8 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
   return {
     close,
     select: (t, id) => {
-      if (t === 'broll') { tabBrollId = id; tab = 'broll'; brollPane?.select(id); render(); return; }
+      if (t === 'broll') { if (only === 'docu') return; tabBrollId = id; tab = 'broll'; brollPane?.select(id); render(); return; }
+      if (only === 'broll') return;
       if (beats().some((x) => x.id === id)) { sel = id; if (tab === 'broll') tab = 'beats'; render(); }
     },
   };

@@ -1682,3 +1682,8 @@ input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-webkit-s
 .cap-line:active { opacity: .7; }
 .cap-line .cap-time { flex: none; color: #8d8d90; font-size: 12px; font-weight: 600; min-width: 34px; }
 .cap-line-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- Back button without a background; sheets keep a left/right gap ---- */
+.at-back, .at-sheet .at-back, .at-sheet.fz .at-back { background: transparent !important; border: 0 !important; box-shadow: none !important; }
+.at-sheet.cs .at-body { padding: 0 16px 8px; }
+.at-sheet.cs .ts-tabs { padding-left: 0; padding-right: 0; }
