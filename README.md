@@ -225,3 +225,12 @@ The AI Agent tab uses Google's Antigravity CLI **inside Editorr**. No other app 
 - Preview: `core/docuRenderer.ts` draws the card and a rounded window for the video. Export: `DocuOverlay` in `EditorrNativePlugin.java` draws the same numbers. Beats are stored in `Project.docu` (project time, like texts).
 - Split beats move the main person into the window with the existing free-placement crop (`px`/`py`), so no new Media3 layout code was needed (`core/docuApply.ts`).
 - Not compiled/tested on a device yet: run a 30 s export with one black screen and one split beat first.
+
+## B-roll photos (Docu > B-roll tab, or the B-roll tool)
+
+- Free photos, no API key: Wikimedia Commons + Wikipedia lead photos + Openverse (skipped when its small anonymous quota runs out). Code: `src/core/brollEngine.ts`.
+- Auto B-roll: cuts the transcript into beats (default 2.5 s, 1.5 to 4 s), Antigravity (or a built-in rule) picks a keyword per beat, the best photo is searched and saved to the app's files folder (`broll/`). Code: `src/core/brollPlanner.ts`.
+- Manual: search box + square grid, tap a photo to put it at the playhead. Motion: Zoom in / Zoom out / Pan left / Pan right. Frame: Card (rounded photo, dimmed video, shadow, vignette) or Full frame.
+- Preview: `src/core/brollRenderer.ts`. Export: `BrollOverlay` in `EditorrNativePlugin.java` (same numbers, from `src/core/brollTypes.ts`). Beats whose photo is not saved on the phone are left out of the export.
+- "Copy credits" puts author + licence lines on the clipboard. Creative Commons photos need attribution in the video description.
+- Written without a device or Android build: test it, and send the Actions log if the Java fails to compile.

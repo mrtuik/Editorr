@@ -6,6 +6,7 @@ import {
   type DocuBeat, type DocuPos, type DocuTheme, type DocuType,
 } from '../core/docuTypes';
 import { uid } from '../core/speaker';
+import { buildBrollPane, type BrollPane } from './brollSheet';
 import type { Project } from '../core/types';
 import { h, icon, toast } from '../ui';
 
@@ -46,7 +47,9 @@ function chipRow<T extends string>(label: string, opts: [T, string][], value: T,
  * Docu: documentary typography beats. AI picks the moments, you flip which side the video sits on, round the corners,
  * and edit the words. Shows on the video straight away; the export draws the same.
  */
-export function openDocuSheet(ctx: DocuCtx): DocuSheetHandle {
+export function openDocuSheet(ctx: DocuCtx, startTab: 'beats' | 'broll' = 'beats'): DocuSheetHandle {
+  let tab: 'beats' | 'broll' = startTab;
+  let brollPane: BrollPane | null = null;
   const beats = (): DocuBeat[] => (ctx.p.docu ??= []);
   fixDocuLayout(ctx.p);
   const layout = () => docuLayoutFor(ctx.p.aspect);
@@ -59,10 +62,14 @@ export function openDocuSheet(ctx: DocuCtx): DocuSheetHandle {
     if (closed) return;
     closed = true;
     sheet.classList.add('out'); setTimeout(() => box.remove(), 180);
+    brollPane?.dispose();
     ctx.onClosed?.();
   };
+  const tabsEl = h('div', { class: 'br-tabs' });
+  const renderTabs = () => tabsEl.replaceChildren(...([['beats', 'Docu beats'], ['broll', 'B-roll']] as const).map(([k, l]) =>
+    h('button', { class: 'br-tab' + (tab === k ? ' on' : ''), onclick: () => { if (tab !== k) { tab = k; renderTabs(); render(); } } }, l)));
   const sheet = h('div', { class: 'at-sheet ts', role: 'dialog' },
-    h('div', { class: 'at-head' }, h('div', { class: 'at-title' }, 'Docu beats'), h('span', { class: 'at-head-gap' }),
+    h('div', { class: 'at-head' }, tabsEl, h('span', { class: 'at-head-gap' }),
       h('button', { class: 'ts-ok', 'aria-label': 'Done', onclick: close }, icon('check', 26))),
     body);
   const box = h('div', { class: 'at-scrim clear', onclick: (e: Event) => { if (e.target === box) close(); } }, sheet);
@@ -119,6 +126,12 @@ export function openDocuSheet(ctx: DocuCtx): DocuSheetHandle {
   };
 
   function render() {
+    renderTabs();
+    if (tab === 'broll') {
+      brollPane ??= buildBrollPane({ p: ctx.p, playMs: ctx.playMs, durationMs: ctx.durationMs, changed: ctx.changed, seek: ctx.seek, words: ctx.words });
+      body.replaceChildren(brollPane.el);
+      return;
+    }
     const b = cur();
     const list = sorted();
     const kids: Node[] = [];

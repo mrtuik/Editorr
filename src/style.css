@@ -1624,3 +1624,14 @@ input[type=range]:not(.xrange):not(.xs-range):not(.crop-rotate-input)::-webkit-s
 .xtiktok { border-radius: 14px; }
 .xticon { border-radius: 14px; }
 .xqicon { border-radius: 16px; }
+
+/* ---- B-roll tab (Docu sheet) ---- */
+.br-tabs { display: flex; gap: 6px; }
+.br-tab { min-height: 34px; padding: 0 14px; border: 0; border-radius: 2px; background: transparent; color: #8a8a8c; font: inherit; font-size: 17px; font-weight: 700; letter-spacing: -.2px; }
+.br-tab.on { color: #fff; box-shadow: inset 0 -2px 0 #fff; }
+.br-search { display: flex; gap: 8px; margin-top: 18px; }
+.br-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+.br-tile { position: relative; aspect-ratio: 1 / 1; padding: 0; border: 0; border-radius: 2px; overflow: hidden; background: #1c1c1e; }
+.br-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.br-tile .src { position: absolute; left: 4px; bottom: 4px; padding: 2px 6px; border-radius: 2px; background: rgba(0,0,0,.7); color: #fff; font-size: 10px; font-weight: 700; }
+.br-tile.busy { opacity: .45; }

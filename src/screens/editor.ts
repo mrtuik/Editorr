@@ -11,6 +11,8 @@ import { openTextItemsSheet, type TextSheetHandle } from './textSheet';
 import { openDocuSheet, type DocuSheetHandle } from './docuSheet';
 import { docuCrop, fixDocuLayout, splitBeatAt } from '../core/docuApply';
 import { drawDocuFrame } from '../core/docuRenderer';
+import { drawBrollFrame } from '../core/brollRenderer';
+import { brollBeatAt } from '../core/brollTypes';
 import { docuBeatAt } from '../core/docuTypes';
 import { openReactionSheet } from './reactionSheet';
 import { askAutoZoom, zoomShapeFrom } from './zoomSheet';
@@ -2330,6 +2332,9 @@ export function editorScreen() {
     if (capCanvas.width !== w || capCanvas.height !== hh) { capCanvas.width = w; capCanvas.height = hh; }
     g.clearRect(0, 0, w, hh);
     previewHits = [];
+    // B-roll photos sit under the documentary cards, captions and texts
+    const brollBeat = brollBeatAt(p.broll, playMs);
+    if (brollBeat) drawBrollFrame(g, brollBeat, playMs, w, hh, drawCaptionsPreview);
     const beat = docuBeatAt(p.docu, playMs);
     if (beat) drawDocuFrame(g, beat, playMs, w, hh);
     const box = (hits: HitRect[]) => {
@@ -2412,7 +2417,7 @@ export function editorScreen() {
     }, startWord);
   }
 
-  function openDocu() {
+  function openDocu(startTab: 'beats' | 'broll' = 'beats') {
     capHandle?.close();
     textHandle?.close();
     docuHandle?.close();
@@ -2422,7 +2427,7 @@ export function editorScreen() {
       seek: (ms) => seek(ms),
       words: () => p.captions?.words?.length ? p.captions.words : p.agentWords?.words ?? [],
       onClosed: () => { docuHandle = null; },
-    });
+    }, startTab);
   }
 
   function openTexts(startId?: string) {
@@ -2916,7 +2921,7 @@ export function editorScreen() {
         tool('autoframe', 'Autoframe', doAutoframe),
         tool('face', 'Faces', doFaces),
         tool('text', 'Text', () => openGroup('text')),
-        tool('layout', 'Docu', () => openDocu()),
+        tool('layout', 'B-roll', () => openDocu('broll')),
         tool('reaction', 'Reaction', doReactionTool),
         tool('overlay', 'Overlay', () => { if (ovList().length) openPanel('overlay'); else void addOverlay(false); }),
         tool('punch', 'Auto zoom', doAutoZoom),

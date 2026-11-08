@@ -1937,6 +1937,136 @@ public class EditorrNativePlugin extends Plugin {
         }
     }
 
+    /**
+     * B-roll photos (see src/core/brollRenderer.ts, which draws the same thing in the preview).
+     * One frame-sized layer per beat (dimming, shadow, rounded photo, vignette) is painted once when the beat starts.
+     * Each frame only moves that layer: scale, sideways shift and fade come from getOverlaySettings(), same numbers as brollTypes.ts.
+     * Times come in as timeline ms and are mapped to output time through the kept parts (ra / rb) and their speeds (sp).
+     */
+    private static final class BrollOverlay extends BitmapOverlay {
+        private final int w, h;
+        private final List<JSONObject> beats = new ArrayList<>();
+        private final List<long[]> times = new ArrayList<>(); // output start, output end
+        private final Bitmap blank = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888);
+        private int curIdx = -1;
+        private Bitmap curBmp;
+
+        private BrollOverlay(int w, int h) { this.w = w; this.h = h; }
+
+        static BrollOverlay create(JSONArray arr, int w, int h, long[] ra, long[] rb, float[] sp) {
+            if (arr == null || arr.length() == 0) return null;
+            BrollOverlay o = new BrollOverlay(w, h);
+            long[] cum = new long[ra.length];
+            long run = 0;
+            for (int i = 0; i < ra.length; i++) { cum[i] = run; run += Math.round((rb[i] - ra[i]) / (double) sp[i]); }
+            for (int bi = 0; bi < arr.length(); bi++) {
+                JSONObject b = arr.optJSONObject(bi);
+                if (b == null || b.optString("path", "").isEmpty()) continue;
+                long s = Math.round(b.optDouble("s", 0)), e = Math.round(b.optDouble("e", 0));
+                long os = -1, oe = -1;
+                for (int i = 0; i < ra.length; i++) {
+                    if (os < 0 && s >= ra[i] && s < rb[i]) os = cum[i] + Math.round((s - ra[i]) / (double) sp[i]);
+                    if (e > ra[i] && e <= rb[i]) oe = cum[i] + Math.round((e - ra[i]) / (double) sp[i]);
+                }
+                if (os < 0) continue;
+                if (oe <= os) oe = os + Math.max(300, e - s);
+                o.beats.add(b);
+                o.times.add(new long[] { os, oe });
+            }
+            return o.beats.isEmpty() ? null : o;
+        }
+
+        private int indexAt(long tc) {
+            for (int i = 0; i < times.size(); i++) { if (tc >= times.get(i)[0] && tc < times.get(i)[1]) return i; }
+            return -1;
+        }
+
+        @Override
+        public Bitmap getBitmap(long presentationTimeUs) {
+            int bi = indexAt(presentationTimeUs / 1000);
+            if (bi < 0) return blank;
+            if (bi != curIdx) { curBmp = render(beats.get(bi)); curIdx = bi; }
+            return curBmp == null ? blank : curBmp;
+        }
+
+        @Override
+        public OverlaySettings getOverlaySettings(long presentationTimeUs) {
+            long tc = presentationTimeUs / 1000;
+            int bi = indexAt(tc);
+            StaticOverlaySettings.Builder ob = new StaticOverlaySettings.Builder();
+            if (bi < 0) return ob.setAlphaScale(0f).build();
+            JSONObject b = beats.get(bi);
+            long os = times.get(bi)[0], oe = times.get(bi)[1];
+            double p = Math.max(0, Math.min(1, (tc - os) / (double) Math.max(1, oe - os)));
+            double e = p * p * (3 - 2 * p);
+            float s, tx = 0f;
+            String m = b.optString("motion", "zoom_in");
+            if ("zoom_out".equals(m)) s = (float) (1.12 - 0.12 * e);
+            else if ("pan_left".equals(m)) { s = 1.06f; tx = (float) (0.02 - 0.04 * e); }
+            else if ("pan_right".equals(m)) { s = 1.06f; tx = (float) (-0.02 + 0.04 * e); }
+            else s = (float) (1 + 0.12 * e);
+            float fin = (float) Math.max(0, Math.min(1, (tc - os) / 160.0));
+            float fout = (float) Math.max(0, Math.min(1, (oe - tc) / 120.0));
+            return ob.setScale(s, s).setBackgroundFrameAnchor(2f * tx, 0f).setAlphaScale(Math.min(fin, fout)).build();
+        }
+
+        private static Bitmap decode(String path, int maxDim) {
+            if (path == null || path.isEmpty()) return null;
+            String f = path.startsWith("file://") ? path.substring(7) : path;
+            android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+            o.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeFile(f, o);
+            if (o.outWidth <= 0 || o.outHeight <= 0) return null;
+            int ss = 1;
+            while (o.outWidth / (ss * 2) >= maxDim && o.outHeight / (ss * 2) >= maxDim) ss *= 2;
+            o = new android.graphics.BitmapFactory.Options();
+            o.inSampleSize = ss;
+            return android.graphics.BitmapFactory.decodeFile(f, o);
+        }
+
+        private Bitmap render(JSONObject b) {
+            Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            try {
+                Bitmap src = decode(b.optString("path", ""), Math.max(w, h));
+                if (src == null) return out;
+                Canvas c = new Canvas(out);
+                JSONObject box = b.optJSONObject("box");
+                float bx = box == null ? 0f : (float) box.optDouble("x", 0), by = box == null ? 0f : (float) box.optDouble("y", 0);
+                float bw = box == null ? w : (float) box.optDouble("w", w), bh = box == null ? h : (float) box.optDouble("h", h);
+                boolean card = "card".equals(b.optString("frame", "card"));
+                float r = (float) b.optDouble("radius", 0);
+                RectF rect = new RectF(bx, by, bx + bw, by + bh);
+                if (card) {
+                    c.drawColor(Color.argb((int) Math.round(b.optDouble("scrim", 0) * 255.0), 0, 0, 0));
+                    Paint sp = new Paint(Paint.ANTI_ALIAS_FLAG);
+                    sp.setColor(Color.BLACK);
+                    sp.setShadowLayer((float) b.optDouble("shadowBlur", 0) / 2f, 0f, (float) b.optDouble("shadowDy", 0), Color.argb(140, 0, 0, 0));
+                    c.drawRoundRect(rect, r, r, sp);
+                }
+                Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+                android.graphics.BitmapShader sh = new android.graphics.BitmapShader(src, android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP);
+                float sc = Math.max(bw / src.getWidth(), bh / src.getHeight());
+                android.graphics.Matrix mx = new android.graphics.Matrix();
+                mx.setScale(sc, sc);
+                mx.postTranslate(bx + (bw - src.getWidth() * sc) / 2f, by + (bh - src.getHeight() * sc) / 2f);
+                sh.setLocalMatrix(mx);
+                p.setShader(sh);
+                c.drawRoundRect(rect, r, r, p);
+                double vig = b.optDouble("vignette", 0);
+                if (card && vig > 0) {
+                    float cx = bx + bw / 2f, cy = by + bh / 2f, rad = (float) Math.hypot(bw, bh) / 2f;
+                    Paint vp = new Paint(Paint.ANTI_ALIAS_FLAG);
+                    vp.setShader(new android.graphics.RadialGradient(cx, cy, rad,
+                            new int[] { Color.TRANSPARENT, Color.TRANSPARENT, Color.argb((int) Math.round(vig * 255.0), 0, 0, 0) },
+                            new float[] { 0f, 0.55f, 1f }, android.graphics.Shader.TileMode.CLAMP));
+                    c.drawRoundRect(rect, r, r, vp);
+                }
+                src.recycle();
+            } catch (Throwable t) { /* a picture that cannot be read leaves the beat empty */ }
+            return out;
+        }
+    }
+
     private static class Seg {
         long start, end;
         String style, main, corner, size;
@@ -2100,6 +2230,7 @@ public class EditorrNativePlugin extends Plugin {
             final JSONArray overlaysJson = call.getData().optJSONArray("overlays");
             final JSONArray textsJson = call.getData().optJSONArray("texts");
             final JSONArray docuJson = call.getData().optJSONArray("docu");
+            final JSONArray brollJson = call.getData().optJSONArray("broll");
             final float gain = (float) Math.max(0.0, Math.min(10.0, call.getDouble("gain", 1.0)));
             // Enhanced Audio: EQ + de-esser + compressor + limiter on the audio-source mic ("voice") and on the final mix ("master")
             final JSONObject fxJson = call.getData().optJSONObject("fx");
@@ -2124,7 +2255,7 @@ public class EditorrNativePlugin extends Plugin {
             final long durationMs = durationRaw;
             cancelProxyJobs();
             exportHandler().post(() ->
-                    startTransformer(call, hostUri, constUri, cleanAudioUri, captionsJson, textsJson, docuJson, bgmUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate, voiceFx, masterFx, overlaysJson));
+                    startTransformer(call, hostUri, constUri, cleanAudioUri, captionsJson, textsJson, docuJson, bgmUri, offsetMs, durationMs, outW, outH, hostAudio, segs, cropHost, cropConst, mirrorHost, mirrorConst, gain, fps, bitrate, voiceFx, masterFx, overlaysJson, brollJson));
         } catch (JSONException e) {
             call.reject("Bad export request: " + e.getMessage());
         }
@@ -2133,7 +2264,7 @@ public class EditorrNativePlugin extends Plugin {
     private void startTransformer(PluginCall call, String hostUri, String constUri, String cleanAudioUri, JSONObject captionsJson, JSONArray textsJson, JSONArray docuJson, String bgmUri, long offsetMs, long durationMs,
                                   int outW, int outH, boolean hostAudio, List<Seg> segs,
                                   CropSpec cropHost, CropSpec cropConst, boolean mirrorHost, boolean mirrorConst,
-                                  float gain, int fps, int bitrate, FxCfg voiceFx, FxCfg masterFx, JSONArray overlaysJson) {
+                                  float gain, int fps, int bitrate, FxCfg voiceFx, FxCfg masterFx, JSONArray overlaysJson, JSONArray brollJson) {
         try {
             // Timeline time = Host time. The Constant video is offsetMs ahead of it.
             final long hostStart = Math.max(0, -offsetMs);
@@ -2177,6 +2308,9 @@ public class EditorrNativePlugin extends Plugin {
             final CaptionOverlay captionOverlay = captionsJson == null ? null : CaptionOverlay.create(captionsJson, outW, outH, capRa, capRb, capSp);
             // free text pieces (Text > Add text): one overlay each, drawn above the captions
             final List<TextureOverlay> overlayList = new ArrayList<>();
+            // B-roll photos sit at the very bottom, under the documentary cards, captions and texts
+            final BrollOverlay brollOverlay = BrollOverlay.create(brollJson, outW, outH, capRa, capRb, capSp);
+            if (brollOverlay != null) overlayList.add(brollOverlay);
             // documentary typography beats sit under captions and texts
             final DocuOverlay docuOverlay = DocuOverlay.create(docuJson, outW, outH, capRa, capRb, capSp);
             if (docuOverlay != null) overlayList.add(docuOverlay);

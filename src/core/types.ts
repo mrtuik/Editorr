@@ -210,6 +210,8 @@ export interface Project {
   agentWords?: import('./captions').CaptionData;
   /** Documentary typography beats (black screen, split card, quote) at timeline time. */
   docu?: import('./docuTypes').DocuBeat[];
+  /** B-roll photos (a still with a slow move) that cut in over the video, at timeline time. */
+  broll?: import('./brollTypes').BrollBeat[];
   /** the sound designer already ran on this project */
   autoSoundDone?: boolean;
   /** small jpeg data URL for Home */
