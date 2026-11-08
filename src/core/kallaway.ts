@@ -41,7 +41,7 @@ export interface KallawaySpec {
   /** Share of the frame the card / picture takes: 0.5 = 50-50, 0.58 = Kallaway, 0.65 = big picture. Missing = the default for the frame shape. */
   share?: number;
   /** Which side the speaker window sits on: bottom/top on a tall frame, right/left on a wide one. Missing = bottom / right. */
-  speaker?: 'bottom' | 'top' | 'right' | 'left';
+  speaker?: 'bottom' | 'top' | 'right' | 'left' | 'none';
   /** steps list only: timeline ms at which each point starts being spoken (from the captions). Missing = equal shares. */
   stepStarts?: number[];
 }
@@ -333,7 +333,7 @@ function paintLoop(g: CanvasRenderingContext2D, spec: KallawaySpec, active: numb
   const n = items.length;
   if (!n) return;
   const cx = area.x + area.w / 2, cy = area.y + area.h / 2;
-  const rx = Math.min(area.w * 0.25, 300 * k), ry = Math.min(area.h * 0.34, rx * 0.8);
+  const tall = area.h > area.w, rx = Math.min(area.w * (tall ? 0.3 : 0.25), 300 * k), ry = Math.min(area.h * 0.36, rx * (tall ? 1.3 : 0.8));
   const ang = (i: number) => -Math.PI / 2 + (i / n) * Math.PI * 2;
   g.save();
   g.shadowColor = KALLAWAY_RED; g.shadowBlur = 26 * k;
@@ -409,6 +409,7 @@ function paintQuote(g: CanvasRenderingContext2D, spec: KallawaySpec, card: Area,
 }
 
 const shareFor = (spec: KallawaySpec, layout: 'side' | 'updown') => spec.share ?? (layout === 'updown' ? SHARE_TALL : SHARE_WIDE);
+export const isFullScreen = (spec: KallawaySpec) => spec.speaker === 'none';
 const posFor = (spec: KallawaySpec, layout: 'side' | 'updown'): 'bottom' | 'top' | 'right' | 'left' => {
   const want = spec.speaker;
   if (layout === 'updown') return want === 'top' ? 'top' : 'bottom';
@@ -423,7 +424,8 @@ export function paintKallaway(g: CanvasRenderingContext2D, spec: KallawaySpec, a
   const k = Math.min(w, h) / 1080;
   const layout = docuLayoutFor(aspect);
   const share = shareFor(spec, layout);
-  const geo = docuGeometry(layout, posFor(spec, layout), w, h, share);
+  const full = isFullScreen(spec);
+  const geo = full ? { vertical: layout === 'updown', video: { x: 0, y: 0, w: 0, h: 0 }, card: { x: 24 * k, y: 40 * k, w: w - 48 * k, h: h - 80 * k } } : docuGeometry(layout, posFor(spec, layout), w, h, share);
   g.save();
   g.globalAlpha = mo.alpha;
   dotGrid(g, w, h, k);
@@ -434,7 +436,7 @@ export function paintKallaway(g: CanvasRenderingContext2D, spec: KallawaySpec, a
   const hasTitle = !!(spec.a.trim() || spec.b.trim() || spec.c.trim()) && spec.kind !== 'quote';
   const below = hasTitle ? drawTitle(g, spec, cx, card.y + 20 * k, card.w * 0.92, k, card.h * 0.34) : card.y + 6 * k;
   const pad = 18 * k;
-  const handleRoom = (spec.handle.trim() ? 44 : 6) * k;
+  const handleRoom = (spec.handle.trim() && !full ? 44 : 6) * k;
   const area = { x: card.x, y: below + pad, w: card.w, h: card.y + card.h - below - pad - handleRoom };
   if (spec.kind === 'quote') paintQuote(g, spec, { x: card.x, y: card.y, w: card.w, h: card.h - handleRoom }, k);
   else if (area.h > 80 * k) {
@@ -447,7 +449,7 @@ export function paintKallaway(g: CanvasRenderingContext2D, spec: KallawaySpec, a
     else paintScript(g, active, area, k, mo);
   }
   g.restore();
-  if (spec.handle.trim()) {
+  if (spec.handle.trim() && !full) {
     g.save(); g.globalAlpha = mo.alpha;
     g.textAlign = 'left'; g.textBaseline = 'alphabetic'; g.fillStyle = '#fff';
     g.font = `800 ${Math.round(26 * k)}px ${SANS}`;
@@ -456,7 +458,8 @@ export function paintKallaway(g: CanvasRenderingContext2D, spec: KallawaySpec, a
     g.fillText(spec.handle.trim().toUpperCase(), geo.video.x + 8 * k, y);
     g.restore();
   }
-  // window for the talking head
+  // window for the talking head (a full-screen scene has none)
+  if (full) return;
   g.save();
   g.globalCompositeOperation = 'destination-out';
   g.globalAlpha = 1;
@@ -565,6 +568,7 @@ export async function makeKallawayBeats(aspect: Aspect, spec: KallawaySpec, star
   const { w, h } = kallawaySize(aspect);
   const layout = docuLayoutFor(aspect);
   const share = shareFor(spec, layout), pos = posFor(spec, layout);
+  const gid = uid(), full = isFullScreen(spec);
   const per = (end - start) / count;
   const starts: number[] = [];
   const sync = (spec.kind === 'steps' || spec.kind === 'loop') && spec.stepStarts?.length === count ? spec.stepStarts : undefined;
@@ -591,7 +595,8 @@ export async function makeKallawayBeats(aspect: Aspect, spec: KallawaySpec, star
     const subtext = spec.kind === 'steps' || spec.kind === 'loop' ? steps[i] : spec.kind === 'stat' ? spec.stat?.big : spec.kind === 'script' ? ['Hook', 'Body', 'CTA'][i] : spec.kind === 'quote' ? spec.sub : 'Picture';
     out.push({
       id, type: 'split_screen', start: bs, end: be,
-      layout, video_position: pos, card_radius: RADIUS,
+      layout: full ? 'one' : layout, video_position: pos, card_radius: RADIUS,
+      kw: { spec: { ...spec, steps, photo: undefined }, gid, gStart: Math.round(start), gEnd: Math.round(end) },
       headline: label || (spec.kind === 'stat' ? spec.stat?.big ?? 'Number' : spec.kind === 'photo' || spec.kind === 'svg' ? 'Picture' : 'Kallaway'),
       subtext, accent_color: KALLAWAY_RED, theme: 'noir',
       share, image, frames, framesMs: ms,

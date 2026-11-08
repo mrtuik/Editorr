@@ -1798,3 +1798,28 @@ html body input[type=range]:disabled { opacity: .4; }
 
 /* export settings: no line under the title */
 .xs-tab, .xs-tab:is(*) { border-bottom: 0 !important; padding-bottom: 0; }
+
+/* ---- Silence studio ---- */
+.ssd { display: flex; flex-direction: column; gap: 8px; }
+.ssd-head { display: flex; align-items: center; gap: 8px; }
+.ssd-head .grow { flex: 1; }
+.ssd-play { width: 44px; height: 44px; border-radius: 50%; border: 0; background: #fff; color: #111; display: grid; place-items: center; }
+.ssd-nav { width: 36px; height: 36px; border-radius: 50%; border: 1px solid #333; background: #1a1a1d; color: #fff; font-size: 22px; line-height: 1; }
+.ssd-time { font-size: 13px; color: #cfcfd4; font-variant-numeric: tabular-nums; margin-left: 4px; }
+.ssd-skip { min-height: 34px; padding: 0 12px; border-radius: 17px; border: 1px solid #333; background: #1a1a1d; color: #9a9aa0; font-size: 13px; }
+.ssd-skip.on { border-color: #F51B49; color: #fff; background: rgba(245,27,73,.18); }
+.ssd-wrap { position: relative; border-radius: 10px; overflow: hidden; background: #0c0c0e; }
+.ssd-scroll { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
+.ssd-scroll::-webkit-scrollbar { display: none; }
+.ssd-inner { position: relative; }
+.ssd-blocks { position: absolute; inset: 0; pointer-events: none; }
+.ssd-blk { position: absolute; pointer-events: auto; padding: 0; border: 2px solid rgba(255,255,255,.55); border-radius: 6px; background: rgba(255,255,255,.07); color: #fff; }
+.ssd-blk.on { border-color: #F51B49; background: repeating-linear-gradient(135deg, rgba(245,27,73,.42) 0 6px, rgba(245,27,73,.22) 6px 12px); }
+.ssd-tick { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; border: 2px solid #fff; display: grid; place-items: center; background: rgba(0,0,0,.35); }
+.ssd-blk.on .ssd-tick { background: #F51B49; border-color: #fff; }
+.ssd-line { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 4px rgba(0,0,0,.8); pointer-events: none; }
+.ssd-sum { font-size: 12.5px; color: #b8b8be; text-align: center; }
+.ssd-actions { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+.ssd-actions .re-detect { min-height: 48px; padding: 0 16px; border: 0; background: transparent; color: #fff; font-size: 15px; display: flex; align-items: center; gap: 6px; }
+.ssd-set { margin-top: 12px; }
+.ssd-set summary { color: #9a9aa0; font-size: 14px; padding: 8px 0; cursor: pointer; }

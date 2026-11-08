@@ -39,6 +39,8 @@ export interface DocuBeat {
   /** Kallaway motion: baked pictures that play over the first `framesMs` of the beat (pop, red wipe, count-up), then `image` stays. */
   frames?: { url: string; path?: string }[];
   framesMs?: number;
+  /** Kallaway beats keep the recipe of their picture so the sheet can redraw it (new side, size, full screen, words). All beats of one card share `gid`. */
+  kw?: { spec: import('./kallaway').KallawaySpec; gid: string; gStart: number; gEnd: number };
 }
 
 export type DocuFont = 'inter' | 'oswald' | 'playfair' | 'jetbrains';

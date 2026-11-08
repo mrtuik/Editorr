@@ -1,7 +1,7 @@
 import type { CapWord } from '../core/captions';
 import { fixDocuLayout } from '../core/docuApply';
 import { planDocuBeats } from '../core/docuPlanner';
-import { KALLAWAY_SHARES, makeKallawayBeats, syncStepStarts, type KallawaySpec } from '../core/kallaway';
+import { KALLAWAY_SHARES, isFullScreen, makeKallawayBeats, syncStepStarts, type KallawaySpec } from '../core/kallaway';
 import { planKallaway } from '../core/kallawayDirector';
 import { autoBroll } from '../core/brollPlanner';
 import { placeBroll } from '../core/brollTypes';
@@ -168,7 +168,10 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       if (!r.picks.length) { toast('No good moments found for cards. Add one by hand at the playhead.', 5000); return; }
       const made: DocuBeat[] = [];
       for (const pk of r.picks) {
-        const spec: KallawaySpec = { ...pk.spec, handle: kw.handle, share: kw.share, speaker: kw.speaker };
+        // rhythm like the reference reels: scenes with a self-contained picture alternate between 'you in a window' and 'full screen'
+        const idx = r.picks.indexOf(pk);
+        const fullOk = ['loop', 'versus', 'stat', 'quote'].includes(pk.spec.kind);
+        const spec: KallawaySpec = { ...pk.spec, handle: kw.handle, share: kw.share, speaker: fullOk && idx % 2 === 1 ? 'none' : kw.speaker };
         made.push(...await makeKallawayBeats(ctx.p.aspect, spec, pk.start, pk.end));
       }
       ctx.p.docu = [...beats().filter((x) => r.picks.every((pk) => x.end <= pk.start || x.start >= pk.end)), ...made].sort((a, b) => a.start - b.start);
@@ -285,7 +288,73 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     return out;
   }
 
+  // ------------------------------------------------------------ Kallaway beats: the picture is redrawn when anything about it changes
+  const kwNote = () => h('div', { class: 'at-hint', style: 'margin-top:10px' }, 'This is a Kallaway scene (a finished picture). Its look is set in the Beats and Layout tabs; Templates, Fonts and Colors do not apply.');
+
+  /** Redraws the whole card (all its beats) with `mut` applied to its recipe. Words are re-timed to the captions. */
+  async function rebake(b: DocuBeat, mut: (s: KallawaySpec) => void) {
+    if (busy || !b.kw) return;
+    const old = b.kw;
+    const spec: KallawaySpec = { ...old.spec, stepStarts: undefined };
+    mut(spec);
+    busy = true; render();
+    try {
+      if (spec.kind === 'photo') throw new Error('Picture cards cannot be redrawn. Delete it and add it again.');
+      if (spec.kind === 'steps' || spec.kind === 'loop') {
+        const pts = spec.steps.filter((x) => x.trim()).slice(0, 5);
+        const words = ctx.p.captions?.words.length ? ctx.p.captions.words : ctx.p.agentWords?.words;
+        spec.stepStarts = syncStepStarts(pts, words, old.gStart, old.gEnd);
+      }
+      const nb = await makeKallawayBeats(ctx.p.aspect, spec, old.gStart, old.gEnd);
+      ctx.p.docu = [...beats().filter((x) => x.kw?.gid !== old.gid), ...nb].sort((a, c) => a.start - c.start);
+      sel = (nb.find((x) => b.start >= x.start && b.start < x.end) ?? nb[0])?.id ?? null;
+      ctx.changed();
+    } catch (e) { toast(`Could not redraw it: ${(e as Error).message || 'failed'}`, 5000); }
+    finally { busy = false; render(); }
+  }
+
+  /** Words of a Kallaway scene: title parts, points, number, supporting line. "Apply" redraws it. */
+  function renderKwEdit(b: DocuBeat): Node[] {
+    const sp = b.kw!.spec;
+    const draft = { a: sp.a, b: sp.b, c: sp.c, steps: sp.steps.join('\n'), big: sp.stat?.big ?? '', label: sp.stat?.label ?? '', sub: sp.sub ?? '' };
+    const field = (label: string, v: string, on: (x: string) => void) => {
+      const el = h('input', { type: 'text', class: 'ts-input', value: v, 'aria-label': label, placeholder: label, enterkeyhint: 'done', style: 'width:100%;margin-top:6px' }) as HTMLInputElement;
+      el.addEventListener('input', () => on(el.value)); return el;
+    };
+    const pts = sp.kind === 'steps' || sp.kind === 'loop' || sp.kind === 'versus';
+    const box = pts ? (h('textarea', { class: 'ts-input', rows: 5, 'aria-label': 'Points, one per line', style: 'width:100%;margin-top:6px;background:#242424;border-radius:2px;padding:10px;resize:none' }) as HTMLTextAreaElement) : null;
+    if (box) { box.value = draft.steps; box.addEventListener('input', () => { draft.steps = box.value; }); }
+    return [
+      h('div', { class: 'at-hint', style: 'margin-top:10px' }, `Kallaway scene · ${sp.kind}. Change the words, then tap Redraw.`),
+      h('div', { class: 'at-label', style: 'margin-top:8px' }, 'Title'),
+      field('Bold start', draft.a, (x) => { draft.a = x; }), field('Italic part', draft.b, (x) => { draft.b = x; }), field('Second line', draft.c, (x) => { draft.c = x; }),
+      box ? h('div', {}, h('div', { class: 'at-label', style: 'margin-top:8px' }, sp.kind === 'versus' ? 'Two sides (2 lines)' : 'Points (1 per line)'), box) : (null as unknown as Node),
+      sp.kind === 'stat' ? h('div', {}, field('Big number', draft.big, (x) => { draft.big = x; }), field('Line under it', draft.label, (x) => { draft.label = x; })) : (null as unknown as Node),
+      sp.kind === 'quote' || sp.kind === 'loop' ? field(sp.kind === 'loop' ? 'Centre word' : 'Supporting line', draft.sub, (x) => { draft.sub = x; }) : (null as unknown as Node),
+      h('button', { class: 'btn primary', style: 'width:100%;min-height:46px;margin-top:10px', disabled: busy ? 'true' : undefined, onclick: () => void rebake(b, (s) => {
+        s.a = draft.a.trim(); s.b = draft.b.trim(); s.c = draft.c.trim();
+        if (pts) s.steps = draft.steps.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, sp.kind === 'versus' ? 2 : 5);
+        if (sp.kind === 'stat') s.stat = { ...(s.stat ?? { big: '' }), big: draft.big.trim() || s.stat?.big || '', label: draft.label.trim() || undefined };
+        if (sp.kind === 'quote' || sp.kind === 'loop') s.sub = draft.sub.trim();
+      }) }, busy ? 'Drawing...' : 'Redraw'),
+    ];
+  }
+
+  /** Layout of a Kallaway scene: with you in a window (side, size) or full screen. Every tap redraws the picture, so the video moves with it. */
+  function renderKwLayout(b: DocuBeat): Node[] {
+    const sp = b.kw!.spec, full = isFullScreen(sp), tall = layout() === 'updown';
+    const sides: [string, string][] = tall ? [['bottom', 'You at bottom'], ['top', 'You at top']] : [['right', 'You on right'], ['left', 'You on left']];
+    return [
+      kwNote(),
+      chipRow<'win' | 'full'>('Scene', [['win', 'With you in a window'], ['full', 'Full screen']], full ? 'full' : 'win', (v) => { void rebake(b, (s) => { s.speaker = v === 'full' ? 'none' : tall ? 'bottom' : 'right'; }); }),
+      full ? (null as unknown as Node) : chipRow<string>('You sit', sides, sp.speaker && sp.speaker !== 'none' ? sp.speaker : tall ? 'bottom' : 'right', (v) => { void rebake(b, (s) => { s.speaker = v as KallawaySpec['speaker']; }); }),
+      full ? (null as unknown as Node) : chipRow<string>('Card size', KALLAWAY_SHARES.map(([v, l]) => [String(v), l] as [string, string]), String(sp.share ?? (tall ? 0.6 : 0.52)), (v) => { void rebake(b, (s) => { s.share = Number(v); }); }),
+      slider('Length', 1, 10, 0.5, (b.end - b.start) / 1000, (v) => `${v}s`, (v) => { b.end = Math.min(ctx.durationMs() || b.start + v * 1000, b.start + Math.round(v * 1000)); ctx.changed(); }),
+    ];
+  }
+
   function renderTemplates(b: DocuBeat | undefined): Node[] {
+    if (b?.kw) return [kwNote()];
     const now = b?.style?.template;
     return [
       h('div', { class: 'at-hint', style: 'margin-top:10px' }, scopeAll ? 'A template is applied to every beat.' : 'Tap a template to dress this beat. Your headline text stays.'),
@@ -312,6 +381,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
 
   function renderLayout(b: DocuBeat | undefined): Node[] {
     if (!b) return [];
+    if (b.kw) return renderKwLayout(b);
     const split = b.type === 'split_screen';
     const [pa, pb] = posChoices(layout());
     const wide = layout() === 'side';
@@ -332,6 +402,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
 
   function renderFonts(b: DocuBeat | undefined): Node[] {
     if (!b) return [];
+    if (b.kw) return [kwNote()];
     const fonts = Object.keys(DOCU_FONT_LABEL) as DocuFont[];
     return [
       sec('Font', tileGrid(...fonts.map((f) => h('button', { class: 'dt-tile' + ((b.style?.font ?? 'inter') === f ? ' on' : ''), 'aria-label': DOCU_FONT_LABEL[f], onclick: () => { patch((x) => { st(x).font = f; }); loadFont(f); render(); } },
@@ -343,6 +414,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
   }
 
   function renderColors(b: DocuBeat | undefined): Node[] {
+    if (b?.kw) return [kwNote()];
     if (!b) return [];
     const s0 = b.style ?? {};
     const accent = /^#[0-9a-f]{6}$/i.test(b.accent_color) ? b.accent_color : '#C6F277';
@@ -392,7 +464,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     }
     if (b && b.image) {
       kids.push(
-        h('div', { class: 'at-hint', style: 'margin-top:10px' }, 'This is a Kallaway frame (a finished picture). To change its words, delete the frames and add it again below.'),
+        ...(b.kw && b.kw.spec.kind !== 'photo' ? renderKwEdit(b) : [h('div', { class: 'at-hint', style: 'margin-top:10px' }, 'This is a Kallaway frame (a finished picture). To change it, delete it and add it again below.')]),
         slider('Length', 1, 10, 0.5, (b.end - b.start) / 1000, (v) => `${v}s`, (v) => { b.end = Math.min(ctx.durationMs() || b.start + v * 1000, b.start + Math.round(v * 1000)); ctx.changed(); }));
     } else if (b) {
       kids.push(

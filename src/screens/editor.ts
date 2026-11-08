@@ -16,7 +16,7 @@ import { brollBeatAt, isBrollVideo } from '../core/brollTypes';
 import { docuBeatAt } from '../core/docuTypes';
 import { openReactionSheet } from './reactionSheet';
 import { askAutoZoom, zoomShapeFrom } from './zoomSheet';
-import { openSilenceSheet, type SilenceItem } from './silenceSheet';
+import { buildSilenceStudio, openSilenceSheet, type SilenceItem } from './silenceSheet';
 import { openMusicSheet, type AutoPlan } from './musicSheet';
 import { BGM_RATE, decodeFile, decodeUrl, renderMix, toBase64, toBuffer, toWav } from '../core/bgm';
 import { MOOD_LABEL, analyzeMood, moodQuery, type MusicLang } from '../core/mood';
@@ -1139,10 +1139,19 @@ export function editorScreen() {
   tl.style.height = `${TL_H}px`;
   let W = 0, H = 0;
   let pendingCuts: Range[] = [];
+  let silenceStudio: ReturnType<typeof buildSilenceStudio> | undefined;
+  let silenceStage: 'setup' | 'review' = 'setup';
   /** every silence Detect found (with the user's edits and on/off); pendingCuts = the ones that are on */
   let silenceItems: SilenceItem[] = [];
   const syncPending = () => { pendingCuts = silenceItems.filter((i) => i.on).map((i) => ({ ...i.r })); };
   let rangeTimer = 0;
+  /** stop a range preview without touching normal playback (the studio scrubs while paused) */
+  function stopRangeOnly() { if (rangeTimer) { clearInterval(rangeTimer); rangeTimer = 0; } }
+  /** the cut count on the Remove button changes when a block is switched */
+  function renderPanelSoftSilence() {
+    const b = panelEl.querySelector('.ssd-actions .primary') as HTMLElement | null;
+    if (b) { b.textContent = pendingCuts.length ? `Remove silent clips (${pendingCuts.length})` : 'No Silence to Cut'; (b as HTMLButtonElement).disabled = !pendingCuts.length; }
+  }
   function stopRange() { if (rangeTimer) { clearInterval(rangeTimer); rangeTimer = 0; } if (playing) setPlaying(false); }
   function playRange(a: number, b: number) {
     stopRange(); seek(a); setPlaying(true);
@@ -3091,7 +3100,7 @@ export function editorScreen() {
       cropRole = sg?.main ?? 'host';
       lastCropKey = sg ? `${sg.id}|${sg.style}|${sg.main}` : '';
     }
-    if (n === 'silence') { if (!needAudio()) { panel = 'none'; return; } runDetect(); }
+    if (n === 'silence') { if (!needAudio()) { panel = 'none'; return; } silenceStage = 'setup'; }
     cropView.classList.toggle('on', n === 'crop');
     updateSelFrame();
     const topOffset = preview.offsetTop + preview.offsetHeight;
@@ -3102,6 +3111,7 @@ export function editorScreen() {
     if (n === 'crop') requestAnimationFrame(layoutCrop);
   }
   function closePanel() {
+    silenceStudio?.dispose(); silenceStudio = undefined;
     panel = 'none'; pendingCuts = []; silenceItems = []; snapMs = null;
     ovLayer.classList.remove('editing'); ovList().forEach(updateOvEl);
     if (selClip === 'constant') selClip = null;
@@ -3154,9 +3164,10 @@ export function editorScreen() {
     pendingCuts = []; silenceItems = [];
     edit(next);
     if (!isKept(p.segments, playMs)) seek(nextKeptStart(p.segments, playMs) ?? firstStart());
-    runDetect();
+    // like Meitu: the review sheet goes away once the silence is removed, back to the normal editor
+    closePanel();
     toast(`Removed ${secText(removed)} of silence (${count} ${count === 1 ? 'cut' : 'cuts'}). New length ${secText(keptMs(p.segments))}. Undo to go back.`, 3600);
-    renderPanel(); draw();
+    draw();
   }
 
   function slider(lbl: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, on: (v: number) => void, disabled = false) {
@@ -3426,52 +3437,59 @@ export function editorScreen() {
         colorRow,
         h('div', { class: 'crop-actions tool-actions' }, applyAllBtn, resetBtn),
         h('div', { class: 'pinfo' }, 'The border and rounded corners stay on the video edges when you move or zoom it.'));
+    } else if (silenceStage === 'setup') {
+      // step 1 (like Meitu "Detect Silence"): settings, then Start Detection
+      const save = (pt: Partial<typeof s>) => { Object.assign(s, pt); saveSettings(s); renderPanel(); };
+      const minDurSlider = slider('Silence duration', 200, 5000, 100, s.silenceMinMs, (v) => `${(v / 1000).toFixed(1)} s`, (v) => { s.silenceMinMs = v; saveSettings(s); });
+      const padSlider = slider('Padding margin', 0, 500, 50, s.silencePadMs, (v) => `${(v / 1000).toFixed(2)} s`, (v) => { s.silencePadMs = v; saveSettings(s); });
+      setPanel('Detect Silence',
+        minDurSlider.row,
+        padSlider.row,
+        h('div', { class: 'prow', style: 'margin-top:10px' },
+          h('div', { class: 'plabel' }, 'Sound level'),
+          chipRow<SilenceSens>([['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], s.silenceSens, (v) => save({ silenceSens: v })),
+          h('button', {
+            class: 'zg-ico', 'aria-label': 'Zoom graph', title: 'Zoom graph', disabled: s.silenceZoom ? undefined : 'true',
+            onclick: () => { const alt = (s.silenceZoomMode ?? 'alternate') === 'alternate'; void askAutoZoom(app.settings, { title: 'Zoom at cuts', simple: alt, hint: alt ? 'Zoom-in pieces ease in at the cut and stay zoomed until the next cut. Set the amount, speed and curve here.' : 'At every silence cut the picture zooms in, holds, and eases out. Set the amount, timing and the graph here.', cta: 'Save zoom' }).then(() => renderPanel()); },
+          }, icon('curve', 20))),
+        h('div', { style: 'margin-top:10px' },
+          toggle('Zoom at cuts', !!s.silenceZoom, (on) => save({ silenceZoom: on })),
+          s.silenceZoom ? chipRow<'alternate' | 'punch'>([['alternate', 'Alternate'], ['punch', 'Punch + out']], s.silenceZoomMode ?? 'alternate', (v) => save({ silenceZoomMode: v })) : null),
+        h('div', { class: 'pinfo', style: 'text-align:center;margin-top:12px' }, 'Finds the silent parts. You see them on a timeline first and choose what to remove.'),
+        h('button', {
+          class: 'btn primary', style: 'width:100%;min-height:48px;margin-top:10px;border-radius:10px;border:0;background:#F51B49;color:#fff;font-size:15px;font-weight:700;cursor:pointer',
+          onclick: () => { runDetect(); if (!silenceItems.length) { toast('No silence found. Try a shorter duration or a higher sound level.', 3500); return; } silenceStage = 'review'; renderPanel(); draw(); },
+        }, 'Start Detection'));
     } else {
-      const total = pendingCuts.reduce((a, r) => a + (r.endMs - r.startMs), 0);
-      const info = pendingCuts.length
-        ? h('div', { class: 'pinfo', style: 'background:rgba(198,242,119,0.08);border:1px solid rgba(198,242,119,0.2);border-radius:2px;padding:10px 12px;margin:8px 0 14px;color:#e0e0e0' },
-            'Found ', h('b', { style: 'color:#C6F277' }, `${pendingCuts.length} silent ${pendingCuts.length === 1 ? 'part' : 'parts'}`),
-            ' (', h('b', { style: 'color:#fff' }, secText(total)), ') to remove. Marked red on the timeline.')
-        : h('div', { class: 'pinfo', style: 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:2px;padding:10px 12px;margin:8px 0 14px;color:#8a8a8a' },
-            'No silence found matching current settings. Try shorter duration or higher sensitivity.');
-      const go = (pt: Partial<typeof s>) => { Object.assign(s, pt); saveSettings(s); runDetect(); renderPanel(); draw(); };
+      // step 2 (separate review sheet): the timeline with every silent part; Remove closes it and goes back to the editor
       const applyBtn = h('button', {
         class: 'btn primary',
-        style: 'width:100%;min-height:48px;margin-top:16px;border-radius:2px;border:0;background:#C6F277;color:#10140a;font-size:15px;font-weight:600;cursor:pointer',
+        style: 'flex:1;min-height:48px;border-radius:10px;border:0;background:#F51B49;color:#fff;font-size:15px;font-weight:700;cursor:pointer',
         disabled: !pendingCuts.length,
         onclick: applySilence
-      }, pendingCuts.length ? `Apply Silence Cut (${pendingCuts.length} ${pendingCuts.length === 1 ? 'cut' : 'cuts'})` : 'No Silence to Cut');
-
-      const reviewBtn = silenceItems.length ? h('button', {
-        class: 'btn', style: 'width:100%;min-height:46px;margin:0 0 10px',
+      }, pendingCuts.length ? `Remove silent clips (${pendingCuts.length})` : 'No Silence to Cut');
+      const fine = h('button', {
+        class: 'btn', style: 'width:100%;min-height:44px;margin:8px 0 0',
         onclick: () => openSilenceSheet({
           items: silenceItems, durationMs: p.durationMs,
           onChange: () => { syncPending(); draw(); },
           seek, playRange, stop: stopRange,
           onClose: () => { renderPanel(); draw(); },
         }),
-      }, icon('search', 18), `Review ${silenceItems.length} ${silenceItems.length === 1 ? 'silence' : 'silences'} (play, switch off, shorten)`) : null;
-      const minDurSlider = slider('Silence duration', 200, 5000, 100, s.silenceMinMs, (v) => `${(v / 1000).toFixed(1)} s`, (v) => go({ silenceMinMs: v }));
-      const padSlider = slider('Padding margin', 0, 500, 50, s.silencePadMs, (v) => `${(v / 1000).toFixed(2)} s`, (v) => go({ silencePadMs: v }));
-
+      }, icon('search', 18), 'Fine-tune each silence (shorten / lengthen)');
+      silenceStudio?.dispose();
+      silenceStudio = buildSilenceStudio({
+        items: silenceItems, durationMs: p.durationMs,
+        getMs: () => playMs, seek: (ms) => { stopRangeOnly(); seek(ms); }, isPlaying: () => playing, setPlaying,
+        frames: () => hostStrip, peaks: () => hostPeaks ?? constPeaks, peaksPerSec: PEAKS_PER_SEC,
+        onToggle: () => { syncPending(); renderPanelSoftSilence(); draw(); },
+      });
       setPanel('Silence Cut',
-        h('div', { style: 'font-size:16px;font-weight:600;color:#fff;margin-bottom:4px' }, 'Smart Silence Cut'),
-        info,
-        reviewBtn,
-        minDurSlider.row,
-        padSlider.row,
-        h('div', { class: 'prow', style: 'margin-top:10px' },
-          h('div', { class: 'plabel' }, 'Sensitivity'),
-          chipRow<SilenceSens>([['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], s.silenceSens, (v) => go({ silenceSens: v })),
-          h('button', {
-            class: 'zg-ico', 'aria-label': 'Zoom graph', title: 'Zoom graph', disabled: s.silenceZoom ? undefined : 'true',
-            onclick: () => { const alt = (s.silenceZoomMode ?? 'alternate') === 'alternate'; void askAutoZoom(app.settings, { title: 'Zoom at cuts', simple: alt, hint: alt ? 'Zoom-in pieces ease in at the cut and stay zoomed until the next cut. Set the amount, speed and curve here.' : 'At every silence cut the picture zooms in, holds, and eases out. Set the amount, timing and the graph here.', cta: 'Save zoom' }).then(() => renderPanel()); },
-          }, icon('curve', 20))),
-        h('div', { style: 'margin-top:10px' },
-          toggle('Zoom at cuts', !!s.silenceZoom, (on) => go({ silenceZoom: on })),
-          s.silenceZoom ? chipRow<'alternate' | 'punch'>([['alternate', 'Alternate'], ['punch', 'Punch + out']], s.silenceZoomMode ?? 'alternate', (v) => go({ silenceZoomMode: v })) : null,
-          s.silenceZoom ? h('div', { class: 'pinfo' }, (s.silenceZoomMode ?? 'alternate') === 'alternate' ? 'One piece after a cut stays zoomed in, the next piece is normal, then zoomed in again. It never zooms out by itself.' : 'Every piece after a cut zooms in, holds, then eases out.') : null),
-        applyBtn);
+        silenceStudio.el,
+        h('div', { class: 'ssd-actions' },
+          applyBtn,
+          h('button', { class: 're-detect', onclick: () => { stopRange(); silenceStage = 'setup'; pendingCuts = []; silenceItems = []; renderPanel(); draw(); } }, icon('sync', 16), 'Re-detect')),
+        fine);
     }
   }
 
@@ -3672,6 +3690,7 @@ export function editorScreen() {
       if (key !== lastCropKey) { lastCropKey = key; layoutCrop(); renderPanel(); }
     }
     hudTimeBadge.textContent = `${fmtClock(playMs)} / ${fmtClock(p.durationMs)}`;
+    silenceStudio?.update(playMs);
     drawCaptionsPreview();
     draw();
   }
@@ -3824,7 +3843,8 @@ export function editorScreen() {
     }
 
     if (destroyed) return;
-    if (freshProject && p.syncConfidence !== 'Low' && app.settings.autoSound !== false) void autoSound();
+    // the AI sound designer is opt-in now (Settings > Sound): a new project no longer gets music by itself
+    if (freshProject && p.syncConfidence !== 'Low' && app.settings.autoSound === true) void autoSound();
     const intent: Intent | undefined = app.intent; app.intent = undefined;
     if (intent) openPanel(intent);
   }
