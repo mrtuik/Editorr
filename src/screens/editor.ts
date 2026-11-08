@@ -16,6 +16,7 @@ import { brollBeatAt, isBrollVideo } from '../core/brollTypes';
 import { docuBeatAt } from '../core/docuTypes';
 import { openReactionSheet } from './reactionSheet';
 import { askAutoZoom, zoomShapeFrom } from './zoomSheet';
+import { openSilenceSheet, type SilenceItem } from './silenceSheet';
 import { openMusicSheet, type AutoPlan } from './musicSheet';
 import { BGM_RATE, decodeFile, decodeUrl, renderMix, toBase64, toBuffer, toWav } from '../core/bgm';
 import { MOOD_LABEL, analyzeMood, moodQuery, type MusicLang } from '../core/mood';
@@ -23,7 +24,7 @@ import { synthLoop, synthSfx } from '../core/synth';
 import { AUTO_INFO, planSfx, type AutoKind } from '../core/sfxPlan';
 import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, pageAt, type CapPage, type HitRect, textDrawOpts, textPage, textStyleOf } from '../core/captions';
 import { transcribe } from '../core/transcribe';
-import { addCutZooms, addPunchZooms, addReactions, findPeaks, removeAllReactions, removeReaction } from '../core/autocut';
+import { addAlternateZooms, addCutZooms, addPunchZooms, addReactions, findPeaks, removeAllReactions, removeReaction } from '../core/autocut';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
 import { detectSilence } from '../core/silence';
 import { EditorrNative, fileSrc, isNative, tick, youtubeAvailable } from '../core/native';
@@ -1138,6 +1139,15 @@ export function editorScreen() {
   tl.style.height = `${TL_H}px`;
   let W = 0, H = 0;
   let pendingCuts: Range[] = [];
+  /** every silence Detect found (with the user's edits and on/off); pendingCuts = the ones that are on */
+  let silenceItems: SilenceItem[] = [];
+  const syncPending = () => { pendingCuts = silenceItems.filter((i) => i.on).map((i) => ({ ...i.r })); };
+  let rangeTimer = 0;
+  function stopRange() { if (rangeTimer) { clearInterval(rangeTimer); rangeTimer = 0; } if (playing) setPlaying(false); }
+  function playRange(a: number, b: number) {
+    stopRange(); seek(a); setPlaying(true);
+    rangeTimer = window.setInterval(() => { if (!playing || playMs >= b) stopRange(); }, 40);
+  }
   let snapMs: number | null = null; // cyan guide while a clip snaps
 
   let hostStrip: Strip | undefined, constStrip: Strip | undefined;
@@ -1405,11 +1415,11 @@ export function editorScreen() {
       const a = xOf(pg.s), b = xOf(pg.e);
       if (b < G || a > W) continue;
       const w = Math.max(10, b - a - 1);
-      clipBody(g, a, R.cap.y, w, R.cap.h);
+      clipBody(g, a, R.cap.y, w, R.cap.h, '#64d2ff');
       g.save();
       g.beginPath(); g.rect(Math.max(a, G), R.cap.y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), R.cap.h); g.clip();
       g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-      g.fillText(pg.words.map((x) => x.t).join(' '), Math.max(a, G) + 6, R.cap.y + R.cap.h / 2 + 0.5);
+      g.fillText(pg.words.map((x) => x.t).join(' '), Math.max(a + 14, G + 8), R.cap.y + R.cap.h / 2 + 0.5);
       g.restore();
     }
     g.restore();
@@ -1423,25 +1433,25 @@ export function editorScreen() {
       if (b < G || a > W) return;
       {
         const y = R.text!.y + R.pt.line[n]! * (SUB_T + 3), w = Math.max(16, b - a);
-        clipBody(g, a, y, w, SUB_T);
+        clipBody(g, a, y, w, SUB_T, '#8b5fd6');
         g.save();
         g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
-        g.fillStyle = '#8b5fd6'; g.beginPath(); g.arc(a + 8, y + SUB_T / 2, 2.6, 0, 6.3); g.fill();
         g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-        g.fillText(t.text, a + 15, y + SUB_T / 2 + 0.5);
+        g.fillText(t.text, Math.max(a + 14, G + 8), y + SUB_T / 2 + 0.5);
         g.restore();
         if (laySel?.kind === 'text' && laySel.id === t.id) layOutline(g, a, y, w, SUB_T);
       }
     });
     g.restore();
   }
-  /** One look for every layer clip: a dark rounded card with a thin outline (selected: white). */
-  function clipBody(g: CanvasRenderingContext2D, a: number, y: number, w: number, hh: number) {
-    rrect(g, a + 0.5, y + 0.5, w - 1, hh - 1, 8); g.fillStyle = '#2b2b2e'; g.fill();
-    g.strokeStyle = '#505054'; g.lineWidth = 1; g.stroke();
+  /** One look for every layer clip: a flat dark card tinted with the layer's colour, a slim colour bar on the left, no outline (selected: white ring). */
+  function clipBody(g: CanvasRenderingContext2D, a: number, y: number, w: number, hh: number, accent = '#8a8a8e') {
+    rrect(g, a, y + 1, w, hh - 2, 7); g.fillStyle = '#232326'; g.fill();
+    g.save(); g.globalAlpha = 0.16; g.fillStyle = accent; g.fill(); g.restore();
+    if (w > 14) { rrect(g, a + 5, y + 7, 3, hh - 14, 1.5); g.fillStyle = accent; g.fill(); }
   }
   function layOutline(g: CanvasRenderingContext2D, a: number, y: number, w: number, hh: number) {
-    rrect(g, a + 1, y + 1, w - 2, hh - 2, 8); g.strokeStyle = '#ffffff'; g.lineWidth = 2; g.stroke();
+    rrect(g, a + 1, y + 2, w - 2, hh - 4, 7); g.strokeStyle = '#ffffff'; g.lineWidth = 1.5; g.stroke();
   }
   function drawDocuRow(g: CanvasRenderingContext2D) {
     const R = rowsNow; if (!R.docu) return;
@@ -1451,12 +1461,11 @@ export function editorScreen() {
       const a = xOf(d.start), b = xOf(d.end);
       if (b < G || a > W) return;
       const y = R.docu!.y + R.pd.line[n]! * (SUB_T + 3), w = Math.max(16, b - a);
-      clipBody(g, a, y, w, SUB_T);
+      clipBody(g, a, y, w, SUB_T, d.accent_color);
       g.save();
       g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
-      g.fillStyle = d.accent_color; g.beginPath(); g.arc(a + 8, y + SUB_T / 2, 2.6, 0, 6.3); g.fill();
       g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-      g.fillText(d.headline || 'Beat', a + 15, y + SUB_T / 2 + 0.5);
+      g.fillText(d.headline || 'Beat', Math.max(a + 14, G + 8), y + SUB_T / 2 + 0.5);
       g.restore();
       if (laySel?.kind === 'docu' && laySel.id === d.id) layOutline(g, a, y, w, SUB_T);
     });
@@ -1470,12 +1479,11 @@ export function editorScreen() {
       const a = xOf(bt.start), b = xOf(bt.end);
       if (b < G || a > W) return;
       const y = R.broll!.y + R.pb.line[n]! * (SUB_T + 3), w = Math.max(16, b - a);
-      clipBody(g, a, y, w, SUB_T);
+      clipBody(g, a, y, w, SUB_T, '#C6F277');
       g.save();
       g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
-      g.fillStyle = '#C6F277'; g.beginPath(); g.arc(a + 8, y + SUB_T / 2, 2.6, 0, 6.3); g.fill();
       g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-      g.fillText(`${isBrollVideo(bt) ? '\u25B6 ' : ''}${bt.keyword || bt.title}`, a + 15, y + SUB_T / 2 + 0.5);
+      g.fillText(`${isBrollVideo(bt) ? '\u25B6 ' : ''}${bt.keyword || bt.title}`, Math.max(a + 14, G + 8), y + SUB_T / 2 + 0.5);
       g.restore();
       if (laySel?.kind === 'broll' && laySel.id === bt.id) layOutline(g, a, y, w, SUB_T);
     });
@@ -1688,14 +1696,12 @@ export function editorScreen() {
       g.fillText(p.mainAudio === 'host' ? 'Host' : 'Constant', G / 2 - 1, MAIN_Y + LANE - 12);
       g.restore();
     }
-    // row badges: a small square icon just before the start of each row (slides with the timeline). No text labels in the left column.
+    // row badges: small square icons floating in the left column (they do not slide with the timeline). No text labels in the left column.
     {
       const R = rowsNow;
       const badge = (y: number, h: number, glyph: 'note' | 'bolt' | 'text' | 'cc' | 'docu' | 'img', on: boolean) => {
-        const sz = 26, bx = xOf(0) - sz - 6, by = y + (h - sz) / 2;
-        if (bx + sz < G || bx > W) return;
+        const sz = 26, bx = Math.round((G - sz) / 2), by = y + (h - sz) / 2; // fixed in the left column: stays put while the timeline scrolls
         g.save();
-        g.beginPath(); g.rect(G, 0, W - G, H); g.clip();
         g.fillStyle = '#262626'; g.beginPath(); g.roundRect(bx, by, sz, sz, 2); g.fill();
         const cx = bx + sz / 2, cy = by + sz / 2, k = sz / 26;
         g.strokeStyle = on ? '#d0d0d0' : '#8a8a8a'; g.fillStyle = g.strokeStyle; g.lineWidth = 1.4; g.lineCap = 'round'; g.lineJoin = 'round';
@@ -3078,7 +3084,7 @@ export function editorScreen() {
     panel = n;
     ovLayer.classList.toggle('editing', n === 'overlay');
     ovList().forEach(updateOvEl);
-    pendingCuts = [];
+    pendingCuts = []; silenceItems = [];
     if (n !== 'sync') selClip = null;
     if (n === 'crop' || n === 'mask') {
       const sg = segmentAt(p.segments, playMs);
@@ -3096,7 +3102,7 @@ export function editorScreen() {
     if (n === 'crop') requestAnimationFrame(layoutCrop);
   }
   function closePanel() {
-    panel = 'none'; pendingCuts = []; snapMs = null;
+    panel = 'none'; pendingCuts = []; silenceItems = []; snapMs = null;
     ovLayer.classList.remove('editing'); ovList().forEach(updateOvEl);
     if (selClip === 'constant') selClip = null;
     cropView.classList.remove('on'); guideV.classList.remove('on'); guideH.classList.remove('on');
@@ -3127,8 +3133,10 @@ export function editorScreen() {
 
   function runDetect() {
     const s = app.settings;
-    pendingCuts = detectSilence(runtime.hostPcm!, runtime.constPcm!, p.offsetMs, p.durationMs,
+    const found = detectSilence(runtime.hostPcm!, runtime.constPcm!, p.offsetMs, p.durationMs,
       { minMs: s.silenceMinMs, padMs: s.silencePadMs, sens: s.silenceSens }, coverage(p.segments));
+    silenceItems = found.map((r) => ({ r: { ...r }, orig: { ...r }, on: true }));
+    syncPending();
   }
 
   function applySilence() {
@@ -3140,9 +3148,10 @@ export function editorScreen() {
     // optional: zoom in right at every cut (same amount, speed and graph as Auto zoom)
     if (app.settings.silenceZoom) {
       const joins = pendingCuts.map((c) => c.endMs);
-      next = addCutZooms(next, joins, zoomShapeFrom(app.settings), (sg, role) => sg[CK(role)] ?? p[CK(role)]);
+      const zoomFn = app.settings.silenceZoomMode === 'punch' ? addCutZooms : addAlternateZooms;
+      next = zoomFn(next, joins, zoomShapeFrom(app.settings), (sg, role) => sg[CK(role)] ?? p[CK(role)]);
     }
-    pendingCuts = [];
+    pendingCuts = []; silenceItems = [];
     edit(next);
     if (!isKept(p.segments, playMs)) seek(nextKeptStart(p.segments, playMs) ?? firstStart());
     runDetect();
@@ -3433,21 +3442,35 @@ export function editorScreen() {
         onclick: applySilence
       }, pendingCuts.length ? `Apply Silence Cut (${pendingCuts.length} ${pendingCuts.length === 1 ? 'cut' : 'cuts'})` : 'No Silence to Cut');
 
+      const reviewBtn = silenceItems.length ? h('button', {
+        class: 'btn', style: 'width:100%;min-height:46px;margin:0 0 10px',
+        onclick: () => openSilenceSheet({
+          items: silenceItems, durationMs: p.durationMs,
+          onChange: () => { syncPending(); draw(); },
+          seek, playRange, stop: stopRange,
+          onClose: () => { renderPanel(); draw(); },
+        }),
+      }, icon('search', 18), `Review ${silenceItems.length} ${silenceItems.length === 1 ? 'silence' : 'silences'} (play, switch off, shorten)`) : null;
       const minDurSlider = slider('Silence duration', 200, 5000, 100, s.silenceMinMs, (v) => `${(v / 1000).toFixed(1)} s`, (v) => go({ silenceMinMs: v }));
       const padSlider = slider('Padding margin', 0, 500, 50, s.silencePadMs, (v) => `${(v / 1000).toFixed(2)} s`, (v) => go({ silencePadMs: v }));
 
       setPanel('Silence Cut',
         h('div', { style: 'font-size:16px;font-weight:600;color:#fff;margin-bottom:4px' }, 'Smart Silence Cut'),
         info,
+        reviewBtn,
         minDurSlider.row,
         padSlider.row,
         h('div', { class: 'prow', style: 'margin-top:10px' },
           h('div', { class: 'plabel' }, 'Sensitivity'),
-          chipRow<SilenceSens>([['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], s.silenceSens, (v) => go({ silenceSens: v }))),
+          chipRow<SilenceSens>([['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], s.silenceSens, (v) => go({ silenceSens: v })),
+          h('button', {
+            class: 'zg-ico', 'aria-label': 'Zoom graph', title: 'Zoom graph', disabled: s.silenceZoom ? undefined : 'true',
+            onclick: () => { const alt = (s.silenceZoomMode ?? 'alternate') === 'alternate'; void askAutoZoom(app.settings, { title: 'Zoom at cuts', simple: alt, hint: alt ? 'Zoom-in pieces ease in at the cut and stay zoomed until the next cut. Set the amount, speed and curve here.' : 'At every silence cut the picture zooms in, holds, and eases out. Set the amount, timing and the graph here.', cta: 'Save zoom' }).then(() => renderPanel()); },
+          }, icon('curve', 20))),
         h('div', { style: 'margin-top:10px' },
           toggle('Zoom at cuts', !!s.silenceZoom, (on) => go({ silenceZoom: on })),
-          h('div', { class: 'chips' },
-            s.silenceZoom ? h('button', { class: 'chip', onclick: () => { void askAutoZoom(app.settings, { title: 'Zoom at cuts', hint: 'At every silence cut the picture zooms in, holds, and eases out. Set the amount, timing and the graph here.', cta: 'Save zoom' }).then(() => renderPanel()); } }, 'Zoom graph') : null)),
+          s.silenceZoom ? chipRow<'alternate' | 'punch'>([['alternate', 'Alternate'], ['punch', 'Punch + out']], s.silenceZoomMode ?? 'alternate', (v) => go({ silenceZoomMode: v })) : null,
+          s.silenceZoom ? h('div', { class: 'pinfo' }, (s.silenceZoomMode ?? 'alternate') === 'alternate' ? 'One piece after a cut stays zoomed in, the next piece is normal, then zoomed in again. It never zooms out by itself.' : 'Every piece after a cut zooms in, holds, then eases out.') : null),
         applyBtn);
     }
   }

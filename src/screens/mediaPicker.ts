@@ -60,11 +60,19 @@ export async function pickVideosCapcut(opts: { max: number }): Promise<PickResul
         const id = Number(el.dataset.id);
         const load = (tries: number) => {
           EditorrNative.videoThumb({ id })
-            .then((r) => { el.style.backgroundImage = `url("${fileSrc(r.path)}")`; })
-            .catch(() => { if (tries > 0) { setTimeout(() => queue.push(() => load(tries - 1)), 400); } /* else stays dark */ })
+            .then((r) => new Promise<void>((ok, bad) => {
+              const im = new Image();
+              im.onload = () => { el.style.backgroundImage = `url("${fileSrc(r.path)}")`; el.classList.remove('nothumb'); ok(); };
+              im.onerror = () => bad(new Error('img'));
+              im.src = fileSrc(r.path);
+            }))
+            .catch(() => {
+              if (tries > 0) setTimeout(() => { queue.push(() => load(tries - 1)); pump(); }, 500);
+              else el.classList.add('nothumb');
+            })
             .finally(() => { running--; pump(); });
         };
-        queue.push(() => load(1));
+        queue.push(() => load(2));
         pump();
       }
     }, { rootMargin: '300px' });

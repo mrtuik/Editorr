@@ -27,7 +27,7 @@ export function zoomShapeFrom(s: Settings): ZoomShape {
   };
 }
 
-export function askAutoZoom(s: Settings, o: { title?: string; hint?: string; cta?: string } = {}): Promise<ZoomShape | null> {
+export function askAutoZoom(s: Settings, o: { title?: string; hint?: string; cta?: string; simple?: boolean } = {}): Promise<ZoomShape | null> {
   const save = () => { void saveSettings(s); };
   s.zoomEase = s.zoomEase && s.zoomEase.length === 4 ? s.zoomEase : [0.42, 0, 0.58, 1];
   return new Promise((resolve) => {
@@ -92,10 +92,12 @@ export function askAutoZoom(s: Settings, o: { title?: string; hint?: string; cta
         strengthRow,
         slider('Zoom amount', 1.03, 1.5, 0.01, s.zoomAmount ?? 1.15, (v) => `${Math.round((v - 1) * 100)}%`, (v) => { s.zoomAmount = v; save(); }),
         slider('Zoom in time', 100, 1000, 50, s.zoomInMs ?? 300, ms, (v) => { s.zoomInMs = v; save(); }),
-        slider('Hold', 0, 3000, 100, s.zoomHoldMs ?? 1200, ms, (v) => { s.zoomHoldMs = v; save(); }),
-        slider('Zoom out time', 100, 1000, 50, s.zoomOutMs ?? 300, ms, (v) => { s.zoomOutMs = v; save(); }),
+        ...(o.simple ? [] : [
+          slider('Hold', 0, 3000, 100, s.zoomHoldMs ?? 1200, ms, (v) => { s.zoomHoldMs = v; save(); }),
+          slider('Zoom out time', 100, 1000, 50, s.zoomOutMs ?? 300, ms, (v) => { s.zoomOutMs = v; save(); }),
+        ]),
         h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Graph'),
-          h('div', { class: 'at-hint' }, 'Drag the two white points. Up = faster zoom, flat = slow start. Above the top line makes a small bounce. Zoom out uses the same curve backwards.'),
+          h('div', { class: 'at-hint' }, 'Drag the two white points. Up = faster zoom, flat = slow start. Above the top line makes a small bounce.' + (o.simple ? '' : ' Zoom out uses the same curve backwards.')),
           cv, presetRow)),
       h('div', { class: 'at-foot' }, h('button', { class: 'btn primary at-go', onclick: () => done({
         amount: s.zoomAmount ?? 1.15, inMs: s.zoomInMs ?? 300, holdMs: s.zoomHoldMs ?? 1200, outMs: s.zoomOutMs ?? 300, ease: [...(s.zoomEase as number[])],

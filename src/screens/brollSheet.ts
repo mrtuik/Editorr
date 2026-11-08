@@ -252,7 +252,7 @@ export function buildBrollPane(ctx: BrollCtx): BrollPane {
     const ci = h('input', { type: 'text', class: 'ts-input', placeholder: 'Concept card: "Sales fell 40%", "3 billion users"', enterkeyhint: 'done', 'aria-label': 'Concept card text', style: 'flex:1;min-width:0' }) as HTMLInputElement;
     ci.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); ci.blur(); void addConcept(ci.value); } });
     cardBox.replaceChildren(h('div', { class: 'br-search', style: 'margin-top:14px' }, ci,
-      h('button', { class: 'btn', style: 'min-height:44px;padding:0 14px', disabled: addingId === 'concept' ? 'true' : undefined, onclick: () => void addConcept(ci.value) }, 'Add card')));
+      h('button', { class: 'btn', style: 'min-height:48px;padding:0 16px', disabled: addingId === 'concept' ? 'true' : undefined, onclick: () => void addConcept(ci.value) }, icon('plus', 18), 'Add card')));
   }
 
   // ------------------------------------------------------------ placed beats
@@ -281,15 +281,15 @@ export function buildBrollPane(ctx: BrollCtx): BrollPane {
             chipRow<BrollMotion>('Motion', BROLL_MOTIONS.map((m) => [m, BROLL_MOTION_LABEL[m]] as [BrollMotion, string]), b.motion, (v) => { b.motion = v; ctx.changed(); }),
             chipRow<BrollFrame>('Frame', (Object.keys(BROLL_FRAME_LABEL) as BrollFrame[]).map((f) => [f, BROLL_FRAME_LABEL[f]] as [BrollFrame, string]), b.frame, (v) => { b.frame = v; ctx.changed(); }),
           ]),
-        h('div', { class: 'at-sec', style: 'display:flex;gap:8px' },
-          h('button', { class: 'btn', style: 'flex:1;min-height:44px', onclick: () => { input.value = b.keyword || b.title; void doSearch(input.value); } }, 'Find similar'),
-          h('button', { class: 'btn' + (replaceId ? ' primary' : ''), style: 'flex:1;min-height:44px', onclick: () => { replaceId = replaceId ? null : b.id; renderAll(); } }, replaceId ? 'Swapping...' : 'Swap'),
-          h('button', { class: 'btn danger', style: 'min-height:44px', 'aria-label': 'Delete beat', onclick: () => { ctx.p.broll = list().filter((x) => x.id !== b.id); sel = list()[0]?.id ?? null; replaceId = null; ctx.changed(); renderAll(); } }, icon('trash', 20))));
+        h('div', { class: 'br-acts' },
+          h('button', { class: 'btn', onclick: () => { input.value = b.keyword || b.title; void doSearch(input.value); } }, icon('search', 18), 'Find similar'),
+          h('button', { class: 'btn' + (replaceId ? ' primary' : ''), onclick: () => { replaceId = replaceId ? null : b.id; renderAll(); } }, icon('swap', 18), replaceId ? 'Swapping...' : 'Swap'),
+          h('button', { class: 'btn danger ico', 'aria-label': 'Delete beat', onclick: () => { ctx.p.broll = list().filter((x) => x.id !== b.id); sel = list()[0]?.id ?? null; replaceId = null; ctx.changed(); renderAll(); } }, icon('trash', 20))));
     }
     if (all.length) {
-      kids.push(h('div', { class: 'at-sec', style: 'display:flex;gap:8px' },
-        h('button', { class: 'btn', style: 'flex:1;min-height:44px', onclick: () => void copyCredits() }, 'Copy credits'),
-        h('button', { class: 'btn', style: 'flex:1;min-height:44px', onclick: () => { ctx.p.broll = []; sel = null; replaceId = null; ctx.changed(); renderAll(); } }, 'Clear all')));
+      kids.push(h('div', { class: 'br-acts' },
+        h('button', { class: 'btn', onclick: () => void copyCredits() }, icon('copy', 18), 'Copy credits'),
+        h('button', { class: 'btn danger', onclick: () => { ctx.p.broll = []; sel = null; replaceId = null; ctx.changed(); renderAll(); } }, icon('trash', 18), 'Clear all')));
     }
     beatsBox.replaceChildren(...kids);
   }

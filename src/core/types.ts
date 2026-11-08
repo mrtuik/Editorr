@@ -134,6 +134,8 @@ export interface Settings {
   zoomEase?: number[];
   /** Silence cut: also zoom in at every cut (uses the zoom shape above). */
   silenceZoom?: boolean;
+  /** 'alternate' = zoomed piece, normal piece, zoomed piece... (default); 'punch' = zoom in, hold and ease out inside each piece. */
+  silenceZoomMode?: 'alternate' | 'punch';
   /** Music: level under the voice (dB), drop while talking (dB), fade in/out (ms). */
   musicLevelDb?: number;
   musicDuckDb?: number;

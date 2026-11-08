@@ -248,3 +248,42 @@ export function addCutZooms(
   }
   return out;
 }
+
+/**
+ * Alternate zoom for silence cuts: the 1st piece after a cut stays zoomed in for its whole length (it eases in at the start
+ * and is NOT zoomed out again), the next piece is normal, the next one zoomed in again, and so on.
+ * `joins` are the timeline times where a kept part starts after a removed part. Only one-person clips are zoomed.
+ */
+export function addAlternateZooms(
+  segs: Segment[], joins: number[], shape: ZoomShape,
+  baseCrop: (sg: Segment, role: Role) => CropState,
+): Segment[] {
+  const A = Math.max(1.01, shape.amount);
+  const f = (e: number) => 1 + (A - 1) * e;
+  const out: Segment[] = [];
+  let n = 0;
+  for (const sg of segs) {
+    const join = joins.some((t) => Math.abs(t - sg.startMs) <= 2);
+    if (!join) { out.push(sg); continue; }
+    n++;
+    if (n % 2 === 0 || sg.style !== 'one' || sg.endMs - sg.startMs < 250) { out.push(sg); continue; } // every other piece stays normal
+    const room = sg.endMs - sg.startMs - 60;
+    const k = Math.min(1, room / Math.max(80, shape.inMs));
+    const inMs = Math.max(80, shape.inMs) * k;
+    const nIn = Math.max(2, Math.min(10, Math.round(inMs / 60)));
+    const key = (sg.main === 'host' ? 'cropHost' : 'cropConst') as 'cropHost' | 'cropConst';
+    const base = baseCrop(sg, sg.main);
+    const pieces: { a: number; b: number; f: number }[] = [];
+    for (let i = 0; i < nIn; i++) pieces.push({ a: sg.startMs + (i * inMs) / nIn, b: sg.startMs + ((i + 1) * inMs) / nIn, f: f(bezier(shape.ease, (i + 0.5) / nIn)) });
+    pieces.push({ a: sg.startMs + inMs, b: sg.endMs, f: A });
+    pieces.forEach((pc, i) => {
+      const x = i === 0 ? sg.startMs : Math.round(pc.a), y = i === pieces.length - 1 ? sg.endMs : Math.round(pc.b);
+      if (y - x < 20) return;
+      const d = dup(sg, { id: i === 0 ? sg.id : uid(), startMs: x, endMs: y });
+      if (i > 0) d.zs = true;
+      d[key] = Math.abs(pc.f - 1) < 0.002 ? { ...base } : zoomCrop(base, pc.f);
+      out.push(d);
+    });
+  }
+  return out;
+}

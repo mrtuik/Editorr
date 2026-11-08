@@ -195,6 +195,7 @@ export const ICON = {
   sizeL: '<rect x="3" y="5" width="18" height="14" rx="2"/><rect x="8" y="9" width="11" height="8" rx="1" fill="currentColor"/>',
   zoomIn: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.500-4.500M11 8v6M8 11h6" />',
   zoomOut: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.500-4.500M8 11h6" />',
+  curve: '<path d="M3 20C11 20 11 4 21 4"/><circle cx="3" cy="20" r="1.6" fill="currentColor"/><circle cx="21" cy="4" r="1.6" fill="currentColor"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4" />',
   mask: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="12" r="4"/>',
   crop: '<path d="M6 2v14a2 2 0 002 2h14M2 6h14a2 2 0 012 2v14" />',

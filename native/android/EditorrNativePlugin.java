@@ -219,12 +219,38 @@ public class EditorrNativePlugin extends Plugin {
                 File out = new File(dir, id + ".jpg");
                 if (!out.exists() || out.length() == 0) {
                     Uri uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id);
-                    Bitmap bmp;
+                    Bitmap bmp = null;
                     if (Build.VERSION.SDK_INT >= 29) {
-                        bmp = getContext().getContentResolver().loadThumbnail(uri, new android.util.Size(320, 320), null);
-                    } else {
-                        //noinspection deprecation
-                        bmp = MediaStore.Video.Thumbnails.getThumbnail(getContext().getContentResolver(), id, MediaStore.Video.Thumbnails.MINI_KIND, null);
+                        try { bmp = getContext().getContentResolver().loadThumbnail(uri, new android.util.Size(320, 320), null); } catch (Exception ignored) { bmp = null; }
+                    }
+                    if (bmp == null) {
+                        try {
+                            //noinspection deprecation
+                            bmp = MediaStore.Video.Thumbnails.getThumbnail(getContext().getContentResolver(), id, MediaStore.Video.Thumbnails.MINI_KIND, null);
+                        } catch (Exception ignored) { bmp = null; }
+                    }
+                    if (bmp == null) {
+                        // some phones refuse both: grab a frame ourselves
+                        MediaMetadataRetriever mmr = new MediaMetadataRetriever();
+                        try {
+                            mmr.setDataSource(getContext(), uri);
+                            String d = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+                            long atUs = 0;
+                            try { atUs = Math.min(1_000_000L, Long.parseLong(d) * 500L); } catch (Exception ignored) { /* first frame */ }
+                            Bitmap f = mmr.getFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+                            if (f == null) f = mmr.getFrameAtTime();
+                            if (f != null) {
+                                int m = Math.max(f.getWidth(), f.getHeight());
+                                if (m > 320) {
+                                    float k = 320f / m;
+                                    Bitmap sc = Bitmap.createScaledBitmap(f, Math.max(1, Math.round(f.getWidth() * k)), Math.max(1, Math.round(f.getHeight() * k)), true);
+                                    if (sc != f) f.recycle();
+                                    f = sc;
+                                }
+                                bmp = f;
+                            }
+                        } catch (Exception ignored) { bmp = null; }
+                        finally { try { mmr.release(); } catch (Exception ignored) { /* nothing */ } }
                     }
                     if (bmp == null) { call.reject("no thumbnail"); return; }
                     try (FileOutputStream fo = new FileOutputStream(out)) { bmp.compress(Bitmap.CompressFormat.JPEG, 82, fo); }
