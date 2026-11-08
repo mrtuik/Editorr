@@ -81,12 +81,18 @@ export function openCaptionSheet(ctx: CaptionCtx, startWord = -1): CaptionSheetH
   let tapMode: 'edit' | 'cut' = 'edit';
   type WTab = 'Styles' | 'Fonts' | 'Effects';
   let wordTab: WTab = 'Styles';
+  type STab = 'Style' | 'Layout' | 'Text' | 'Words';
+  let styleTab: STab = 'Style';
+  /** where Done in the word editor goes back to */
+  let backTo: 'style' | 'caption' = 'style';
+  let capRange: { from: number; to: number } | null = null;
   const styleKeep = { sub: 'Text' as 'Text' | 'Stroke' | 'Glow' | 'Background' | 'Shadow' };
 
   /** Tap on a word: the video jumps there, the word gets a frame, and its tools open. */
-  function selectWord(i: number) {
+  function selectWord(i: number, back: 'style' | 'caption' = 'style') {
     const w = p.captions?.words[i]; if (!w) return;
     tidyFx();
+    backTo = back;
     selWord = i; scope = 'word';
     ctx.seek(w.s); ctx.onSelect?.(i);
     renderWord();
@@ -130,7 +136,11 @@ export function openCaptionSheet(ctx: CaptionCtx, startWord = -1): CaptionSheetH
     title.textContent = scope === 'word' ? 'Edit word' : 'All words';
     const m = scope === 'word' ? wordModel(selWord) : allModel();
 
-    const leave = () => { tidyFx(); selWord = -1; ctx.onSelect?.(-1); ctx.changed(); renderStyle(); };
+    const leave = () => {
+      tidyFx(); ctx.changed();
+      if (scope === 'word' && backTo === 'caption' && capRange && p.captions?.words[capRange.from]) { selWord = capRange.from; ctx.onSelect?.(selWord); renderCaption(capRange.from, capRange.to); return; }
+      selWord = -1; ctx.onSelect?.(-1); renderStyle();
+    };
     const input = h('input', { type: 'text', class: 'ts-input cs-word', value: w ? (st.roman ? w.w : (w.orig || w.w)) : 'All words', 'aria-label': 'Word', disabled: !w }) as HTMLInputElement;
     if (w) input.addEventListener('input', () => { w.w = input.value; w.orig = input.value; ctx.changed(); });
     const scopeRow = h('div', { class: 'cs-mode' },
@@ -151,6 +161,67 @@ export function openCaptionSheet(ctx: CaptionCtx, startWord = -1): CaptionSheetH
         ctx.changed(); renderWord();
       } }, 'Reset'),
       h('button', { class: 'btn primary cs-done', onclick: leave }, icon('check', 20), 'Done')));
+  }
+
+  /** The caption (page) a word belongs to. */
+  function pageOf(i: number) { return buildPages(p.captions, style()).find((pg) => i >= pg.from && i <= pg.to); }
+
+  /** Tap on one caption: only that caption opens for editing. */
+  function selectCaption(i: number) {
+    const pg = pageOf(i); if (!pg) return;
+    tidyFx();
+    ctx.seek(pg.s); ctx.onSelect?.(pg.from);
+    selWord = pg.from;
+    renderCaption(pg.from, pg.to);
+  }
+
+  /** One caption: fix its text (a wrong transcription), jump to the next / previous one, cut it, or style one of its words. Other captions are not touched. */
+  function renderCaption(from: number, to: number) {
+    const c = p.captions; if (!c) { renderMake(); return; }
+    capRange = { from, to };
+    const st = style();
+    const shown = (w: { w: string; orig?: string }) => (st.roman ? w.w : (w.orig || w.w));
+    const range = () => c.words.slice(capRange!.from, capRange!.to + 1);
+    title.textContent = 'Edit caption';
+    const input = h('input', { type: 'text', class: 'ts-input cs-word', value: range().map(shown).join(' '), 'aria-label': 'Caption text', enterkeyhint: 'done' }) as HTMLInputElement;
+
+    /** Same number of words: change them in place (timing and word styles stay). Different number: re-time just this caption. */
+    function apply(final: boolean) {
+      const parts = input.value.trim().split(/\s+/).filter(Boolean);
+      const cur = range();
+      if (!parts.length) return;
+      if (parts.length === cur.length) {
+        let any = false;
+        parts.forEach((t, k) => { if (shown(cur[k]!) !== t) { cur[k]!.w = t; cur[k]!.orig = t; any = true; } });
+        if (any) ctx.changed();
+        return;
+      }
+      if (!final) return;
+      const a = cur[0]!, b = cur[cur.length - 1]!;
+      const span = Math.max(100, b.e - a.s);
+      const neu = parts.map((t, k) => ({ w: t, orig: t, s: Math.round(a.s + (span * k) / parts.length), e: Math.round(a.s + (span * (k + 1)) / parts.length) }));
+      c!.words.splice(capRange!.from, cur.length, ...neu);
+      capRange = { from: capRange!.from, to: capRange!.from + neu.length - 1 };
+      ctx.changed();
+    }
+    input.addEventListener('input', () => apply(false));
+    input.addEventListener('change', () => { apply(true); renderCaption(capRange!.from, capRange!.to); });
+
+    const pages = buildPages(c, st);
+    const idx = Math.max(0, pages.findIndex((pg) => capRange!.from >= pg.from && capRange!.from <= pg.to));
+    const go = (k: number) => { apply(true); const pg = buildPages(c, st)[k]; if (pg) selectCaption(pg.from); };
+    const chipsEl = h('div', { class: 'cap-trans' }, ...range().map((w, k) => h('button', { class: 'cap-tw' + (!fxIsEmpty(w.fx) ? ' styled' : ''), onclick: () => { apply(true); selectWord(capRange!.from + k, 'caption'); } }, shown(w))));
+    const done = () => { apply(true); tidyFx(); selWord = -1; capRange = null; ctx.onSelect?.(-1); ctx.changed(); styleTab = 'Text'; renderStyle(); };
+
+    body.replaceChildren(
+      h('div', { class: 'cs-top' }, h('div', { class: 'ts-field' }, input), h('span', { class: 'cs-time' }, fmtClock(c.words[capRange.from]?.s ?? 0))),
+      h('div', { class: 'at-hint' }, `Caption ${idx + 1} of ${pages.length}. Fix the words here. Only this caption changes.`),
+      h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Style one word'), chipsEl));
+    foot.replaceChildren(h('div', { class: 'cs-actions' },
+      h('button', { class: 'btn', 'aria-label': 'Previous caption', disabled: idx <= 0 ? 'true' : undefined, onclick: () => go(idx - 1) }, icon('back', 18)),
+      h('button', { class: 'btn', 'aria-label': 'Next caption', disabled: idx >= pages.length - 1 ? 'true' : undefined, onclick: () => go(idx + 1) }, icon('chevR', 18)),
+      h('button', { class: 'btn', onclick: () => { apply(true); const a = c.words[capRange!.from], b = c.words[capRange!.to]; if (a && b) { ctx.cut(a.s, b.e); toast('Caption cut from the video. Undo brings it back.'); } done(); } }, icon('scissors', 18), 'Cut'),
+      h('button', { class: 'btn primary cs-done', onclick: done }, icon('check', 20), 'Done')));
   }
 
   function renderStyle() {
@@ -179,55 +250,51 @@ export function openCaptionSheet(ctx: CaptionCtx, startWord = -1): CaptionSheetH
         return h('button', { class: 'cap-tw' + (gone ? ' gone' : '') + (styled ? ' styled' : '') + (i === selWord ? ' on' : ''),
           onclick: () => {
             if (tapMode === 'cut') { if (gone) { ctx.seek(w.s); return; } ctx.cut(w.s, w.e); drawTrans(); drawList(); return; }
-            selectWord(i);
+            selectWord(i, 'style');
           } }, t);
       }));
     };
     const list = h('div', { class: 'cap-pages' });
     const drawList = () => {
       const pages = buildPages(p.captions, st);
-      list.replaceChildren(...pages.map((pg) => {
-        const input = h('input', { type: 'text', class: 'cap-input', value: pg.words.map((x) => x.t).join(' ') }) as HTMLInputElement;
-        input.addEventListener('change', () => {
-          const c = p.captions!;
-          const parts = input.value.trim().split(/\s+/).filter(Boolean);
-          const a = c.words[pg.from], b = c.words[pg.to];
-          if (!a || !b) return;
-          const span = Math.max(100, b.e - a.s);
-          const neu = parts.map((t, i) => ({ w: t, orig: t, s: Math.round(a.s + (span * i) / parts.length), e: Math.round(a.s + (span * (i + 1)) / parts.length) }));
-          c.words.splice(pg.from, pg.to - pg.from + 1, ...neu);
-          ctx.changed(); drawList();
-        });
-        return h('div', { class: 'cap-row' }, h('button', { class: 'cap-time', onclick: () => ctx.seek(pg.s) }, `${Math.floor(pg.s / 60000)}:${String(Math.floor(pg.s / 1000) % 60).padStart(2, '0')}`), input);
-      }));
+      list.replaceChildren(...pages.map((pg, n) => h('button', { class: 'cap-line', onclick: () => selectCaption(pg.from) },
+        h('span', { class: 'cap-time' }, `${Math.floor(pg.s / 60000)}:${String(Math.floor(pg.s / 1000) % 60).padStart(2, '0')}`),
+        h('span', { class: 'cap-line-t' }, pg.words.map((x) => x.t).join(' ') || `Caption ${n + 1}`))));
     };
     drawList(); drawTrans();
 
-    body.replaceChildren(
+    const tabsBar = h('div', { class: 'ts-tabs', style: 'padding:0;margin:0 0 4px' }, ...(['Style', 'Layout', 'Text', 'Words'] as STab[]).map((t) =>
+      h('button', { class: 'ts-tab' + (t === styleTab ? ' on' : ''), onclick: () => { styleTab = t; renderStyle(); } }, t)));
+    const pane: Node[] = styleTab === 'Style' ? [
       h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Style'), looks),
+      swatches('Text colour', st.color, (c) => { st.color = c; ctx.changed(); drawLooks(); }),
+      swatches('Highlight colour', st.highlight, (c) => { st.highlight = c; ctx.changed(); drawLooks(); }),
+    ] : styleTab === 'Layout' ? [
       chips<string>('Words on screen', 'How many words show at one time.', [['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']], String(st.wordsPerLine), (v) => { st.wordsPerLine = Number(v); ctx.changed(); drawList(); }),
       chips<string>('Size', '', [['0.04', 'Small'], ['0.055', 'Medium'], ['0.075', 'Large']], String(st.size), (v) => { st.size = Number(v); ctx.changed(); }),
       chips<string>('Position', '', [['0.2', 'Top'], ['0.5', 'Middle'], ['0.78', 'Bottom']], String(st.y), (v) => { st.y = Number(v); ctx.changed(); }),
       ...(hasScript ? [chips<string>('Writing', 'Banglish / Hinglish or the original script.', [['roman', 'Banglish / Hinglish'], ['orig', 'Original']], st.roman ? 'roman' : 'orig', (v) => { st.roman = v === 'roman'; ctx.changed(); drawList(); })] : []),
       chips<string>('Letters', '', [['n', 'Normal'], ['u', 'CAPITALS']], st.upper ? 'u' : 'n', (v) => { st.upper = v === 'u'; ctx.changed(); drawList(); }),
-      swatches('Text colour', st.color, (c) => { st.color = c; ctx.changed(); drawLooks(); }),
-      swatches('Highlight colour', st.highlight, (c) => { st.highlight = c; ctx.changed(); drawLooks(); }),
-      h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Words'),
-        h('div', { class: 'at-hint' }, 'Tap a word to change its font, colour, shadow, glow and more. You can also tap it on the video.'),
+    ] : styleTab === 'Text' ? [
+      h('div', { class: 'at-sec' }, h('div', { class: 'at-hint' }, 'Tap a caption (here or on the video) to fix its text. Only that caption changes.'), list),
+    ] : [
+      h('div', { class: 'at-sec' },
+        h('div', { class: 'at-hint' }, 'Tap a word to change its font, colour, shadow, glow and more.'),
         h('button', { class: 'btn cs-all', onclick: () => { selWord = -1; scope = 'all'; wordTab = 'Styles'; renderWord(); } }, icon('text', 20), 'Style all words'),
         h('div', { class: 'cs-mode' }, ...(['edit', 'cut'] as const).map((m) => h('button', { class: 'cs-mode-b' + (tapMode === m ? ' on' : ''),
           onclick: (e: Event) => { tapMode = m; (e.currentTarget as HTMLElement).parentElement?.querySelectorAll('.cs-mode-b').forEach((n, k) => n.classList.toggle('on', (k === 0) === (m === 'edit'))); } }, m === 'edit' ? 'Tap to style' : 'Tap to cut'))),
         trans),
-      h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Edit words'), h('div', { class: 'at-hint' }, 'Tap the time to jump there. Change a line to fix a word.'), list));
+    ];
+    body.replaceChildren(tabsBar, ...pane);
     foot.replaceChildren(
       h('button', { class: 'btn at-go', onclick: () => { ctx.remove(); renderMake(); } }, icon('trash', 20), 'Remove captions'));
   }
 
   if (p.captions?.words.length) {
-    if (startWord >= 0 && p.captions.words[startWord]) { selWord = startWord; scope = 'word'; ctx.onSelect?.(startWord); renderWord(); } else renderStyle();
+    if (startWord >= 0 && p.captions.words[startWord]) selectCaption(startWord); else renderStyle();
   } else renderMake();
   return {
-    selectWord: (i) => { if (p.captions?.words[i]) { if (!closed) selectWord(i); } },
+    selectWord: (i) => { if (p.captions?.words[i]) { if (!closed) selectCaption(i); } },
     close,
   };
 }
