@@ -1870,6 +1870,20 @@ public class EditorrNativePlugin extends Plugin {
             return lines.size() > maxLines ? new ArrayList<String>(lines.subList(0, maxLines)) : lines;
         }
 
+        private static Typeface face(String f) {
+            if ("oswald".equals(f)) return Typeface.create("sans-serif-condensed", Typeface.BOLD);
+            if ("playfair".equals(f)) return Typeface.create(Typeface.SERIF, Typeface.BOLD);
+            if ("jetbrains".equals(f)) return Typeface.create(Typeface.MONOSPACE, Typeface.BOLD);
+            return Typeface.create("sans-serif", Typeface.BOLD);
+        }
+
+        private static void shadowOn(Paint p, JSONObject sh, int alpha) {
+            if (sh == null || (sh.optDouble("blur", 0) <= 0 && sh.optDouble("dist", 0) <= 0)) return;
+            int col = CaptionOverlay.css(sh.optString("color", "#000000"), Color.BLACK);
+            p.setShadowLayer((float) Math.max(0.1, sh.optDouble("blur", 0) / 2.0), 0f, (float) sh.optDouble("dist", 0),
+                    Color.argb(alpha, Color.red(col), Color.green(col), Color.blue(col)));
+        }
+
         private void draw(Canvas c, JSONObject b, float a) {
             String type = b.optString("type", "split_screen");
             String th = b.optString("theme", "noir");
@@ -1878,48 +1892,95 @@ public class EditorrNativePlugin extends Plugin {
             int alpha = Math.round(a * 255f);
             Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
             JSONObject video = b.optJSONObject("video"), card = b.optJSONObject("card");
+            JSONObject slab = b.optBoolean("lower", false) ? b.optJSONObject("slab") : null;
+            JSONObject sh = b.optJSONObject("shadow");
+            int bgCol = b.has("bg") ? CaptionOverlay.css(b.optString("bg", ""), theme(th, false)) : theme(th, false);
+            int cardCol = b.has("cardColor") ? CaptionOverlay.css(b.optString("cardColor", ""), theme(th, true)) : theme(th, true);
+            boolean ownText = b.has("textColor");
+            int textCol = ownText ? CaptionOverlay.css(b.optString("textColor", ""), Color.WHITE) : Color.WHITE;
             RectF area = new RectF(0, 0, w, h);
             boolean center = !"split_screen".equals(type) || card == null;
-            if ("kinetic_quote".equals(type)) {
+            int maxLines = 4;
+            if ("kinetic_quote".equals(type) && slab != null) {
+                Paint sp = new Paint(Paint.ANTI_ALIAS_FLAG);
+                sp.setColor(cardCol); sp.setAlpha(alpha);
+                shadowOn(sp, sh, alpha);
+                rrect(c, sp, slab, radius);
+                JSONObject tg = b.optJSONObject("tag");
+                float tagH = 0f;
+                if (tg != null) {
+                    tagH = (float) tg.optDouble("h", 0);
+                    Paint tb = new Paint(Paint.ANTI_ALIAS_FLAG);
+                    tb.setColor(accent); tb.setAlpha(alpha);
+                    rrect(c, tb, tg, Math.min(radius, 6f));
+                    Paint tt = new Paint(Paint.ANTI_ALIAS_FLAG);
+                    tt.setTypeface(face(b.optString("font", "oswald")));
+                    tt.setTextSize((float) tg.optDouble("size", tagH * 0.58));
+                    tt.setColor(Color.WHITE); tt.setAlpha(alpha);
+                    tt.setTextAlign(Paint.Align.LEFT);
+                    float tx = (float) tg.optDouble("x", 0) + tagH * 0.45f;
+                    float ty = (float) tg.optDouble("y", 0) + tagH / 2f - (tt.ascent() + tt.descent()) / 2f;
+                    c.drawText(tg.optString("text", "BREAKING NEWS"), tx, ty, tt);
+                }
+                float sx = (float) slab.optDouble("x", 0), sy = (float) slab.optDouble("y", 0);
+                area = new RectF(sx, sy + tagH * 0.2f, sx + (float) slab.optDouble("w", w), sy + (float) slab.optDouble("h", h));
+                center = false;
+                maxLines = 2;
+            } else if ("kinetic_quote".equals(type)) {
                 p.setColor(Color.BLACK); p.setAlpha(Math.round(a * 0.62f * 255f));
                 c.drawRect(0, 0, w, h, p);
             } else if ("black_screen".equals(type)) {
-                p.setColor(theme(th, false)); p.setAlpha(alpha);
+                p.setColor(bgCol); p.setAlpha(alpha);
                 c.drawRect(0, 0, w, h, p);
             } else if (video != null && card != null) {
-                p.setColor(theme(th, false)); p.setAlpha(alpha);
+                p.setColor(bgCol); p.setAlpha(alpha);
                 c.drawRect(0, 0, w, h, p);
                 // window for the talking head
                 p.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR));
                 rrect(c, p, video, radius);
                 p.setXfermode(null);
-                p.setColor(theme(th, true)); p.setAlpha(alpha);
-                rrect(c, p, card, radius);
+                Paint cp = new Paint(Paint.ANTI_ALIAS_FLAG);
+                cp.setColor(cardCol); cp.setAlpha(alpha);
+                shadowOn(cp, sh, alpha);
+                rrect(c, cp, card, radius);
+                float bw = (float) b.optDouble("border", 0);
+                if (bw > 0f) {
+                    Paint bp2 = new Paint(Paint.ANTI_ALIAS_FLAG);
+                    bp2.setStyle(Paint.Style.STROKE); bp2.setStrokeWidth(bw);
+                    bp2.setColor(accent); bp2.setAlpha(alpha);
+                    float cx = (float) card.optDouble("x", 0), cy = (float) card.optDouble("y", 0);
+                    float cw = (float) card.optDouble("w", 0), ch = (float) card.optDouble("h", 0);
+                    float kr = Math.max(0f, Math.min(radius - bw / 2f, Math.min(cw, ch) / 2f));
+                    c.drawRoundRect(new RectF(cx + bw / 2f, cy + bw / 2f, cx + cw - bw / 2f, cy + ch - bw / 2f), kr, kr, bp2);
+                }
                 area = new RectF((float) card.optDouble("x", 0), (float) card.optDouble("y", 0),
                         (float) (card.optDouble("x", 0) + card.optDouble("w", w)), (float) (card.optDouble("y", 0) + card.optDouble("h", h)));
             }
-            String headline = b.optString("headline", "").toUpperCase();
+            boolean caps = b.optBoolean("caps", true);
+            String headline = b.optString("headline", "");
+            if (caps) headline = headline.toUpperCase();
             String sub = b.optString("subtext", "");
             if (headline.isEmpty()) return;
+            float k = (float) Math.max(0.5, Math.min(1.6, b.optDouble("textScale", 1)));
             float shortSide = Math.min(w, h);
-            float headSize = Math.round(shortSide * (center ? 0.085f : 0.062f));
-            float subSize = Math.round(shortSide * (center ? 0.034f : 0.03f));
-            float pad = shortSide * 0.04f;
+            float headSize = Math.round(shortSide * (center ? 0.085f : 0.062f) * k);
+            float subSize = Math.round(shortSide * (center ? 0.034f : 0.03f) * k);
+            float pad = b.has("pad") ? (float) b.optDouble("pad", shortSide * 0.04) : shortSide * 0.04f;
             float bar = Math.max(4f, Math.round(shortSide * 0.006f));
             float aw = area.width(), ah = area.height();
             float textX = center ? area.left + aw / 2f : area.left + pad + bar * 2.5f;
-            float maxW = center ? aw * 0.86f : aw - pad * 2f - bar * 2.5f;
+            float maxW = Math.max(40f, center ? aw * 0.86f : aw - pad * 2f - bar * 2.5f);
             Paint tp = new Paint(Paint.ANTI_ALIAS_FLAG);
             tp.setTextAlign(center ? Paint.Align.CENTER : Paint.Align.LEFT);
-            tp.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+            tp.setTypeface(face(b.optString("font", "inter")));
             tp.setTextSize(headSize);
             tp.setFakeBoldText(true);
-            List<String> head = wrap(tp, headline, maxW, 4);
+            List<String> head = wrap(tp, headline, maxW, maxLines);
             Paint sp2 = new Paint(Paint.ANTI_ALIAS_FLAG);
             sp2.setTextAlign(center ? Paint.Align.CENTER : Paint.Align.LEFT);
-            sp2.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+            sp2.setTypeface(b.has("font") ? Typeface.create(face(b.optString("font", "inter")), Typeface.NORMAL) : Typeface.create("sans-serif-medium", Typeface.NORMAL));
             sp2.setTextSize(subSize);
-            List<String> subs = sub.isEmpty() ? new ArrayList<String>() : wrap(sp2, sub, maxW, 4);
+            List<String> subs = sub.isEmpty() ? new ArrayList<String>() : wrap(sp2, sub, maxW, maxLines);
             float headH = head.size() * headSize * 1.12f, subH = subs.size() * subSize * 1.35f;
             float gap = subs.isEmpty() ? 0f : headSize * 0.45f;
             float total = headH + gap + subH;
@@ -1929,10 +1990,11 @@ public class EditorrNativePlugin extends Plugin {
                 bp.setColor(accent); bp.setAlpha(alpha);
                 c.drawRect(area.left + pad, y, area.left + pad + bar, y + total, bp);
             }
-            tp.setColor(Color.WHITE); tp.setAlpha(alpha);
+            tp.setColor(textCol); tp.setAlpha(alpha);
             for (String ln : head) { c.drawText(ln, textX, y + headSize * 0.86f, tp); y += headSize * 1.12f; }
             y += gap;
-            sp2.setColor(center ? accent : Color.rgb(167, 176, 190)); sp2.setAlpha(alpha);
+            if (center) sp2.setColor(accent); else sp2.setColor(ownText ? textCol : Color.rgb(167, 176, 190));
+            sp2.setAlpha(!center && ownText ? Math.round(alpha * 0.78f) : alpha);
             for (String ln : subs) { c.drawText(ln, textX, y + subSize * 0.95f, sp2); y += subSize * 1.35f; }
         }
     }

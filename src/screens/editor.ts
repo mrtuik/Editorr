@@ -8,11 +8,11 @@ import { pickFace } from './facePick';
 import { askFaceOptions } from './faceOptions';
 import { openCaptionSheet, type CaptionSheetHandle } from './captionSheet';
 import { openTextItemsSheet, type TextSheetHandle } from './textSheet';
-import { openDocuSheet, type DocuSheetHandle } from './docuSheet';
+import { openDocuSheet, type DocuSheetHandle, type DocuTab } from './docuSheet';
 import { docuCrop, fixDocuLayout, splitBeatAt } from '../core/docuApply';
 import { drawDocuFrame } from '../core/docuRenderer';
 import { drawBrollFrame, pauseBrollVideos } from '../core/brollRenderer';
-import { brollBeatAt } from '../core/brollTypes';
+import { brollBeatAt, isBrollVideo } from '../core/brollTypes';
 import { docuBeatAt } from '../core/docuTypes';
 import { openReactionSheet } from './reactionSheet';
 import { askAutoZoom, zoomShapeFrom } from './zoomSheet';
@@ -93,6 +93,8 @@ export function editorScreen() {
   let capVersion = 0;
   /** Text (Add text) and caption word being edited: the preview draws a dashed frame around them. */
   let textSel: string | null = null;
+  /** the text / docu beat / B-roll beat picked on the timeline (white outline) */
+  let laySel: { kind: 'text' | 'docu' | 'broll'; id: string } | null = null;
   let capSel = -1;
   let textHandle: TextSheetHandle | null = null;
   let docuHandle: DocuSheetHandle | null = null;
@@ -1316,15 +1318,17 @@ export function editorScreen() {
   /** Rows under the waveform, like CapCut: Music, SFX and Text each get their own row; overlapping items stack. */
   function tlRows() {
     const items = p.bgm?.items ?? [];
-    const mus = items.filter((i) => i.kind !== 'sfx'), sfx = items.filter((i) => i.kind === 'sfx'), txt = p.texts ?? [];
-    const pm = pack(mus.map((i) => [i.startMs, i.endMs])), ps = pack(sfx.map((i) => [i.startMs, i.endMs])), pt = pack(txt.map((t) => [t.s, t.e]));
+    const mus = items.filter((i) => i.kind !== 'sfx'), sfx = items.filter((i) => i.kind === 'sfx'), txt = p.texts ?? [], dcu = p.docu ?? [], brl = p.broll ?? [];
+    const pm = pack(mus.map((i) => [i.startMs, i.endMs])), ps = pack(sfx.map((i) => [i.startMs, i.endMs])), pt = pack(txt.map((t) => [t.s, t.e])), pd = pack(dcu.map((d) => [d.start, d.end])), pb = pack(brl.map((b) => [b.start, b.end]));
     let y = AUD_Y + AUD + GAP;
     const hasCap = !!p.captions?.words.length;
     const cap = hasCap ? { y, h: SUB_T } : null; if (cap) y += cap.h + GAP;
     const text = txt.length ? { y, h: pt.n * SUB_T + (pt.n - 1) * 3 } : null; if (text) y += text.h + GAP;
+    const docu = dcu.length ? { y, h: pd.n * SUB_T + (pd.n - 1) * 3 } : null; if (docu) y += docu.h + GAP;
+    const broll = brl.length ? { y, h: pb.n * SUB_T + (pb.n - 1) * 3 } : null; if (broll) y += broll.h + GAP;
     const music = mus.length ? { y, h: pm.n * SUB_M + (pm.n - 1) * 3 } : null; if (music) y += music.h + GAP;
     const fx = sfx.length ? { y, h: ps.n * SUB_S + (ps.n - 1) * 3 } : null; if (fx) y += fx.h + GAP;
-    return { mus, sfx, txt, pm, ps, pt, music, fx, text, cap, tlH: y + 10 };
+    return { mus, sfx, txt, dcu, brl, pm, ps, pt, pd, pb, music, fx, text, docu, broll, cap, tlH: y + 10 };
   }
   let rowsNow = tlRows();
   let minTlH = TL_H;
@@ -1427,7 +1431,49 @@ export function editorScreen() {
         g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
         g.fillText(t.text, a + 15, y + SUB_T / 2 + 0.5);
         g.restore();
+        if (laySel?.kind === 'text' && laySel.id === t.id) layOutline(g, a, y, w, SUB_T);
       }
+    });
+    g.restore();
+  }
+  function layOutline(g: CanvasRenderingContext2D, a: number, y: number, w: number, hh: number) {
+    rrect(g, a + 0.75, y + 0.75, w - 1.5, hh - 1.5, 6); g.strokeStyle = '#ffffff'; g.lineWidth = 1.6; g.stroke();
+  }
+  function drawDocuRow(g: CanvasRenderingContext2D) {
+    const R = rowsNow; if (!R.docu) return;
+    g.save();
+    g.beginPath(); g.rect(G, R.docu.y - 1, W - G, R.docu.h + 2); g.clip();
+    R.dcu.forEach((d, n) => {
+      const a = xOf(d.start), b = xOf(d.end);
+      if (b < G || a > W) return;
+      const y = R.docu!.y + R.pd.line[n]! * (SUB_T + 3), w = Math.max(16, b - a);
+      pill(g, a, y, w, SUB_T, d.accent_color && d.style?.template ? '#3b2a4d' : '#3b2a4d', '');
+      g.save();
+      g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
+      g.fillStyle = d.accent_color; g.fillRect(a, y + 5, 3, SUB_T - 10);
+      g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+      g.fillText(d.headline || 'Beat', Math.max(a, G) + 9, y + SUB_T / 2 + 0.5);
+      g.restore();
+      if (laySel?.kind === 'docu' && laySel.id === d.id) layOutline(g, a, y, w, SUB_T);
+    });
+    g.restore();
+  }
+  function drawBrollRow(g: CanvasRenderingContext2D) {
+    const R = rowsNow; if (!R.broll) return;
+    g.save();
+    g.beginPath(); g.rect(G, R.broll.y - 1, W - G, R.broll.h + 2); g.clip();
+    R.brl.forEach((bt, n) => {
+      const a = xOf(bt.start), b = xOf(bt.end);
+      if (b < G || a > W) return;
+      const y = R.broll!.y + R.pb.line[n]! * (SUB_T + 3), w = Math.max(16, b - a);
+      pill(g, a, y, w, SUB_T, '#33481f', '');
+      g.save();
+      g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
+      g.fillStyle = '#C6F277'; g.fillRect(a, y + 5, 3, SUB_T - 10);
+      g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+      g.fillText(`${isBrollVideo(bt) ? '\u25B6 ' : ''}${bt.keyword || bt.title}`, Math.max(a, G) + 9, y + SUB_T / 2 + 0.5);
+      g.restore();
+      if (laySel?.kind === 'broll' && laySel.id === bt.id) layOutline(g, a, y, w, SUB_T);
     });
     g.restore();
   }
@@ -1601,6 +1647,8 @@ export function editorScreen() {
     drawSfxRow(g);
     drawCaptionRow(g);
     drawTextRow(g);
+    drawDocuRow(g);
+    drawBrollRow(g);
 
     // silence found but not cut yet
     if (pendingCuts.length) {
@@ -1639,7 +1687,7 @@ export function editorScreen() {
     // row badges: a small square icon just before the start of each row (slides with the timeline). No text labels in the left column.
     {
       const R = rowsNow;
-      const badge = (y: number, h: number, glyph: 'note' | 'bolt' | 'text' | 'cc', on: boolean) => {
+      const badge = (y: number, h: number, glyph: 'note' | 'bolt' | 'text' | 'cc' | 'docu' | 'img', on: boolean) => {
         const sz = 26, bx = xOf(0) - sz - 6, by = y + (h - sz) / 2;
         if (bx + sz < G || bx > W) return;
         g.save();
@@ -1652,6 +1700,14 @@ export function editorScreen() {
           g.beginPath(); g.moveTo(cx + 0.5 * k, cy + 5 * k); g.lineTo(cx + 0.5 * k, cy - 6 * k); g.lineTo(cx + 5 * k, cy - 3.5 * k); g.stroke();
         } else if (glyph === 'bolt') {
           g.beginPath(); g.moveTo(cx + 2 * k, cy - 6 * k); g.lineTo(cx - 4 * k, cy + 1 * k); g.lineTo(cx - 0.5 * k, cy + 1 * k); g.lineTo(cx - 2 * k, cy + 6 * k); g.lineTo(cx + 4 * k, cy - 1.5 * k); g.lineTo(cx + 0.5 * k, cy - 1.5 * k); g.closePath(); g.fill();
+        } else if (glyph === 'docu') {
+          g.strokeRect(cx - 7 * k, cy - 6 * k, 14 * k, 12 * k);
+          g.beginPath(); g.moveTo(cx - 7 * k, cy - 1 * k); g.lineTo(cx + 7 * k, cy - 1 * k); g.stroke();
+          g.beginPath(); g.moveTo(cx - 4 * k, cy + 3 * k); g.lineTo(cx + 2 * k, cy + 3 * k); g.stroke();
+        } else if (glyph === 'img') {
+          g.strokeRect(cx - 7 * k, cy - 6 * k, 14 * k, 12 * k);
+          g.beginPath(); g.moveTo(cx - 7 * k, cy + 4 * k); g.lineTo(cx - 2 * k, cy - 1 * k); g.lineTo(cx + 1 * k, cy + 2 * k); g.lineTo(cx + 4 * k, cy - 1 * k); g.lineTo(cx + 7 * k, cy + 3 * k); g.stroke();
+          g.beginPath(); g.arc(cx + 3.5 * k, cy - 3 * k, 1.3 * k, 0, 6.3); g.fill();
         } else if (glyph === 'cc') {
           g.font = `700 ${Math.round(10 * k + 1)}px Roboto, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('CC', cx, cy + 0.5);
         } else {
@@ -1662,6 +1718,8 @@ export function editorScreen() {
       badge(AUD_Y, AUD, 'note', true);
       if (R.cap) badge(R.cap.y, R.cap.h, 'cc', true);
       if (R.text) badge(R.text.y, Math.min(R.text.h, SUB_T), 'text', true);
+      if (R.docu) badge(R.docu.y, Math.min(R.docu.h, SUB_T), 'docu', true);
+      if (R.broll) badge(R.broll.y, Math.min(R.broll.h, SUB_T), 'img', true);
       if (R.music) badge(R.music.y, Math.min(R.music.h, SUB_M), 'note', true);
       if (R.fx) badge(R.fx.y, Math.min(R.fx.h, SUB_S), 'bolt', true);
     }
@@ -1720,7 +1778,7 @@ export function editorScreen() {
   let lastClientY = 0;
   const localX = (e: PointerEvent) => e.clientX - canvas.getBoundingClientRect().left;
   const localY = (e: PointerEvent) => e.clientY - canvas.getBoundingClientRect().top;
-  type Lane = 'ruler' | 'main' | 'audio' | 'music' | 'sfx' | 'text' | 'caption' | 'none';
+  type Lane = 'ruler' | 'main' | 'audio' | 'music' | 'sfx' | 'text' | 'docu' | 'broll' | 'caption' | 'none';
   function laneAt(y: number): Lane {
     if (y < RULER) return 'ruler';
     if (y < MAIN_Y + LANE + GAP / 2) return 'main';
@@ -1728,6 +1786,8 @@ export function editorScreen() {
     const R = rowsNow;
     if (R.cap && y < R.cap.y + R.cap.h + GAP / 2) return 'caption';
     if (R.text && y < R.text.y + R.text.h + GAP / 2) return 'text';
+    if (R.docu && y < R.docu.y + R.docu.h + GAP / 2) return 'docu';
+    if (R.broll && y < R.broll.y + R.broll.h + GAP / 2) return 'broll';
     if (R.music && y < R.music.y + R.music.h + GAP / 2) return 'music';
     if (R.fx && y < R.fx.y + R.fx.h + GAP / 2) return 'sfx';
     return 'none';
@@ -1836,12 +1896,47 @@ export function editorScreen() {
   tl.addEventListener('pointerup', end);
   tl.addEventListener('pointercancel', end);
 
+  /** The text / docu beat / B-roll beat under a tap on its timeline row. */
+  function layerAt(lane: 'text' | 'docu' | 'broll', x: number, y: number): { id: string; s: number; e: number } | null {
+    const R = rowsNow;
+    const row = lane === 'text' ? R.text : lane === 'docu' ? R.docu : R.broll;
+    if (!row || x < G) return null;
+    const line = Math.max(0, Math.floor((y - row.y) / (SUB_T + 3)));
+    const items: { id: string; s: number; e: number; line: number }[] = lane === 'text'
+      ? R.txt.map((t, n) => ({ id: t.id, s: t.s, e: t.e, line: R.pt.line[n]! }))
+      : lane === 'docu' ? R.dcu.map((d, n) => ({ id: d.id, s: d.start, e: d.end, line: R.pd.line[n]! }))
+      : R.brl.map((b, n) => ({ id: b.id, s: b.start, e: b.end, line: R.pb.line[n]! }));
+    let best: { id: string; s: number; e: number } | null = null;
+    for (const it of items) {
+      if (it.line !== line) continue;
+      const a = xOf(it.s), b = Math.max(xOf(it.e), a + 16);
+      if (x >= a - 4 && x <= b + 4) best = it;
+    }
+    return best;
+  }
+  /** Tap on a layer: it gets an outline, the playhead goes into it, and its sheet opens on it (every sheet has Delete). */
+  function selectLayer(kind: 'text' | 'docu' | 'broll', id: string, s0: number, e0: number) {
+    setPlaying(false);
+    if (playMs < s0 || playMs >= e0) seek(Math.min(e0 - 1, s0 + 120));
+    if (kind === 'text') { if (textHandle) textHandle.select(id); else openTexts(id); textSel = id; }
+    else if (docuHandle) docuHandle.select(kind === 'docu' ? 'beats' : 'broll', id);
+    else openDocu(kind === 'docu' ? 'beats' : 'broll', id);
+    laySel = { kind, id };
+    drawCaptionsPreview(); requestDraw();
+  }
+
   function onTap(x: number, y: number) {
     const lane = laneAt(y);
     if (lane === 'music') { openMusic(rowsNow.mus.length ? 'bgm' : 'home'); return; }
     if (lane === 'sfx') { openMusic('sfx'); return; }
     if (lane === 'caption') { openCaptions(); return; }
-    if (lane === 'text') { openTexts(); return; }
+    if (lane === 'text' || lane === 'docu' || lane === 'broll') {
+      const hit = layerAt(lane, x, y);
+      if (hit) selectLayer(lane, hit.id, hit.s, hit.e);
+      else if (lane === 'text') openTexts();
+      else openDocu(lane === 'docu' ? 'beats' : 'broll');
+      return;
+    }
     if (x < G) {
       if (lane === 'audio') {
         openAudioGroup();
@@ -2418,29 +2513,30 @@ export function editorScreen() {
     }, startWord);
   }
 
-  function openDocu(startTab: 'beats' | 'broll' = 'beats') {
+  function openDocu(startTab: DocuTab = 'beats', startId?: string) {
     capHandle?.close();
     textHandle?.close();
     docuHandle?.close();
     docuHandle = openDocuSheet({
       p, playMs: () => playMs, durationMs: () => p.durationMs,
-      changed: () => { applyLayout(segmentAt(p.segments, playMs)); drawCaptionsPreview(); scheduleSave(); },
+      changed: () => { applyLayout(segmentAt(p.segments, playMs)); drawCaptionsPreview(); requestDraw(); scheduleSave(); },
       seek: (ms) => seek(ms),
       aspect: () => aspectValue(p.aspect),
       words: () => p.captions?.words?.length ? p.captions.words : p.agentWords?.words ?? [],
-      onClosed: () => { docuHandle = null; },
-    }, startTab);
+      onClosed: () => { docuHandle = null; laySel = null; requestDraw(); },
+    }, startTab, startId);
   }
 
   function openTexts(startId?: string) {
     capHandle?.close();
+    docuHandle?.close();
     textHandle?.close();
     textHandle = openTextItemsSheet({
       p, playMs: () => playMs, durationMs: () => p.durationMs,
-      changed: () => { drawCaptionsPreview(); scheduleSave(); },
+      changed: () => { drawCaptionsPreview(); requestDraw(); scheduleSave(); },
       seek: (ms) => seek(ms),
-      onSelect: (id) => { textSel = id; drawCaptionsPreview(); },
-      onClosed: () => { textHandle = null; textSel = null; drawCaptionsPreview(); },
+      onSelect: (id) => { textSel = id; laySel = id ? { kind: 'text', id } : null; drawCaptionsPreview(); requestDraw(); },
+      onClosed: () => { textHandle = null; textSel = null; laySel = null; drawCaptionsPreview(); requestDraw(); },
     }, startId);
   }
 

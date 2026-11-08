@@ -5,7 +5,7 @@
  * Split beats: the whole frame is covered by the dark card colour and a rounded WINDOW is cut out where the talking head
  * shows through. The video underneath is shifted by `docuShift()` so the window shows the middle of the picture.
  */
-import { CARD_SHARE_SIDE, CARD_SHARE_UPDOWN, DOCU_FADE_MS, DEFAULT_CARD_RADIUS, type DocuBeat, type DocuLayout, type DocuPos } from './docuTypes';
+import { CARD_SHARE_SIDE, CARD_SHARE_UPDOWN, DOCU_FADE_MS, DEFAULT_CARD_RADIUS, DOCU_FONT_CSS, DOCU_FONT_WEIGHT, type DocuBeat, type DocuLayout, type DocuPos } from './docuTypes';
 
 export interface Rect { x: number; y: number; w: number; h: number }
 export interface DocuGeo { vertical: boolean; video: Rect; card: Rect }
@@ -76,35 +76,76 @@ const THEME_BG = { noir: '#0A0A0C', investigative: '#10141B', modern: '#14141A' 
 const THEME_CARD = { noir: 'rgba(18,18,22,0.98)', investigative: 'rgba(22,28,38,0.98)', modern: 'rgba(28,28,36,0.98)' } as const;
 
 /** Text block centred in a rect: headline (bold, wrapped, max 4 lines) and the supporting line under it. */
-function drawText(g: CanvasRenderingContext2D, b: DocuBeat, r: Rect, w: number, h: number, center: boolean, alpha: number) {
+function drawText(g: CanvasRenderingContext2D, b: DocuBeat, r: Rect, w: number, h: number, center: boolean, alpha: number, maxHead = 4) {
+  const st = b.style ?? {};
+  const fam = DOCU_FONT_CSS[st.font ?? 'inter'] ?? FONT, wt = DOCU_FONT_WEIGHT[st.font ?? 'inter'] ?? 900;
+  const k = Math.max(0.5, Math.min(1.6, st.textScale ?? 1));
   const short = Math.min(w, h);
-  const headSize = Math.round(short * (center ? 0.085 : 0.062));
-  const subSize = Math.round(short * (center ? 0.034 : 0.03));
-  const pad = short * 0.04;
+  const headSize = Math.round(short * (center ? 0.085 : 0.062) * k);
+  const subSize = Math.round(short * (center ? 0.034 : 0.03) * k);
+  const pad = st.pad != null ? (st.pad * short) / 1080 : short * 0.04;
   const bar = Math.max(4, Math.round(short * 0.006));
   const textX = center ? r.x + r.w / 2 : r.x + pad + bar * 2.5;
-  const maxW = center ? r.w * 0.86 : r.w - pad * 2 - bar * 2.5;
+  const maxW = Math.max(40, center ? r.w * 0.86 : r.w - pad * 2 - bar * 2.5);
   g.textAlign = center ? 'center' : 'left';
   g.textBaseline = 'top';
-  g.font = `900 ${headSize}px ${FONT}`;
-  const head = wrap(g, b.headline.toUpperCase(), maxW).slice(0, 4);
-  g.font = `500 ${subSize}px ${FONT}`;
-  const sub = b.subtext ? wrap(g, b.subtext, maxW).slice(0, 4) : [];
+  g.font = `${wt} ${headSize}px ${fam}`;
+  const headText = st.caps === false ? b.headline : b.headline.toUpperCase();
+  const head = wrap(g, headText, maxW).slice(0, maxHead);
+  g.font = `500 ${subSize}px ${fam}`;
+  const sub = b.subtext ? wrap(g, b.subtext, maxW).slice(0, maxHead) : [];
   const headH = head.length * headSize * 1.12, subH = sub.length * subSize * 1.35;
   const gap = sub.length ? headSize * 0.45 : 0;
   const total = headH + gap + subH;
   let y = r.y + (r.h - total) / 2;
+  const tc = st.text ?? '#FFFFFF';
   g.globalAlpha = alpha;
   if (!center) {
     g.fillStyle = b.accent_color;
     g.fillRect(r.x + pad, y, bar, total);
   }
-  g.font = `900 ${headSize}px ${FONT}`; g.fillStyle = '#FFFFFF';
+  g.font = `${wt} ${headSize}px ${fam}`; g.fillStyle = tc;
   for (const ln of head) { g.fillText(ln, textX, y); y += headSize * 1.12; }
   y += gap;
-  g.font = `500 ${subSize}px ${FONT}`; g.fillStyle = center ? b.accent_color : '#A7B0BE';
+  g.font = `500 ${subSize}px ${fam}`; g.fillStyle = center ? b.accent_color : (st.text ? tc : '#A7B0BE');
+  if (!center && st.text) g.globalAlpha = alpha * 0.78;
   for (const ln of sub) { g.fillText(ln, textX, y); y += subSize * 1.35; }
   g.globalAlpha = 1;
+}
+
+/** Where the Breaking News slab and its red tag sit (the export uses the same numbers). */
+export function lowerGeo(b: DocuBeat, w: number, h: number, measure: CanvasRenderingContext2D | null) {
+  const st = b.style ?? {};
+  const short = Math.min(w, h), vertical = h > w, m = short * 0.04;
+  const slabH = h * (vertical ? 0.17 : 0.26), slabY = h - slabH - h * (vertical ? 0.1 : 0.07);
+  const slab: Rect = { x: m, y: slabY, w: w - 2 * m, h: slabH };
+  const tagH = Math.round(short * 0.05), fam = DOCU_FONT_CSS[st.font ?? 'oswald'];
+  const text = (st.tag ?? 'BREAKING NEWS').toUpperCase(), fontPx = Math.round(tagH * 0.58);
+  let tw = text.length * fontPx * 0.62 + tagH * 0.9;
+  if (measure) { measure.save(); measure.font = `700 ${fontPx}px ${fam}`; tw = measure.measureText(text).width + tagH * 0.9; measure.restore(); }
+  const tag: Rect = { x: slab.x + m * 0.6, y: slab.y - tagH * 0.62, w: tw, h: tagH };
+  return { slab, tag, tagH, fontPx, text, fam };
+}
+
+/** Breaking News: a slab along the bottom with a red tag sitting on its top-left corner. */
+function drawLower(g: CanvasRenderingContext2D, b: DocuBeat, w: number, h: number, a: number) {
+  const st = b.style ?? {};
+  const short = Math.min(w, h);
+  const r = radiusPx(b, w, h);
+  const L = lowerGeo(b, w, h, g);
+  g.save();
+  g.globalAlpha = a;
+  if (st.shadow && (st.shadow.blur || st.shadow.dist)) { const sc = short / 1080; g.shadowColor = st.shadow.color; g.shadowBlur = st.shadow.blur * sc * 2; g.shadowOffsetY = st.shadow.dist * sc; }
+  g.fillStyle = st.card ?? 'rgba(14,14,18,0.96)';
+  rr(g, L.slab.x, L.slab.y, L.slab.w, L.slab.h, r); g.fill();
+  g.shadowColor = 'transparent'; g.shadowBlur = 0; g.shadowOffsetY = 0;
+  g.fillStyle = b.accent_color; rr(g, L.tag.x, L.tag.y, L.tag.w, L.tag.h, Math.min(r, 6)); g.fill();
+  g.font = `700 ${L.fontPx}px ${L.fam}`;
+  g.fillStyle = '#FFFFFF'; g.textAlign = 'left'; g.textBaseline = 'middle';
+  g.fillText(L.text, L.tag.x + L.tagH * 0.45, L.tag.y + L.tagH / 2 + 1);
+  g.globalAlpha = 1;
+  drawText(g, b, { x: L.slab.x, y: L.slab.y + L.tagH * 0.2, w: L.slab.w, h: L.slab.h - L.tagH * 0.2 }, w, h, false, a, 2);
+  g.restore();
 }
 
 /** Draw `beat` at timeline time `ms` on a w x h canvas (clear it first). */
@@ -114,13 +155,14 @@ export function drawDocuFrame(g: CanvasRenderingContext2D, beat: DocuBeat, ms: n
   g.save();
   if (beat.type === 'black_screen') {
     g.globalAlpha = a;
-    g.fillStyle = THEME_BG[beat.theme] ?? '#080808';
+    g.fillStyle = beat.style?.bg ?? THEME_BG[beat.theme] ?? '#080808';
     g.fillRect(0, 0, w, h);
     g.globalAlpha = 1;
     drawText(g, beat, { x: 0, y: 0, w, h }, w, h, true, a);
     g.restore();
     return;
   }
+  if (beat.type === 'kinetic_quote' && beat.style?.lower) { drawLower(g, beat, w, h, a); g.restore(); return; }
   if (beat.type === 'kinetic_quote') {
     g.globalAlpha = a * 0.62;
     g.fillStyle = '#000';
@@ -133,16 +175,21 @@ export function drawDocuFrame(g: CanvasRenderingContext2D, beat: DocuBeat, ms: n
   // split_screen
   const geo = docuGeometry(beat.layout === 'one' ? 'side' : beat.layout, beat.video_position, w, h);
   const r = radiusPx(beat, w, h);
+  const st = beat.style ?? {}, sc = Math.min(w, h) / 1080;
   g.globalAlpha = a;
-  g.fillStyle = THEME_BG[beat.theme] ?? '#0A0A0C';
+  g.fillStyle = st.bg ?? THEME_BG[beat.theme] ?? '#0A0A0C';
   g.fillRect(0, 0, w, h);
   g.globalCompositeOperation = 'destination-out';
   rr(g, geo.video.x, geo.video.y, geo.video.w, geo.video.h, r);
   g.fillStyle = '#000'; g.fill();
   g.globalCompositeOperation = 'source-over';
-  g.fillStyle = THEME_CARD[beat.theme] ?? 'rgba(18,18,22,0.98)';
+  g.save();
+  if (st.shadow && (st.shadow.blur || st.shadow.dist)) { g.shadowColor = st.shadow.color; g.shadowBlur = st.shadow.blur * sc * 2; g.shadowOffsetY = st.shadow.dist * sc; }
+  g.fillStyle = st.card ?? THEME_CARD[beat.theme] ?? 'rgba(18,18,22,0.98)';
   rr(g, geo.card.x, geo.card.y, geo.card.w, geo.card.h, r);
   g.fill();
+  g.restore();
+  if (st.border) { g.lineWidth = st.border * sc; g.strokeStyle = beat.accent_color; rr(g, geo.card.x + g.lineWidth / 2, geo.card.y + g.lineWidth / 2, geo.card.w - g.lineWidth, geo.card.h - g.lineWidth, Math.max(0, r - g.lineWidth / 2)); g.stroke(); }
   g.globalAlpha = 1;
   drawText(g, beat, geo.card, w, h, false, a);
   g.restore();
@@ -158,7 +205,27 @@ export function exportDocu(beats: DocuBeat[] | undefined, outW: number, outH: nu
       type: b.type, s: Math.round(b.start), e: Math.round(b.end), headline: b.headline, subtext: b.subtext ?? '', accent: b.accent_color, theme: b.theme,
       radius: radiusPx(b, outW, outH), fadeMs: DOCU_FADE_MS,
       ...(geo ? { video: geo.video, card: geo.card } : {}),
+      ...exportStyle(b, outW, outH),
     });
   }
   return out.length ? out : undefined;
+}
+
+/** Look fields for the native export (sizes already in output pixels). Missing style = old look. */
+function exportStyle(b: DocuBeat, outW: number, outH: number): Record<string, unknown> {
+  const st = b.style; if (!st) return {};
+  const sc = Math.min(outW, outH) / 1080;
+  const o: Record<string, unknown> = { font: st.font ?? 'inter', caps: st.caps !== false, textScale: st.textScale ?? 1 };
+  if (st.text) o.textColor = st.text;
+  if (st.bg) o.bg = st.bg;
+  if (st.card) o.cardColor = st.card;
+  if (st.pad != null) o.pad = st.pad * sc;
+  if (st.border) o.border = st.border * sc;
+  if (st.shadow && (st.shadow.blur || st.shadow.dist)) o.shadow = { blur: st.shadow.blur * sc * 2, dist: st.shadow.dist * sc, color: st.shadow.color };
+  if (st.lower && b.type === 'kinetic_quote') {
+    const ctx = document.createElement('canvas').getContext('2d');
+    const L = lowerGeo(b, outW, outH, ctx);
+    o.lower = true; o.slab = L.slab; o.tag = { ...L.tag, text: L.text, size: L.fontPx };
+  }
+  return o;
 }

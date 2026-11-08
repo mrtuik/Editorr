@@ -24,8 +24,13 @@ export interface BrollCtx {
   aspect?: () => number;
   /** Words with times (captions or the agent's own transcript). */
   words: () => CapWord[];
+  /** open with this beat selected */
+  startId?: string;
 }
-export interface BrollPane { el: HTMLElement; dispose: () => void }
+export interface BrollPane { el: HTMLElement; dispose: () => void; select: (id: string) => void }
+
+/** replaceChildren that skips null/false (a null child was printed as the word "null"). */
+function fill(el: HTMLElement, ...kids: (Node | null | undefined | false)[]) { el.replaceChildren(...(kids.filter(Boolean) as Node[])); }
 
 function slider(label: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, onInput: (v: number) => void): HTMLElement {
   const val = h('b', {}, fmt(value));
@@ -62,7 +67,7 @@ export function buildBrollPane(ctx: BrollCtx): BrollPane {
   let articles: ArticleItem[] = [];
   let searching = false, searched = false;
   let addingId: string | null = null;
-  let sel: string | null = list()[0]?.id ?? null;
+  let sel: string | null = (ctx.startId && list().some((b) => b.id === ctx.startId) ? ctx.startId : list()[0]?.id) ?? null;
   let replaceId: string | null = null;
   let run: { cancelled: boolean } | null = null;
   let progress = '';
@@ -110,7 +115,7 @@ export function buildBrollPane(ctx: BrollCtx): BrollPane {
 
   function renderAuto() {
     const running = !!run;
-    autoBox.replaceChildren(
+    fill(autoBox, 
       h('div', { class: 'at-sec', style: 'display:flex;gap:8px;margin-top:6px' },
         h('button', { class: 'btn primary', style: 'flex:1;min-height:46px', onclick: () => void runAuto(), disabled: running ? 'true' : undefined }, running ? 'Finding B-roll...' : 'Auto B-roll'),
         running ? h('button', { class: 'btn danger', style: 'min-height:46px', onclick: () => { if (run) run.cancelled = true; } }, 'Stop') : (null as unknown as Node)),
@@ -206,26 +211,26 @@ export function buildBrollPane(ctx: BrollCtx): BrollPane {
   }
 
   function renderGrid() {
-    if (searching) { gridBox.replaceChildren(h('div', { class: 'at-hint', style: 'margin-top:14px' }, 'Searching...')); return; }
+    if (searching) { fill(gridBox, h('div', { class: 'at-hint', style: 'margin-top:14px' }, 'Searching...')); return; }
     const none = searchKind === 'article' ? !articles.length : !results.length;
     if (none) {
       const idle = searchKind === 'video' ? 'Search a place, event or thing. Tap a clip to put it on the timeline at the playhead (clips play without their sound).'
         : searchKind === 'youtube' ? 'Search a person, brand or event on YouTube. A short clip of the video is saved on the phone.'
         : searchKind === 'article' ? 'Search a news subject. Tap an article to make a paper clipping card of it.'
         : 'Search a person, place or event. Tap a photo to put it on the timeline at the playhead.';
-      gridBox.replaceChildren(h('div', { class: 'at-hint', style: 'margin-top:12px' }, searched
+      fill(gridBox, h('div', { class: 'at-hint', style: 'margin-top:12px' }, searched
         ? 'Nothing found. Try the name in English or a simpler word.'
         : replaceId ? 'Search something new, then tap it to swap.' : idle));
       return;
     }
     const swapHint = replaceId ? h('div', { class: 'at-hint', style: 'margin-top:10px' }, 'Tap one to swap it in.') : (null as unknown as Node);
     if (searchKind === 'article') {
-      gridBox.replaceChildren(swapHint, h('div', { class: 'br-arts' }, ...articles.map((art) =>
+      fill(gridBox, swapHint, h('div', { class: 'br-arts' }, ...articles.map((art) =>
         h('button', { class: 'br-art' + (addingId === art.id ? ' busy' : ''), onclick: () => void pickArticle(art) },
           h('b', {}, art.title), h('span', {}, art.extract.slice(0, 140) + (art.extract.length > 140 ? '...' : ''))))));
       return;
     }
-    gridBox.replaceChildren(swapHint,
+    fill(gridBox, swapHint,
       h('div', { class: 'br-grid' }, ...results.map((it) => {
         const img = h('img', { src: it.thumb, alt: it.title, loading: 'lazy', referrerpolicy: 'no-referrer' }) as HTMLImageElement;
         img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
@@ -317,5 +322,8 @@ export function buildBrollPane(ctx: BrollCtx): BrollPane {
     chipRow<BrollFrame>('New photo frame', (Object.keys(BROLL_FRAME_LABEL) as BrollFrame[]).map((f) => [f, BROLL_FRAME_LABEL[f]] as [BrollFrame, string]), newFrame, (v) => { newFrame = v; }),
     kindBox, searchRow, gridBox, cardBox, beatsBox);
   renderAll();
-  return { el, dispose: () => { disposed = true; if (run) run.cancelled = true; } };
+  return {
+    el, dispose: () => { disposed = true; if (run) run.cancelled = true; },
+    select: (id) => { if (list().some((b) => b.id === id)) { sel = id; replaceId = null; renderBeats(); } },
+  };
 }
