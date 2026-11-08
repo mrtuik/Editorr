@@ -16,7 +16,7 @@ import { EditorrNative, isNative } from './native';
 export interface KallawayPick { spec: KallawaySpec; start: number; end: number }
 
 const KIND_MAP: Record<string, KallawayKind> = {
-  step_checklist: 'steps', script_blueprint: 'script', stat_counter: 'stat', quote_callout: 'quote', custom_svg: 'svg',
+  step_checklist: 'steps', script_blueprint: 'script', stat_counter: 'stat', quote_callout: 'quote', custom_svg: 'svg', loop_cycle: 'loop', versus: 'versus',
 };
 
 export function buildKallawayPrompt(words: CapWord[]): string {
@@ -33,9 +33,10 @@ export function buildKallawayPrompt(words: CapWord[]): string {
 Transcript with timestamps:
 ${lines.join('\n') || '(no transcript)'}
 
-Pick EVERY high-value teaching moment for a typography card: about one card per 6 to 8 seconds of video (a 60 second video gets 7 to 10 cards). Cards must not overlap, each 2.5 to 10 seconds. Short sentences with a number or a bold claim get short stat / quote cards; lists get step_checklist and choose a template for each:
+Pick EVERY high-value teaching moment for a typography card: about one card per 6 to 8 seconds of video (a 60 second video gets 7 to 10 cards). Cards must not overlap, each 2.5 to 10 seconds. Short sentences with a number or a bold claim get short stat / quote cards; lists get step_checklist. VARIETY IS REQUIRED: never use the same template twice in a row, never repeat a title, use each template at most 3 times, and give every card its own words from THIS moment of the transcript (never generic titles like "Key Steps") and choose a template for each:
 - "step_checklist": the speaker lists tips, rules or steps. items = 2 to 5 short points in the speaker's order.
-- "script_blueprint": the speaker explains a script, hook or copy.
+- "loop_cycle": the speaker describes a repeating cycle, framework or 3 to 5 stages. items = the stage names (1 to 3 words each), subtitle = a short word for the centre.
+- "versus": the speaker compares two things (this vs that, wrong vs right). items = exactly 2 short labels.
 - "stat_counter": the speaker talks about growth, percentages or money. stat.big = the number as spoken ("40%", "$1.2M", "300"), stat.label = a short line, stat.trend = "up" or "down" when it clearly rises or falls.
 - "quote_callout": one memorable line. subtitle = a supporting line.
 - "custom_svg": ONLY when a simple graphic explains the idea better. svg = ONE <svg> with a viewBox, plain shapes and text, no scripts, no images, no external links.
@@ -43,7 +44,7 @@ Pick EVERY high-value teaching moment for a typography card: about one card per 
 Title: titleSans = 1 to 2 bold words (e.g. "The"), titleSerif = 1 to 3 italic words (e.g. "Desire Hook"), titleLine2 = an optional bold second line (e.g. "Method").
 
 Reply with ONE valid JSON array only, no markdown, no other text:
-[{"kind":"step_checklist"|"script_blueprint"|"stat_counter"|"quote_callout"|"custom_svg","start":<seconds>,"end":<seconds>,"titleSans":"","titleSerif":"","titleLine2":"","items":[],"stat":{"big":"","label":"","trend":"up"},"subtitle":"","svg":""}]`;
+[{"kind":"step_checklist"|"loop_cycle"|"versus"|"stat_counter"|"quote_callout"|"custom_svg","start":<seconds>,"end":<seconds>,"titleSans":"","titleSerif":"","titleLine2":"","items":[],"stat":{"big":"","label":"","trend":"up"},"subtitle":"","svg":""}]`;
 }
 
 const clampMs = (v: unknown) => { const n = Math.round(Number(v) * 1000); return isFinite(n) ? n : NaN; };
@@ -65,8 +66,10 @@ export function parseKallawayJson(text: string, words: CapWord[], durationMs: nu
     if (!isFinite(start) || !isFinite(end) || start < 0 || start >= durationMs) continue;
     const str = (v: unknown, n: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
     const items = Array.isArray(o.items) ? (o.items as unknown[]).map((x) => str(x, 60)).filter(Boolean).slice(0, 5) : [];
-    const spec: KallawaySpec = { kind, a: str(o.titleSans, 20), b: str(o.titleSerif, 28), c: str(o.titleLine2, 20), steps: kind === 'steps' ? items : [], handle: '' };
-    if (kind === 'steps' && items.length < 2) continue;
+    const spec: KallawaySpec = { kind, a: str(o.titleSans, 20), b: str(o.titleSerif, 28), c: str(o.titleLine2, 20), steps: kind === 'steps' || kind === 'loop' || kind === 'versus' ? items : [], handle: '' };
+    if ((kind === 'steps' || kind === 'loop') && items.length < 2) continue;
+    if (kind === 'versus') { if (items.length < 2) continue; spec.steps = items.slice(0, 2); }
+    if (kind === 'loop') spec.sub = str(o.subtitle, 20);
     if (kind === 'stat') {
       const st = o.stat as Record<string, unknown> | undefined;
       const big = str(st?.big, 14);
@@ -80,13 +83,32 @@ export function parseKallawayJson(text: string, words: CapWord[], durationMs: nu
       spec.svg = clean;
     }
     // length: long enough for every point, short enough to stay a moment
-    const min = kind === 'steps' ? items.length * 2000 : kind === 'stat' ? 2500 : 3000;
+    const min = kind === 'steps' || kind === 'loop' ? items.length * 2000 : kind === 'stat' ? 2500 : 3000;
     end = Math.min(durationMs, Math.max(end, start + min), start + 14000);
     if (end - start < 1800) continue;
-    if (kind === 'steps') spec.stepStarts = syncStepStarts(items, words, start, end);
+    if (kind === 'steps' || kind === 'loop') spec.stepStarts = syncStepStarts(items, words, start, end);
     out.push({ spec, start, end });
   }
   return spread(out);
+}
+
+/**
+ * Variety guard: every scene must look different. Drops a card whose title repeats, a card of the same template as the one right before it
+ * (a list-type may follow a list-type only when 2 cards apart), and a 4th use of any template. Dropped moments are covered by B-roll.
+ */
+export function diversify(picks: KallawayPick[]): KallawayPick[] {
+  const out: KallawayPick[] = [], titles = new Set<string>(), uses = new Map<string, number>();
+  for (const p of picks) {
+    const key = [p.spec.a, p.spec.b, p.spec.c].join(' ').trim().toLowerCase() || p.spec.stat?.big || '';
+    if (key && titles.has(key)) continue;
+    if (out.length && out[out.length - 1]!.spec.kind === p.spec.kind) continue;
+    if ((uses.get(p.spec.kind) ?? 0) >= 3) continue;
+    if (p.spec.kind === 'script') continue;
+    if (key) titles.add(key);
+    uses.set(p.spec.kind, (uses.get(p.spec.kind) ?? 0) + 1);
+    out.push(p);
+  }
+  return out;
 }
 
 /** Sorted, no overlaps (min gap 300 ms). No cap on the count: the gaps between cards are filled with B-roll, so the video never sits on a plain talking head. */
@@ -98,7 +120,7 @@ function spread(picks: KallawayPick[]): KallawayPick[] {
     if (l && p.start < l.end + 300) continue;
     out.push(p);
   }
-  return out;
+  return diversify(out);
 }
 
 // ---------------------------------------------------------------- built-in rules (no Antigravity)
@@ -135,7 +157,8 @@ export function localKallawayPicks(words: CapWord[], durationMs: number): Kallaw
     if (run.length >= 3) {
       const items = run.map((r) => r.text.replace(ORDINAL, '').split(' ').slice(0, 7).join(' ').replace(/[,.;:!?]+$/, '')).filter(Boolean);
       const start = Math.max(0, run[0]!.s - 200), end = Math.min(durationMs, run[run.length - 1]!.e + 1200);
-      out.push({ spec: { kind: 'steps', a: 'The', b: 'Key', c: 'Steps', steps: items, handle: '', stepStarts: syncStepStarts(items, words, start, end) }, start, end });
+      const asLoop = out.some((o) => o.spec.kind === 'steps');
+      out.push({ spec: { kind: asLoop ? 'loop' : 'steps', a: 'The', b: asLoop ? 'Loop' : 'Key', c: asLoop ? '' : 'Steps', steps: items, handle: '', stepStarts: syncStepStarts(items, words, start, end) }, start, end });
       i += run.length - 1;
     }
   }

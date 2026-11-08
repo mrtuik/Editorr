@@ -14,11 +14,11 @@ import { Directory, Filesystem } from '@capacitor/filesystem';
 import { docuGeometry } from './docuRenderer';
 import { docuLayoutFor, type DocuBeat } from './docuTypes';
 import { uid } from './speaker';
-import { motionAt, introPlan, REST, type Motion } from './kallawayMotion';
+import { motionAt, introPlan, springOvershoot, REST, type Motion } from './kallawayMotion';
 import { sanitizeSvg, svgDataUrl } from './kallawaySvg';
 import { aspectValue, type Aspect } from './types';
 
-export type KallawayKind = 'steps' | 'script' | 'photo' | 'stat' | 'quote' | 'svg';
+export type KallawayKind = 'steps' | 'script' | 'photo' | 'stat' | 'quote' | 'svg' | 'loop' | 'versus';
 
 export interface KallawaySpec {
   kind: KallawayKind;
@@ -128,8 +128,12 @@ function dotGrid(g: CanvasRenderingContext2D, w: number, h: number, k: number) {
 }
 
 /** Title: "The *Desire Hook*" (bold sans + italic serif on one line) and "Method" under it. Returns the y below the title. */
-function drawTitle(g: CanvasRenderingContext2D, spec: KallawaySpec, cx: number, top: number, maxW: number, k: number): number {
+function drawTitle(g: CanvasRenderingContext2D, spec: KallawaySpec, cx: number, top: number, maxW: number, k: number, maxH = Infinity): number {
   let size = Math.round(84 * k);
+  // the title may use at most maxH: on a wide frame the card is short, so the title shrinks instead of covering the card
+  const lines = spec.c.trim() ? 2 : 1;
+  const hFor = (px: number) => px * (lines === 2 ? 2.35 : 1.35);
+  while (size > 26 * k && hFor(size) > maxH) size -= 2;
   const a = spec.a.trim(), b = spec.b.trim(), c = spec.c.trim();
   const sansFont = (px: number) => `900 ${px}px ${SANS}`, serifFont = (px: number) => `italic 500 ${Math.round(px * 1.08)}px ${SERIF}`;
   const lineW = (px: number) => {
@@ -322,6 +326,76 @@ function paintStat(g: CanvasRenderingContext2D, spec: KallawaySpec, area: Area, 
   }
 }
 
+
+/** Loop card: a glowing ring with numbered nodes; the node being spoken lights up red and grows. Like a "story loop" / cycle diagram. */
+function paintLoop(g: CanvasRenderingContext2D, spec: KallawaySpec, active: number, area: Area, k: number, mo: Motion) {
+  const items = spec.steps.filter((s) => s.trim()).slice(0, 5);
+  const n = items.length;
+  if (!n) return;
+  const cx = area.x + area.w / 2, cy = area.y + area.h / 2;
+  const rx = Math.min(area.w * 0.25, 300 * k), ry = Math.min(area.h * 0.34, rx * 0.8);
+  const ang = (i: number) => -Math.PI / 2 + (i / n) * Math.PI * 2;
+  g.save();
+  g.shadowColor = KALLAWAY_RED; g.shadowBlur = 26 * k;
+  g.strokeStyle = 'rgba(209,18,27,0.9)'; g.lineWidth = 5 * k;
+  g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); g.stroke();
+  g.restore();
+  g.save(); g.setLineDash([2 * k, 11 * k]); g.lineCap = 'round'; g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 3 * k;
+  g.beginPath(); g.ellipse(cx, cy, rx + 14 * k, ry + 14 * k, 0, 0, Math.PI * 2); g.stroke(); g.restore();
+  // the part of the ring already told glows brighter
+  if (active > 0) {
+    g.save(); g.strokeStyle = '#fff'; g.globalAlpha = 0.9; g.lineWidth = 6 * k; g.lineCap = 'round';
+    g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, ang(0), ang(active) + (ang(Math.min(n - 1, active + 1)) - ang(active)) * 0 , false); g.stroke(); g.restore();
+  }
+  const font = Math.round(Math.min(40 * k, area.h * 0.075));
+  items.forEach((txt, i) => {
+    const a = ang(i), x = cx + Math.cos(a) * rx, y = cy + Math.sin(a) * ry;
+    const on = i === active, was = i === mo.prev && !on && active >= 0;
+    const grow = on ? 0.82 + 0.18 * mo.wipe : was ? 1 - 0.18 * mo.wipe : 0.82;
+    const r = 30 * k * grow;
+    g.save();
+    if (on) { g.shadowColor = KALLAWAY_RED; g.shadowBlur = 30 * k; }
+    g.fillStyle = on || i < active ? KALLAWAY_RED : '#1b1b20'; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    g.restore();
+    g.lineWidth = 3 * k; g.strokeStyle = on ? '#fff' : 'rgba(255,255,255,0.45)'; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `900 ${Math.round(r * 0.95)}px ${SANS}`;
+    g.fillText(String(i + 1), x, y + 1 * k);
+    // label outside the ring, on the side the node sits
+    const right = Math.cos(a) > 0.3, left = Math.cos(a) < -0.3;
+    const lx = right ? x + r + 14 * k : left ? x - r - 14 * k : x;
+    const ly = right || left ? y : Math.sin(a) < 0 ? y - r - font * 0.9 : y + r + font * 0.9;
+    g.textAlign = right ? 'left' : left ? 'right' : 'center';
+    g.font = `${on ? 800 : 600} ${font}px ${SANS}`;
+    g.globalAlpha *= on ? 1 : 0.55;
+    const room = right ? area.x + area.w - lx : left ? lx - area.x : area.w * 0.6;
+    const ln = wrapLines(g, txt, Math.max(80 * k, room), 2);
+    ln.forEach((t, j) => g.fillText(t, lx, ly + (j - (ln.length - 1) / 2) * font * 1.1));
+    g.globalAlpha = 1;
+  });
+  if (spec.sub?.trim()) { g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff'; g.font = `italic 500 ${Math.round(font * 1.15)}px ${SERIF}`; g.fillText(spec.sub.trim(), cx, cy); }
+}
+
+/** Versus card: two glass panels (items[0] vs items[1]) with a red VS badge between them. */
+function paintVersus(g: CanvasRenderingContext2D, spec: KallawaySpec, area: Area, k: number, mo: Motion) {
+  const items = spec.steps.filter((s) => s.trim()).slice(0, 2);
+  const tall = area.h > area.w * 0.8;
+  const gap = 26 * k;
+  const pw = tall ? area.w - 12 * k : (area.w - gap - 12 * k) / 2, ph = tall ? (area.h - gap) / 2 : area.h;
+  items.forEach((txt, i) => {
+    const slide = (1 - mo.wipe) * 40 * k * (i ? 1 : -1);
+    const x = area.x + 6 * k + (tall ? 0 : i * (pw + gap)) + (tall ? 0 : slide), y = area.y + (tall ? i * (ph + gap) + slide : 0);
+    glassCard(g, x, y, pw, ph, 22 * k, k);
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = i ? KALLAWAY_RED : '#fff';
+    g.font = `900 ${Math.round(Math.min(56 * k, ph * 0.22))}px ${SANS}`;
+    const f = Math.round(Math.min(56 * k, ph * 0.22));
+    const ln = wrapLines(g, txt.toUpperCase(), pw * 0.84, 3);
+    ln.forEach((t, j) => g.fillText(t, x + pw / 2, y + ph / 2 + (j - (ln.length - 1) / 2) * f * 1.1));
+  });
+  const bx = tall ? area.x + area.w / 2 : area.x + area.w / 2, by = tall ? area.y + area.h / 2 : area.y + area.h / 2, br = 38 * k * (0.7 + 0.3 * springOvershoot(mo.wipe));
+  g.save(); g.shadowColor = KALLAWAY_RED; g.shadowBlur = 26 * k; g.fillStyle = KALLAWAY_RED; g.beginPath(); g.arc(bx, by, br, 0, Math.PI * 2); g.fill(); g.restore();
+  g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `900 ${Math.round(br * 0.85)}px ${SANS}`; g.fillText('VS', bx, by + 1 * k);
+}
+
 /** Quote card: a big two-font headline in the middle of the card and a supporting line. */
 function paintQuote(g: CanvasRenderingContext2D, spec: KallawaySpec, card: Area, k: number) {
   const x = card.x + 6 * k, w = card.w - 12 * k;
@@ -358,13 +432,15 @@ export function paintKallaway(g: CanvasRenderingContext2D, spec: KallawaySpec, a
   g.translate(card.x + card.w / 2, card.y + card.h / 2); g.scale(mo.pop, mo.pop); g.translate(-(card.x + card.w / 2), -(card.y + card.h / 2));
   const cx = card.x + card.w / 2;
   const hasTitle = !!(spec.a.trim() || spec.b.trim() || spec.c.trim()) && spec.kind !== 'quote';
-  const below = hasTitle ? drawTitle(g, spec, cx, card.y + 26 * k, card.w * 0.92, k) : card.y + 6 * k;
+  const below = hasTitle ? drawTitle(g, spec, cx, card.y + 20 * k, card.w * 0.92, k, card.h * 0.34) : card.y + 6 * k;
   const pad = 18 * k;
   const handleRoom = (spec.handle.trim() ? 44 : 6) * k;
   const area = { x: card.x, y: below + pad, w: card.w, h: card.y + card.h - below - pad - handleRoom };
   if (spec.kind === 'quote') paintQuote(g, spec, { x: card.x, y: card.y, w: card.w, h: card.h - handleRoom }, k);
   else if (area.h > 80 * k) {
     if (spec.kind === 'steps') paintSteps(g, spec, active, area, k, mo);
+    else if (spec.kind === 'loop') paintLoop(g, spec, active, area, k, mo);
+    else if (spec.kind === 'versus') paintVersus(g, spec, area, k, mo);
     else if (spec.kind === 'photo') paintPhoto(g, photo, { x: area.x + 6 * k, y: area.y, w: area.w - 12 * k, h: area.h }, k);
     else if (spec.kind === 'svg') paintPhoto(g, photo, { x: area.x + 6 * k, y: area.y, w: area.w - 12 * k, h: area.h }, k, true);
     else if (spec.kind === 'stat') paintStat(g, spec, area, k, mo);
@@ -455,7 +531,7 @@ function loadPhoto(src: string): Promise<HTMLImageElement | undefined> {
 
 /** How many beats a spec makes: one per point (steps), three (Hook, Body, CTA) or one. */
 export function kallawayCount(spec: KallawaySpec): number {
-  return spec.kind === 'steps' ? spec.steps.filter((x) => x.trim()).slice(0, 5).length : spec.kind === 'script' ? 3 : 1;
+  return spec.kind === 'steps' || spec.kind === 'loop' ? spec.steps.filter((x) => x.trim()).slice(0, 5).length : spec.kind === 'script' ? 3 : 1;
 }
 
 /**
@@ -491,7 +567,7 @@ export async function makeKallawayBeats(aspect: Aspect, spec: KallawaySpec, star
   const share = shareFor(spec, layout), pos = posFor(spec, layout);
   const per = (end - start) / count;
   const starts: number[] = [];
-  const sync = spec.kind === 'steps' && spec.stepStarts?.length === count ? spec.stepStarts : undefined;
+  const sync = (spec.kind === 'steps' || spec.kind === 'loop') && spec.stepStarts?.length === count ? spec.stepStarts : undefined;
   for (let i = 0; i < count; i++) starts.push(sync ? Math.round(sync[i]!) : Math.round(start + per * i));
   const counting = spec.kind === 'stat';
   const draw = async (name: string, active: number, mo: Motion) => {
@@ -512,7 +588,7 @@ export async function makeKallawayBeats(aspect: Aspect, spec: KallawaySpec, star
     const frames: { url: string; path?: string }[] = [];
     for (let j = 0; j < n; j++) frames.push(await draw(`kw_${id}_f${j}`, i, motionAt((j * ms) / n, { entry: i === 0, prev: i - 1, counting })));
     const label = [spec.a, spec.b, spec.c].map((x) => x.trim()).filter(Boolean).join(' ');
-    const subtext = spec.kind === 'steps' ? steps[i] : spec.kind === 'stat' ? spec.stat?.big : spec.kind === 'script' ? ['Hook', 'Body', 'CTA'][i] : spec.kind === 'quote' ? spec.sub : 'Picture';
+    const subtext = spec.kind === 'steps' || spec.kind === 'loop' ? steps[i] : spec.kind === 'stat' ? spec.stat?.big : spec.kind === 'script' ? ['Hook', 'Body', 'CTA'][i] : spec.kind === 'quote' ? spec.sub : 'Picture';
     out.push({
       id, type: 'split_screen', start: bs, end: be,
       layout, video_position: pos, card_radius: RADIUS,

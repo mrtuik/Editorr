@@ -159,18 +159,21 @@ async function routesFromAntigravity(slots: BrollSlot[], signal: { cancelled: bo
 
 /** Route + keyword for every beat: Antigravity's answer where it gave one, the built-in rules elsewhere, then the quotas. */
 export function planRoutes(slots: BrollSlot[], ai: Map<number, Omit<RoutePlan, 'i'>>): RoutePlan[] {
-  let prev = '';
+  let prev = '', prevKw = '';
   const plans: RoutePlan[] = slots.map((s) => {
     const a = ai.get(s.i);
     if (a) { prev = a.keyword; return { i: s.i, ...a }; }
     const kind = localRouteOf(s.text);
     const kw = localKeyword(s.text, prev);
     prev = kw || prev;
-    const route = s.short ? 'concept' : kind === 'plain' ? 'entity' : kind;
+    // the same keyword twice in a row would fetch the same picture again: make this beat its own text card instead
+    const repeat = !!kw && kw === prevKw;
+    prevKw = kw;
+    const route = s.short || repeat ? 'concept' : kind === 'plain' ? 'entity' : kind;
     const c = route === 'concept' ? conceptFromText(s.text, kw) : undefined;
     return { i: s.i, route, keyword: kw, ...(c ? { big: c.big, trend: c.trend } : {}) };
   });
-  return applyQuotas(plans).map((p, k) => (slots[k]!.short ? { ...p, route: 'concept' as const, ...(p.big ? {} : conceptBig(slots[k]!.text, p.keyword)) } : p));
+  return applyQuotas(plans).map((p, k) => (slots[k]!.short || (p.route === 'entity' && k > 0 && p.keyword && p.keyword === plans[k - 1]!.keyword) ? { ...p, route: 'concept' as const, ...(p.big ? {} : conceptBig(slots[k]!.text, p.keyword)) } : p));
 }
 
 function conceptBig(text: string, kw: string) { const c = conceptFromText(text, kw); return { big: c.big, trend: c.trend }; }

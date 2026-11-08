@@ -142,7 +142,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       // steps follow the speech when captions exist (or the agent's words) and the switch is on
       const spec: KallawaySpec = { ...kw, stepStarts: undefined };
       let synced = false;
-      if (kw.kind === 'steps' && kwSync) {
+      if ((kw.kind === 'steps' || kw.kind === 'loop') && kwSync) {
         const words = ctx.p.captions?.words.length ? ctx.p.captions.words : ctx.p.agentWords?.words;
         const st = syncStepStarts(kw.steps.filter((x) => x.trim()).slice(0, 5), words, start, end);
         if (st) { spec.stepStarts = st; synced = true; }
@@ -225,7 +225,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       h('div', { class: 'at-hint' }, 'Dot-grid background, a card on top and you in a rounded window. The card pops in, the red bar wipes to each point as you say it, and numbers count up.'),
       h('button', { class: 'btn primary', style: 'width:100%;min-height:46px;margin-top:8px', disabled: busy ? 'true' : undefined, onclick: () => void runKallawayAi() }, busy ? 'Working...' : 'Generate Kallaway cards (AI)'),
       h('div', { class: 'at-hint', style: 'margin-top:4px' }, 'Reads your captions, picks 2 to 4 moments and the best card for each. Or make one by hand below.'),
-      chipRow<KallawaySpec['kind']>('Card', [['steps', 'Step list'], ['script', 'Script card'], ['stat', 'Number'], ['quote', 'Quote'], ['photo', 'Picture'], ['svg', 'Graphic']], kw.kind, (v) => { kw.kind = v; render(); }),
+      chipRow<KallawaySpec['kind']>('Card', [['steps', 'Step list'], ['script', 'Script card'], ['stat', 'Number'], ['quote', 'Quote'], ['loop', 'Loop'], ['versus', 'Versus'], ['photo', 'Picture'], ['svg', 'Graphic']], kw.kind, (v) => { kw.kind = v; render(); }),
       chipRow<string>('Card size', KALLAWAY_SHARES.map(([v, l]) => [String(v), l] as [string, string]), String(kw.share ?? (docuLayoutFor(ctx.p.aspect) === 'updown' ? 0.6 : 0.52)), (v) => { kw.share = Number(v); render(); }),
       chipRow<string>('You sit', (docuLayoutFor(ctx.p.aspect) === 'updown' ? [['bottom', 'Bottom'], ['top', 'Top']] : [['right', 'Right'], ['left', 'Left']]) as [string, string][], kw.speaker ?? (docuLayoutFor(ctx.p.aspect) === 'updown' ? 'bottom' : 'right'), (v) => { kw.speaker = v as KallawaySpec['speaker']; render(); }),
       kw.kind === 'photo' ? h('div', { style: 'margin-top:10px' }, h('button', { class: 'btn', style: 'width:100%;min-height:44px', onclick: pickPhoto }, kw.photo ? `Picture: ${kwPhotoName || 'chosen'} (tap to change)` : 'Pick a picture')) : (null as unknown as Node),
@@ -243,7 +243,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       text('Bold start, e.g. The', kw.a, (v) => { kw.a = v; }),
       text('Italic part, e.g. Desire Hook', kw.b, (v) => { kw.b = v; }),
       text('Second line, e.g. Method', kw.c, (v) => { kw.c = v; }),
-      kw.kind === 'steps' ? h('div', {}, h('div', { class: 'at-label', style: 'margin-top:10px' }, 'Points'), stepsBox) : (null as unknown as Node),
+      kw.kind === 'steps' || kw.kind === 'loop' || kw.kind === 'versus' ? h('div', {}, h('div', { class: 'at-label', style: 'margin-top:10px' }, kw.kind === 'versus' ? 'Two sides (2 lines)' : 'Points'), stepsBox) : (null as unknown as Node),
       h('div', { style: 'margin-top:10px' }, text('@handle above the video (optional)', kw.handle, (v) => { kw.handle = v; })),
       slider('Total length', 3, 40, 1, kwSeconds, (v) => `${v}s`, (v) => { kwSeconds = v; }),
       h('button', { class: 'btn primary', style: 'width:100%;min-height:46px;margin-top:6px', disabled: busy ? 'true' : undefined, onclick: () => void addKallaway() }, busy ? 'Drawing...' : 'Add at playhead'));
