@@ -54,3 +54,16 @@ export function introPlan(counting: boolean, beatMs: number): { ms: number; n: n
   const ms = Math.max(120, Math.min(counting ? COUNT_MS : POP_MS, beatMs - 40));
   return { ms, n: counting ? 12 : 8 };
 }
+
+export type ImageDrift = 'punch_in' | 'slow_pan' | 'drift';
+
+/** Kallaway camera drift for an image still in a gap: scale + shift (px at a 1080 short side) at `progress` 0..1 of the beat. */
+export function computeImageKenBurns(progress: number, style: ImageDrift): { scale: number; translateX: number; translateY: number } {
+  const p = Math.max(0, Math.min(1, progress));
+  switch (style) {
+    case 'punch_in': return { scale: 1.0 + Math.pow(p, 0.7) * 0.12, translateX: 0, translateY: 0 };
+    case 'slow_pan': return { scale: 1.08, translateX: (p - 0.5) * 40, translateY: 0 };
+    case 'drift':
+    default: return { scale: 1.02 + p * 0.08, translateX: 0, translateY: (0.5 - p) * 20 };
+  }
+}

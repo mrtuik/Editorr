@@ -3,6 +3,9 @@ import { fixDocuLayout } from '../core/docuApply';
 import { planDocuBeats } from '../core/docuPlanner';
 import { KALLAWAY_SHARES, makeKallawayBeats, syncStepStarts, type KallawaySpec } from '../core/kallaway';
 import { planKallaway } from '../core/kallawayDirector';
+import { autoBroll } from '../core/brollPlanner';
+import { placeBroll } from '../core/brollTypes';
+import { aspectValue } from '../core/types';
 import {
   DEFAULT_CARD_RADIUS, DOCU_ACCENTS, DOCU_FONT_CSS, DOCU_FONT_LABEL, DOCU_FONT_SUB, DOCU_FONT_WEIGHT, DOCU_TEMPLATES, DOCU_TYPE_LABEL, MAX_CARD_RADIUS,
   defaultPos, docuLayoutFor, posChoices,
@@ -171,7 +174,20 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       ctx.p.docu = [...beats().filter((x) => r.picks.every((pk) => x.end <= pk.start || x.start >= pk.end)), ...made].sort((a, b) => a.start - b.start);
       sel = made[0]?.id ?? null;
       ctx.changed(); ctx.seek((r.picks[0]?.start ?? 0) + 200);
-      toast(r.note ?? `${r.picks.length} Kallaway cards added (${r.source === 'llm' ? 'Antigravity' : 'built-in rules'}). Undo is in the timeline menu.`, r.note ? 7000 : 4000);
+      // rhythm cascade: fill every gap between the cards with B-roll so a visual changes every 1.5 to 3 s
+      let filled = 0, fillNote = '';
+      try {
+        const asp = aspectValue(ctx.p.aspect);
+        const gap = await autoBroll({
+          words, durationMs: ctx.durationMs(), lenMs: 2500, frame: 'full', coverage: 'every', fillGaps: true, maxBeats: 200,
+          busy: beats().map((d) => ({ start: d.start, end: d.end })), videoMode: 'mix', aspect: asp > 0 ? asp : 9 / 16, useAntigravity: true,
+          signal: { cancelled: false }, onProgress: (d, t) => toast(`Filling gaps with B-roll ${d}/${t}...`, 1500),
+        });
+        let next = ctx.p.broll ?? [];
+        for (const b of gap.beats) next = placeBroll(next, b);
+        ctx.p.broll = next; filled = gap.beats.length; ctx.changed();
+      } catch (e) { fillNote = ` B-roll fill failed: ${(e as Error).message || 'error'}.`; }
+      toast((r.note ?? `${r.picks.length} Kallaway cards + ${filled} B-roll cuts added (${r.source === 'llm' ? 'Antigravity' : 'built-in rules'}).`) + fillNote, r.note || fillNote ? 7000 : 4500);
     } catch (e) { toast(`Could not make the cards: ${(e as Error).message || 'failed'}`, 6000); }
     finally { busy = false; render(); }
   }

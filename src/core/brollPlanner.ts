@@ -9,7 +9,7 @@ import { conceptFromText } from './brollCards';
 import { EditorrNative, isNative } from './native';
 import { uid } from './speaker';
 
-export interface BrollSlot { i: number; start: number; end: number; text: string }
+export interface BrollSlot { i: number; start: number; end: number; text: string; /** a 1.5 to 2.2 s bridge between cards: gets a concept card */ short?: boolean }
 export interface AutoBrollOpts {
   words: CapWord[];
   durationMs: number;
@@ -20,6 +20,8 @@ export interface AutoBrollOpts {
   /** timeline ranges that are already taken (docu beats, b-roll beats that stay) */
   busy: { start: number; end: number }[];
   maxBeats?: number;
+  /** Kallaway pacing: ignore lenMs / coverage and fill EVERY gap between the busy ranges so a visual changes every 1.5 to 3 s */
+  fillGaps?: boolean;
   /** photos = pictures only, mix = a real clip on every other beat that has one, video = a clip wherever one is found */
   videoMode: VideoMode;
   /** width / height of the output frame (cards are drawn in this shape) */
@@ -79,6 +81,42 @@ export function parseBrollJson(text: string): Map<number, { keyword: string; mot
   return out;
 }
 
+/** Most concrete keyword of the words spoken between two times. */
+export function extractTopKeyword(words: CapWord[], start: number, end: number, previous = ''): string {
+  const text = words.filter((w) => w.s >= start - 100 && w.s < end).map((w) => (w.orig || w.w).trim()).join(' ');
+  return localKeyword(text, previous);
+}
+
+/**
+ * The rhythm cascade: major cards are already placed (`busy`). Every gap of 2.2 s or more is cut into 2.2 to 2.8 s image / clip beats,
+ * every gap of 1.5 to 2.2 s becomes one short bridge beat (concept card). Gaps with no speech are skipped.
+ */
+export function fillGapsWithMotionImages(busy: { start: number; end: number }[], words: CapWord[], durationMs: number): BrollSlot[] {
+  const out: BrollSlot[] = [];
+  const first = words.length ? Math.max(0, words[0]!.s - 200) : 500;
+  const last = words.length ? Math.min(durationMs, words[words.length - 1]!.e + 300) : durationMs;
+  const sorted = [...busy].sort((a, b) => a.start - b.start);
+  const textOf = (s: number, e: number) => words.filter((w) => w.s >= s - 100 && w.s < e).map((w) => (w.orig || w.w).trim()).join(' ').trim();
+  const add = (s: number, e: number, short: boolean) => { const text = textOf(s, e); if (text) out.push({ i: out.length + 1, start: s, end: e, text, short }); };
+  const fillGap = (from: number, to: number) => {
+    let cur = from;
+    while (to - cur >= 2200) {
+      let len = Math.min(2800, to - cur);
+      if (to - cur - len > 0 && to - cur - len < 1500) len = to - cur; // never leave a sliver
+      add(cur, cur + len, false);
+      cur += len;
+    }
+    if (to - cur >= 1500) add(cur, to, true);
+  };
+  let cursor = first;
+  for (const b of sorted) {
+    if (b.start > cursor) fillGap(cursor, Math.min(b.start - 250, last));
+    cursor = Math.max(cursor, b.end + 250);
+  }
+  if (last > cursor) fillGap(cursor, last);
+  return out;
+}
+
 // ---------------------------------------------------------------- built-in keyword rule (no Antigravity)
 
 const STOP = new Set(('a an the and or but if so as of to in on at by for with from into over under about than then that this these those is are was were be been being am do does did have has had will would can could should may might must not no nor ' +
@@ -128,15 +166,17 @@ export function planRoutes(slots: BrollSlot[], ai: Map<number, Omit<RoutePlan, '
     const kind = localRouteOf(s.text);
     const kw = localKeyword(s.text, prev);
     prev = kw || prev;
-    const route = kind === 'plain' ? 'entity' : kind;
+    const route = s.short ? 'concept' : kind === 'plain' ? 'entity' : kind;
     const c = route === 'concept' ? conceptFromText(s.text, kw) : undefined;
     return { i: s.i, route, keyword: kw, ...(c ? { big: c.big, trend: c.trend } : {}) };
   });
-  return applyQuotas(plans);
+  return applyQuotas(plans).map((p, k) => (slots[k]!.short ? { ...p, route: 'concept' as const, ...(p.big ? {} : conceptBig(slots[k]!.text, p.keyword)) } : p));
 }
 
+function conceptBig(text: string, kw: string) { const c = conceptFromText(text, kw); return { big: c.big, trend: c.trend }; }
+
 export async function autoBroll(o: AutoBrollOpts): Promise<AutoBrollResult> {
-  const slots = makeSlots(o.words, o.durationMs, o.lenMs, o.busy, o.coverage, o.maxBeats ?? 60);
+  const slots = o.fillGaps ? fillGapsWithMotionImages(o.busy, o.words, o.durationMs) : makeSlots(o.words, o.durationMs, o.lenMs, o.busy, o.coverage, o.maxBeats ?? 60);
   if (!slots.length) return { beats: [], missed: 0, note: 'No free beats with speech found.' };
   let note: string | undefined;
   let ai = new Map<number, Omit<RoutePlan, 'i'>>();

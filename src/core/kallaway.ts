@@ -68,6 +68,31 @@ function rr(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: num
   g.closePath();
 }
 
+
+/** Glass card: #141418 at 92 %, inner sheen, layered contact + ambient shadow, and a specular edge along the top and right side. */
+function glassCard(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, k: number) {
+  g.save();
+  g.shadowColor = 'rgba(0,0,0,0.4)'; g.shadowBlur = 32 * k; g.shadowOffsetY = 16 * k;
+  g.fillStyle = 'rgba(20,20,24,0.92)'; rr(g, x, y, w, h, r); g.fill();
+  g.shadowColor = 'rgba(0,0,0,0.6)'; g.shadowBlur = 12 * k; g.shadowOffsetY = 4 * k;
+  g.fill();
+  g.restore();
+  g.save(); rr(g, x, y, w, h, r); g.clip();
+  const inner = g.createLinearGradient(x, y, x + w * 0.4, y + h);
+  inner.addColorStop(0, 'rgba(255,255,255,0.07)'); inner.addColorStop(0.5, 'rgba(255,255,255,0)'); inner.addColorStop(1, 'rgba(0,0,0,0.12)');
+  g.fillStyle = inner; g.fillRect(x, y, w, h);
+  // specular: 2 px edge, bright near the top-right corner and fading away along both sides
+  const top = g.createLinearGradient(x, y, x + w, y);
+  top.addColorStop(0, 'rgba(255,255,255,0)'); top.addColorStop(1, 'rgba(255,255,255,0.7)');
+  g.fillStyle = top; g.fillRect(x, y, w, 2 * k);
+  const right = g.createLinearGradient(0, y, 0, y + h);
+  right.addColorStop(0, 'rgba(255,255,255,0.7)'); right.addColorStop(0.6, 'rgba(255,255,255,0)');
+  g.fillStyle = right; g.fillRect(x + w - 2 * k, y, 2 * k, h);
+  g.restore();
+  g.lineWidth = 1 * k; g.strokeStyle = 'rgba(255,255,255,0.12)';
+  rr(g, x + k / 2, y + k / 2, w - k, h - k, Math.max(0, r - k / 2)); g.stroke();
+}
+
 function wrapLines(g: CanvasRenderingContext2D, text: string, maxW: number, maxLines: number): string[] {
   const words = text.trim().split(/\s+/).filter(Boolean);
   const lines: string[] = [];
@@ -98,7 +123,7 @@ function dotGrid(g: CanvasRenderingContext2D, w: number, h: number, k: number) {
   for (let y = step / 2; y < h; y += step) for (let x = step / 2; x < w; x += step) g.fillRect(x - r / 2, y - r / 2, r, r);
   // soft darkening towards the edges so the card stands out
   const v = g.createRadialGradient(w / 2, h * 0.4, Math.min(w, h) * 0.3, w / 2, h * 0.4, Math.hypot(w, h) * 0.62);
-  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.3)');
+  v.addColorStop(0, 'rgba(18,18,24,0.4)'); v.addColorStop(1, 'rgba(6,6,7,0.95)');
   g.fillStyle = v; g.fillRect(0, 0, w, h);
 }
 
@@ -192,17 +217,7 @@ const BAR_LEN = [0.84, 0.9, 0.78, 0.6, 0.88, 0.7, 0.8, 0.94, 0.5, 0.82, 0.76, 0.
 function paintScript(g: CanvasRenderingContext2D, active: number, area: { x: number; y: number; w: number; h: number }, k: number, mo: Motion) {
   const cardW = Math.min(area.w * 0.82, 760 * k), cardH = area.h;
   const x = area.x + (area.w - cardW) / 2, y = area.y;
-  g.save();
-  g.shadowColor = 'rgba(0,0,0,0.55)'; g.shadowBlur = 36 * k; g.shadowOffsetY = 12 * k;
-  g.fillStyle = '#18181C';
-  rr(g, x, y, cardW, cardH, 24 * k); g.fill();
-  g.restore();
-  g.lineWidth = 2 * k; g.strokeStyle = 'rgba(255,255,255,0.28)';
-  rr(g, x + k, y + k, cardW - 2 * k, cardH - 2 * k, 23 * k); g.stroke();
-  // light reflection on the right edge
-  const sp = g.createLinearGradient(0, y, 0, y + cardH);
-  sp.addColorStop(0, 'rgba(255,255,255,0)'); sp.addColorStop(0.5, 'rgba(255,255,255,0.75)'); sp.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = sp; g.fillRect(x + cardW - 3 * k, y + cardH * 0.25, 3 * k, cardH * 0.5);
+  glassCard(g, x, y, cardW, cardH, 24 * k, k);
 
   const pad = 40 * k, innerW = cardW - pad * 2;
   g.textBaseline = 'alphabetic'; g.textAlign = 'center'; g.fillStyle = '#fff';
@@ -240,11 +255,7 @@ type Area = { x: number; y: number; w: number; h: number };
 /** Picture card: the picture fills the card area (centre crop; `contain` fits it whole instead, for drawings), rounded, soft shadow, thin light edge. */
 function paintPhoto(g: CanvasRenderingContext2D, img: HTMLImageElement | undefined, area: Area, k: number, contain = false) {
   const r = 22 * k;
-  g.save();
-  g.shadowColor = 'rgba(0,0,0,0.55)'; g.shadowBlur = 36 * k; g.shadowOffsetY = 12 * k;
-  g.fillStyle = '#18181C';
-  rr(g, area.x, area.y, area.w, area.h, r); g.fill();
-  g.restore();
+  glassCard(g, area.x, area.y, area.w, area.h, r, k);
   if (img && img.width > 0) {
     g.save();
     rr(g, area.x, area.y, area.w, area.h, r); g.clip();
@@ -281,12 +292,7 @@ function paintStat(g: CanvasRenderingContext2D, spec: KallawaySpec, area: Area, 
   const st = spec.stat ?? { big: '' };
   const accent = st.trend === 'up' ? '#2ee59d' : st.trend === 'down' ? '#ff4d5e' : KALLAWAY_RED;
   const x = area.x + 6 * k, w = area.w - 12 * k;
-  g.save();
-  g.shadowColor = 'rgba(0,0,0,0.55)'; g.shadowBlur = 36 * k; g.shadowOffsetY = 12 * k;
-  g.fillStyle = '#18181C'; rr(g, x, area.y, w, area.h, 24 * k); g.fill();
-  g.restore();
-  g.lineWidth = 2 * k; g.strokeStyle = 'rgba(255,255,255,0.22)';
-  rr(g, x + k, area.y + k, w - 2 * k, area.h - 2 * k, 23 * k); g.stroke();
+  glassCard(g, x, area.y, w, area.h, 24 * k, k);
   if (st.trend) {
     const pts = st.trend === 'up' ? [0.8, 0.72, 0.76, 0.6, 0.62, 0.46, 0.48, 0.3, 0.22] : [0.22, 0.32, 0.28, 0.44, 0.42, 0.6, 0.58, 0.76, 0.84];
     g.save();

@@ -1,5 +1,5 @@
 /**
- * Kallaway director: reads the transcript and picks 2 to 4 teaching moments for motion cards
+ * Kallaway director: reads the transcript and picks teaching moments for motion cards, as many as the video needs
  *   step_checklist  tips / rules / steps      -> numbered list, the red bar follows each point
  *   script_blueprint hooks / scripts / copy   -> Hook / Body / CTA card
  *   stat_counter    numbers / growth / money  -> big number counting up
@@ -33,7 +33,7 @@ export function buildKallawayPrompt(words: CapWord[]): string {
 Transcript with timestamps:
 ${lines.join('\n') || '(no transcript)'}
 
-Pick 2 to 4 high-value teaching moments for a typography card (they must not overlap, each 4 to 14 seconds) and choose a template for each:
+Pick EVERY high-value teaching moment for a typography card: about one card per 6 to 8 seconds of video (a 60 second video gets 7 to 10 cards). Cards must not overlap, each 2.5 to 10 seconds. Short sentences with a number or a bold claim get short stat / quote cards; lists get step_checklist and choose a template for each:
 - "step_checklist": the speaker lists tips, rules or steps. items = 2 to 5 short points in the speaker's order.
 - "script_blueprint": the speaker explains a script, hook or copy.
 - "stat_counter": the speaker talks about growth, percentages or money. stat.big = the number as spoken ("40%", "$1.2M", "300"), stat.label = a short line, stat.trend = "up" or "down" when it clearly rises or falls.
@@ -82,22 +82,21 @@ export function parseKallawayJson(text: string, words: CapWord[], durationMs: nu
     // length: long enough for every point, short enough to stay a moment
     const min = kind === 'steps' ? items.length * 2000 : kind === 'stat' ? 2500 : 3000;
     end = Math.min(durationMs, Math.max(end, start + min), start + 14000);
-    if (end - start < 2000) continue;
+    if (end - start < 1800) continue;
     if (kind === 'steps') spec.stepStarts = syncStepStarts(items, words, start, end);
     out.push({ spec, start, end });
   }
   return spread(out);
 }
 
-/** Sorted, no overlaps, at most 4. */
+/** Sorted, no overlaps (min gap 300 ms). No cap on the count: the gaps between cards are filled with B-roll, so the video never sits on a plain talking head. */
 function spread(picks: KallawayPick[]): KallawayPick[] {
   picks.sort((a, b) => a.start - b.start);
   const out: KallawayPick[] = [];
   for (const p of picks) {
     const l = out[out.length - 1];
-    if (l && p.start < l.end + 600) continue;
+    if (l && p.start < l.end + 300) continue;
     out.push(p);
-    if (out.length >= 4) break;
   }
   return out;
 }
@@ -128,29 +127,32 @@ export function localKallawayPicks(words: CapWord[], durationMs: number): Kallaw
   if (durationMs < 8000 || !words.length) return [];
   const sent = sentences(words);
   const out: KallawayPick[] = [];
-  // 1) a spoken list: 3+ sentences with ordinal words close together
+  // 1) EVERY spoken list: 3+ sentences with ordinal words close together
   const ord = sent.filter((s) => ORDINAL.test(s.text));
   for (let i = 0; i + 2 < ord.length; i++) {
     const run = [ord[i]!];
-    while (i + run.length < ord.length && ord[i + run.length]!.s - run[run.length - 1]!.e < 12000 && run.length < 5) run.push(ord[i + run.length]!);
+    while (i + run.length < ord.length && ord[i + run.length]!.s - run[run.length - 1]!.e < 6000 && ord[i + run.length]!.e - run[0]!.s < 14000 && run.length < 5) run.push(ord[i + run.length]!);
     if (run.length >= 3) {
       const items = run.map((r) => r.text.replace(ORDINAL, '').split(' ').slice(0, 7).join(' ').replace(/[,.;:!?]+$/, '')).filter(Boolean);
       const start = Math.max(0, run[0]!.s - 200), end = Math.min(durationMs, run[run.length - 1]!.e + 1200);
       out.push({ spec: { kind: 'steps', a: 'The', b: 'Key', c: 'Steps', steps: items, handle: '', stepStarts: syncStepStarts(items, words, start, end) }, start, end });
-      break;
+      i += run.length - 1;
     }
   }
-  // 2) the strongest number
-  const withNum = sent.filter((s) => NUM.test(s.text) && s.s > 1500 && out.every((o) => s.s > o.end + 600 || s.e < o.start - 600));
-  const num = withNum.sort((a, b) => (b.text.match(NUM)![0].length) - (a.text.match(NUM)![0].length))[0];
-  if (num) {
-    const big = num.text.match(NUM)![0].trim().replace(/\s?(percent)$/i, '%').toUpperCase();
-    const trend = DOWN.test(num.text) ? 'down' : UP.test(num.text) ? 'up' : undefined;
-    out.push({ spec: { kind: 'stat', a: 'The', b: 'Numbers', c: '', steps: [], handle: '', stat: { big, label: num.text.replace(num.text.match(NUM)![0], ' ').replace(/\s+/g, ' ').trim().slice(0, 90), trend } }, start: Math.max(0, num.s - 200), end: Math.min(durationMs, Math.max(num.e + 600, num.s + 3500)) });
+  // 2) EVERY sentence with a number, 3) EVERY sentence with a big claim (not the same sentence twice, not over a list card)
+  const free = (x: { s: number; e: number }) => out.every((o) => x.s > o.end + 300 || x.e < o.start - 300);
+  for (const sn of sent) {
+    if (sn.s < 800 || sn.e - sn.s < 1800 || !free(sn)) continue;
+    const m = sn.text.match(NUM);
+    const isNum = !!m && m[0].trim().length >= 2 && /\d/.test(m[0]);
+    if (isNum) {
+      const big = m![0].trim().replace(/\s?(percent)$/i, '%').toUpperCase();
+      const trend = DOWN.test(sn.text) ? 'down' : UP.test(sn.text) ? 'up' : undefined;
+      out.push({ spec: { kind: 'stat', a: 'The', b: 'Numbers', c: '', steps: [], handle: '', stat: { big, label: sn.text.replace(m![0], ' ').replace(/\s+/g, ' ').trim().slice(0, 90), trend } }, start: Math.max(0, sn.s - 200), end: Math.min(durationMs, Math.max(sn.e + 600, sn.s + 3000)) });
+    } else if (CLAIM.test(sn.text) && sn.e - sn.s >= 2000) {
+      out.push({ spec: { kind: 'quote', a: '', b: title(sn.text), c: '', steps: [], handle: '', sub: sn.text.length > 100 ? sn.text.slice(0, 97) + '...' : sn.text }, start: Math.max(0, sn.s - 200), end: Math.min(durationMs, Math.max(sn.e + 500, sn.s + 3000)) });
+    }
   }
-  // 3) one big claim as a quote
-  const claim = sent.filter((s) => CLAIM.test(s.text) && s.s > 1500 && out.every((o) => s.s > o.end + 600 || s.e < o.start - 600))[0];
-  if (claim) out.push({ spec: { kind: 'quote', a: '', b: title(claim.text), c: '', steps: [], handle: '', sub: claim.text.length > 100 ? claim.text.slice(0, 97) + '...' : claim.text }, start: Math.max(0, claim.s - 200), end: Math.min(durationMs, Math.max(claim.e + 500, claim.s + 3500)) });
   return spread(out);
 }
 
