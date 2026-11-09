@@ -16,6 +16,7 @@ import { brollBeatAt, isBrollVideo } from '../core/brollTypes';
 import { docuBeatAt } from '../core/docuTypes';
 import { openReactionSheet } from './reactionSheet';
 import { askAutoZoom, zoomShapeFrom } from './zoomSheet';
+import { DEFAULT_FILLERS, planRetakes, type RetakeOpts } from '../core/retake';
 import { buildSilenceStudio, openSilenceSheet, type SilenceItem } from './silenceSheet';
 import { openMusicSheet, type AutoPlan } from './musicSheet';
 import { BGM_RATE, decodeFile, decodeUrl, renderMix, toBase64, toBuffer, toWav } from '../core/bgm';
@@ -46,7 +47,7 @@ import { confirmDialog, fmtClock, h, ICON, icon, iconButton, segDots, spinner, t
 import { pickVideosCapcut } from './mediaPicker';
 import type { OverlayClip } from '../core/types';
 
-type Panel = 'none' | 'overlay' | 'ratio' | 'crop' | 'mask' | 'silence' | 'sync' | 'layout' | 'main' | 'audio' | 'denoise';
+type Panel = 'none' | 'overlay' | 'ratio' | 'crop' | 'mask' | 'silence' | 'retake' | 'sync' | 'layout' | 'main' | 'audio' | 'denoise';
 
 // ---- timeline geometry (CSS px) ----
 const G = 64;            // left column: audio-source button + lane icons
@@ -1141,6 +1142,11 @@ export function editorScreen() {
   let pendingCuts: Range[] = [];
   let silenceStudio: ReturnType<typeof buildSilenceStudio> | undefined;
   let silenceStage: 'setup' | 'review' = 'setup';
+  let retakeStage: 'setup' | 'busy' | 'review' = 'setup';
+  let retakeNote = '';
+  let retakeListEl: HTMLElement | undefined;
+  const retakeOpts: RetakeOpts & { custom: string } = { repeats: true, stutters: true, fillers: true, ai: true, extraWords: [], custom: '' };
+  const retakeWords = () => (p.captions?.words?.length ? p.captions.words : p.agentWords?.words ?? []);
   /** every silence Detect found (with the user's edits and on/off); pendingCuts = the ones that are on */
   let silenceItems: SilenceItem[] = [];
   const syncPending = () => { pendingCuts = silenceItems.filter((i) => i.on).map((i) => ({ ...i.r })); };
@@ -1163,9 +1169,46 @@ export function editorScreen() {
   let drawQueued = false;
   function requestDraw() { if (drawQueued || destroyed) return; drawQueued = true; requestAnimationFrame(() => { drawQueued = false; draw(); }); }
 
-  const xOf = (ms: number) => W / 2 + ((ms - playMs) / 1000) * pxPerSec;
-  const msOf = (x: number) => playMs + ((x - W / 2) / pxPerSec) * 1000;
-  const minPx = () => Math.max(0.4, ((W || 360) * 0.9) / Math.max(1, p.durationMs / 1000));
+  // ---- ripple view: removed (silent) parts take no room on the timeline, so the kept clips sit side by side.
+  // "c" = compressed time (kept time only). The edit itself still uses source ms; only drawing and touch go through these.
+  let vmSegs: Segment[] | null = null, vmLen = -1, vmSync = false;
+  let vmKept: Range[] = [], vmPre: number[] = [], vmTotal = 0;
+  function viewMap() {
+    const sync = panel === 'sync';
+    if (vmSegs === p.segments && vmLen === p.segments.length && vmSync === sync) return;
+    vmSegs = p.segments; vmLen = p.segments.length; vmSync = sync;
+    const cov = sync ? [] : coverage(p.segments);
+    const first = cov[0];
+    // no holes and starts at 0: identity (fast path)
+    const holes = !!first && (first.startMs > 1 || cov.length > 1 || cov[cov.length - 1]!.endMs < p.durationMs - 1);
+    vmKept = holes ? cov : [];
+    vmPre = []; let acc = 0;
+    for (const r of vmKept) { vmPre.push(acc); acc += r.endMs - r.startMs; }
+    vmTotal = vmKept.length ? acc : p.durationMs;
+  }
+  const cOf = (ms: number): number => {
+    viewMap();
+    if (!vmKept.length || ms < 0) return ms;
+    let lo = 0, hi = vmKept.length - 1, i = -1;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (vmKept[m]!.startMs <= ms) { i = m; lo = m + 1; } else hi = m - 1; }
+    if (i < 0) return 0;
+    const r = vmKept[i]!;
+    return vmPre[i]! + Math.min(ms, r.endMs) - r.startMs;
+  };
+  const uOf = (c: number): number => {
+    viewMap();
+    if (!vmKept.length) return c;
+    if (c < 0) return vmKept[0]!.startMs + c;
+    if (c >= vmTotal) return vmKept[vmKept.length - 1]!.endMs + (c - vmTotal);
+    let lo = 0, hi = vmKept.length - 1, i = 0;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (vmPre[m]! <= c) { i = m; lo = m + 1; } else hi = m - 1; }
+    return vmKept[i]!.startMs + (c - vmPre[i]!);
+  };
+  const viewTotalMs = () => { viewMap(); return vmTotal; };
+  const xOf = (ms: number) => W / 2 + ((cOf(ms) - cOf(playMs)) / 1000) * pxPerSec;
+  const xOfC = (c: number) => W / 2 + ((c - cOf(playMs)) / 1000) * pxPerSec;
+  const msOf = (x: number) => uOf(cOf(playMs) + ((x - W / 2) / pxPerSec) * 1000);
+  const minPx = () => Math.max(0.4, ((W || 360) * 0.9) / Math.max(1, viewTotalMs() / 1000));
 
   function rrect(g: CanvasRenderingContext2D, x: number, y: number, w: number, hh: number, r: number) {
     g.beginPath(); g.roundRect(x, y, Math.max(1, w), hh, Math.min(r, 2));
@@ -1235,24 +1278,20 @@ export function editorScreen() {
       g.fillStyle = isHost ? '#18181e' : '#121f16';
       g.fillRect(x1, MAIN_Y, sw, LANE);
 
-      // Filmstrip thumbnails
+      // Filmstrip thumbnails: tiles start at the left edge of the clip and show the video at that moment
       if (strip) {
-        const sx1 = xOf(-offsetMs);
-        const sx2 = sx1 + (durMs / 1000) * pxPerSec;
-        const vx1 = Math.max(x1, G, sx1);
-        const vx2 = Math.min(x2, W, sx2);
+        const vx1 = Math.max(x1, G), vx2 = Math.min(x2, W);
         if (vx2 > vx1) {
           const tw = Math.max(16, Math.round(LANE * strip.aspect));
-          const k0 = Math.max(0, Math.floor((vx1 - sx1) / tw));
-          const k1 = Math.floor((vx2 - sx1) / tw);
+          const k0 = Math.max(0, Math.floor((vx1 - x1) / tw)), k1 = Math.floor((vx2 - x1) / tw);
           for (let k = k0; k <= k1; k++) {
-            const tMs = ((k + 0.5) * tw / pxPerSec) * 1000;
+            const tMs = seg.startMs + ((k + 0.5) * tw / pxPerSec) * 1000 + offsetMs;
             if (tMs < 0 || tMs >= durMs) continue;
             const idx = Math.max(0, Math.min(strip.count - 1, Math.floor((tMs / durMs) * strip.count)));
             const img = strip.frames[idx] ?? strip.frames.find((f) => !!f);
             if (img) {
               g.globalAlpha = strip.frames[idx] ? 1 : 0.45;
-              g.drawImage(img, sx1 + k * tw, MAIN_Y, tw, LANE);
+              g.drawImage(img, x1 + k * tw, MAIN_Y, tw, LANE);
               g.globalAlpha = 1;
             }
           }
@@ -1649,10 +1688,11 @@ export function editorScreen() {
 
     // ---- ruler: 00:00 • 00:01 • (labels with a dot half way)
     const step = stepFor();
-    const startS = Math.max(0, Math.floor(msOf(G) / 1000 / step) * step - step);
+    const cpNow = cOf(playMs);
+    const startS = Math.max(0, Math.floor((cpNow + ((G - W / 2) / pxPerSec) * 1000) / 1000 / step) * step - step);
     g.font = '9px Roboto, sans-serif'; g.textBaseline = 'middle';
-    for (let s = startS; s * 1000 <= Math.min(p.durationMs + step * 1000, msOf(W)); s += step) {
-      const x = xOf(s * 1000);
+    for (let s = startS; s * 1000 <= Math.min(viewTotalMs() + step * 1000, cpNow + ((W - W / 2) / pxPerSec) * 1000); s += step) {
+      const x = xOfC(s * 1000);
       g.fillStyle = '#8a8a8a'; g.fillText(fmtClock(s * 1000), x + 3, RULER / 2);
       g.fillRect(x, RULER - 5, 1, 5);
       const mx = x + (step * pxPerSec) / 2;
@@ -1785,7 +1825,7 @@ export function editorScreen() {
     const step = (now: number) => {
       const dt = Math.min(48, now - last); last = now;
       v *= Math.pow(0.94, dt / 16.67);
-      const next = playMs - (v * dt / 1000 / pxPerSec) * 1000;
+      const next = uOf(cOf(playMs) - (v * dt / 1000 / pxPerSec) * 1000);
       const hitEdge = next <= 0 || next >= p.durationMs;
       scheduleScrub(next);
       if (Math.abs(v) < 25 || hitEdge) { flingRaf = 0; return; }
@@ -1864,7 +1904,7 @@ export function editorScreen() {
     }
     if (Math.abs(x - startX) > 8) { moved = true; clearTimeout(lpTimer); }
     if (mode === 'scrub') {
-      const targetMs = Math.max(0, Math.min(p.durationMs, dragStartPlayMs - ((x - startX) / pxPerSec) * 1000));
+      const targetMs = Math.max(0, Math.min(p.durationMs, uOf(cOf(dragStartPlayMs) - ((x - startX) / pxPerSec) * 1000)));
       scheduleScrub(targetMs);
       const nowT = performance.now();
       dragSamples.push({ t: nowT, x });
@@ -3028,6 +3068,7 @@ export function editorScreen() {
         tool('wand', 'Denoise', () => openPanel('denoise')),
         tool('enhance', 'Enhanced', openFx),
         tool('silence', 'Silence', () => openPanel('silence')),
+        tool('wand', 'Retake', () => openPanel('retake')),
         tool('trash', 'Delete', () => void doDeleteAudio()));
     } else if (!hasClipSel && !hasSegSel && toolGroup === 'text') {
       rows.push(groupBack(),
@@ -3047,6 +3088,7 @@ export function editorScreen() {
         tool('punch', 'Auto zoom', doAutoZoom),
         tool('note', 'Music', () => openGroup('music')),
         tool('silence', 'Silence', () => openPanel('silence')),
+        tool('wand', 'Retake', () => openPanel('retake')),
         tool('layout', 'Layout', () => openPanel('layout')),
         tool('user', 'On screen', () => openPanel('main')),
         tool('volume', 'Audio', openAudioGroup),
@@ -3101,6 +3143,10 @@ export function editorScreen() {
       lastCropKey = sg ? `${sg.id}|${sg.style}|${sg.main}` : '';
     }
     if (n === 'silence') { if (!needAudio()) { panel = 'none'; return; } silenceStage = 'setup'; }
+    if (n === 'retake') {
+      if (!retakeWords().length) { panel = 'none'; toast('Make Auto captions first (Text > Auto captions), so the words are known.', 4500); return; }
+      retakeStage = 'setup'; retakeNote = '';
+    }
     cropView.classList.toggle('on', n === 'crop');
     updateSelFrame();
     const topOffset = preview.offsetTop + preview.offsetHeight;
@@ -3135,6 +3181,96 @@ export function editorScreen() {
       h('span', { class: 'pbox' }, inner), h('span', { class: 'plab' }, label));
   const pstrip = (...tiles: Node[]) => h('div', { class: 'pstrip' }, ...tiles);
 
+  // ------------------------------------------------------------ Retake finder: repeated takes, mistakes, filler words
+  function dsSwitch(lbl: string, sub: string, on: boolean, set: (v: boolean) => void): HTMLElement {
+    return h('div', { class: 'ds-row' }, h('div', { class: 'ds-top' },
+      h('span', {}, lbl, sub ? h('small', { class: 'ds-sub' }, sub) : null),
+      h('button', { class: 'ds-sw' + (on ? ' on' : ''), role: 'switch', 'aria-checked': String(on), 'aria-label': lbl, onclick: () => { set(!on); renderPanel(); } }, h('i', {}))));
+  }
+  const KIND_LABEL: Record<string, string> = { retake: 'Retake', stutter: 'Repeat', filler: 'Filler' };
+  const clk = (ms: number) => { const t = Math.floor(ms / 1000); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+
+  function paintRetakeList() {
+    if (!retakeListEl) return;
+    retakeListEl.replaceChildren(...silenceItems.map((it, n) => h('div', { class: 'rt-row' + (it.on ? ' on' : ''), onclick: () => { stopRange(); setPlaying(false); seek(Math.max(0, it.r.startMs - 500)); } },
+      h('button', { class: 'rt-tick' + (it.on ? ' on' : ''), 'aria-label': `${it.on ? 'Keep' : 'Cut'} part ${n + 1}`, 'aria-pressed': String(it.on), onclick: (e: Event) => { e.stopPropagation(); it.on = !it.on; syncPending(); silenceStudio?.refresh(); renderPanelSoftSilence(); paintRetakeList(); draw(); } }, it.on ? icon('check', 12) : ''),
+      h('div', { class: 'rt-main' },
+        h('div', { class: 'rt-top' }, h('span', { class: `rt-kind k-${it.kind ?? 'manual'}` }, it.manual ? 'Yours' : KIND_LABEL[it.kind ?? ''] ?? 'Cut'), h('span', { class: 'rt-why' }, it.manual ? 'Cut you added' : it.reason ?? ''), h('span', { class: 'rt-time' }, `${clk(it.r.startMs)} · ${((it.r.endMs - it.r.startMs) / 1000).toFixed(1)}s`)),
+        it.text ? h('div', { class: 'rt-text' }, `“${it.text}”`) : null))));
+  }
+
+  async function startRetake() {
+    const words = retakeWords();
+    retakeOpts.extraWords = retakeOpts.custom.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+    retakeStage = 'busy'; renderPanel();
+    try {
+      const r = await planRetakes(words, p.durationMs, retakeOpts);
+      if (panel !== 'retake') return;
+      const cov = coverage(p.segments);
+      // only parts that are still on the timeline can be cut
+      const inKept = (a: number, b: number) => cov.some((c) => a < c.endMs && b > c.startMs);
+      silenceItems = r.hits.filter((x) => inKept(x.startMs, x.endMs)).map((x) => ({ r: { startMs: x.startMs, endMs: x.endMs }, orig: { startMs: x.startMs, endMs: x.endMs }, on: true, kind: x.kind, reason: x.reason, text: x.text }));
+      syncPending();
+      retakeNote = r.note ?? (r.source === 'ai' ? 'AI read the whole script.' : '');
+      if (!silenceItems.length) { toast(`Nothing to cut. ${retakeNote}`.trim(), 4000); retakeStage = 'setup'; renderPanel(); return; }
+      retakeStage = 'review'; renderPanel(); draw();
+    } catch (e) {
+      if (panel !== 'retake') return;
+      toast(`Could not check the script: ${(e as Error).message || 'error'}`, 4500); retakeStage = 'setup'; renderPanel();
+    }
+  }
+
+  function renderRetake() {
+    if (retakeStage === 'busy') {
+      setPanel('Retake', h('div', { class: 'rt-busy' }, h('div', { class: 'rt-spin' }), h('div', {}, retakeOpts.ai ? 'Reading your whole script...' : 'Looking for repeats...'), h('small', {}, 'Takes a few seconds'))); return;
+    }
+    if (retakeStage === 'setup') {
+      const o = retakeOpts;
+      const custom = h('input', { type: 'text', class: 'ts-input', value: o.custom, placeholder: 'Your own words to remove, e.g. basically, right', 'aria-label': 'Your own filler words', enterkeyhint: 'done', style: 'width:100%;margin-top:6px' }) as HTMLInputElement;
+      custom.addEventListener('input', () => { o.custom = custom.value; });
+      setPanel('Retake',
+        dsSwitch('Repeated takes', 'Sentence said again, false starts, "let me say it again"', o.repeats, (v) => { o.repeats = v; }),
+        dsSwitch('Repeated words', '"the car the car", "you you"', o.stutters, (v) => { o.stutters = v; }),
+        dsSwitch('Filler words', DEFAULT_FILLERS.slice(0, 6).join(', ') + '...', o.fillers, (v) => { o.fillers = v; }),
+        o.fillers ? h('div', { class: 'ds-row' }, custom) : null,
+        dsSwitch('AI reads the whole script', 'Finds wrong parts and retakes rules cannot see (Antigravity)', o.ai, (v) => { o.ai = v; }),
+        h('div', { class: 'pinfo', style: 'text-align:center;margin-top:12px' }, 'You see every part on the timeline first and choose what to remove.'),
+        h('button', { class: 'btn primary', style: 'width:100%;min-height:48px;margin-top:10px;border-radius:10px;border:0;background:#F51B49;color:#fff;font-size:15px;font-weight:700;cursor:pointer', disabled: !(o.repeats || o.stutters || o.fillers || o.ai) ? 'true' : undefined, onclick: () => void startRetake() }, 'Start Analysis'));
+      return;
+    }
+    const applyBtn = h('button', { class: 'btn primary', style: 'flex:1;min-height:48px;border-radius:10px;border:0;background:#F51B49;color:#fff;font-size:15px;font-weight:700;cursor:pointer', disabled: !pendingCuts.length, onclick: applySilence }, pendingCuts.length ? `Remove ${pendingCuts.length} ${pendingCuts.length === 1 ? 'part' : 'parts'}` : 'Nothing selected');
+    silenceStudio?.dispose();
+    silenceStudio = buildSilenceStudio({
+      items: silenceItems, durationMs: p.durationMs,
+      getMs: () => playMs, seek: (ms) => { stopRangeOnly(); seek(ms); }, isPlaying: () => playing, setPlaying,
+      frames: () => hostStrip, peaks: () => hostPeaks ?? constPeaks, peaksPerSec: PEAKS_PER_SEC,
+      onToggle: () => { syncPending(); renderPanelSoftSilence(); paintRetakeList(); draw(); },
+    });
+    retakeListEl = h('div', { class: 'rt-list' });
+    paintRetakeList();
+    setPanel('Retake',
+      silenceStudio.el,
+      retakeNote ? h('div', { class: 'pinfo', style: 'text-align:center' }, retakeNote) : null,
+      h('div', { class: 'ssd-actions' }, applyBtn,
+        h('button', { class: 're-detect', onclick: () => { stopRange(); retakeStage = 'setup'; pendingCuts = []; silenceItems = []; renderPanel(); draw(); } }, icon('sync', 16), 'Re-analyze')),
+      retakeListEl);
+  }
+
+  /** Detect Silence layout: label + value on one line, slider full width under it. */
+  function dsSlider(lbl: string, min: number, max: number, step: number, value: number, fmt: (v: number) => string, on: (v: number) => void): HTMLElement {
+    const val = h('b', { class: 'ds-val' }, fmt(value));
+    const input = h('input', { type: 'range', min: String(min), max: String(max), step: String(step), value: String(value), 'aria-label': lbl }) as HTMLInputElement;
+    const paintFill = () => input.style.setProperty('--fill', `${((parseFloat(input.value) - min) / ((max - min) || 1)) * 100}%`);
+    paintFill();
+    input.addEventListener('input', () => { const v = parseFloat(input.value); val.textContent = fmt(v); paintFill(); on(v); });
+    return h('div', { class: 'ds-row' }, h('div', { class: 'ds-top' }, h('span', {}, lbl), val), input);
+  }
+  /** Equal-width segmented choice, full width. */
+  function dsSeg<T extends string>(lbl: string, opts: [T, string][], cur: T, on: (v: T) => void): HTMLElement {
+    return h('div', { class: 'ds-row' }, h('div', { class: 'ds-top' }, h('span', {}, lbl)),
+      h('div', { class: 'ds-seg' }, ...opts.map(([v, t]) => h('button', { class: v === cur ? 'on' : '', 'aria-pressed': String(v === cur), onclick: () => on(v) }, t))));
+  }
+
   const secText = (ms: number) => (ms >= 60000 ? fmtClock(ms) : `${(ms / 1000).toFixed(1)} s`);
 
   function chipRow<T extends string | number>(opts: [T, string][], cur: T, on: (v: T) => void): HTMLElement {
@@ -3166,7 +3302,7 @@ export function editorScreen() {
     if (!isKept(p.segments, playMs)) seek(nextKeptStart(p.segments, playMs) ?? firstStart());
     // like Meitu: the review sheet goes away once the silence is removed, back to the normal editor
     closePanel();
-    toast(`Removed ${secText(removed)} of silence (${count} ${count === 1 ? 'cut' : 'cuts'}). New length ${secText(keptMs(p.segments))}. Undo to go back.`, 3600);
+    toast(`Removed ${secText(removed)} of ${panel === 'retake' ? 'retakes and fillers' : 'silence'} (${count} ${count === 1 ? 'cut' : 'cuts'}). New length ${secText(keptMs(p.segments))}. Undo to go back.`, 3600);
     draw();
   }
 
@@ -3437,24 +3573,21 @@ export function editorScreen() {
         colorRow,
         h('div', { class: 'crop-actions tool-actions' }, applyAllBtn, resetBtn),
         h('div', { class: 'pinfo' }, 'The border and rounded corners stay on the video edges when you move or zoom it.'));
+    } else if (panel === 'retake') {
+      renderRetake();
     } else if (silenceStage === 'setup') {
       // step 1 (like Meitu "Detect Silence"): settings, then Start Detection
       const save = (pt: Partial<typeof s>) => { Object.assign(s, pt); saveSettings(s); renderPanel(); };
-      const minDurSlider = slider('Silence duration', 200, 5000, 100, s.silenceMinMs, (v) => `${(v / 1000).toFixed(1)} s`, (v) => { s.silenceMinMs = v; saveSettings(s); });
-      const padSlider = slider('Padding margin', 0, 500, 50, s.silencePadMs, (v) => `${(v / 1000).toFixed(2)} s`, (v) => { s.silencePadMs = v; saveSettings(s); });
+      const zoomGraph = () => { const alt = (s.silenceZoomMode ?? 'alternate') === 'alternate'; void askAutoZoom(app.settings, { title: 'Zoom at cuts', simple: alt, hint: alt ? 'Zoom-in pieces ease in at the cut and stay zoomed until the next cut. Set the amount, speed and curve here.' : 'At every silence cut the picture zooms in, holds, and eases out. Set the amount, timing and the graph here.', cta: 'Save zoom' }).then(() => renderPanel()); };
       setPanel('Detect Silence',
-        minDurSlider.row,
-        padSlider.row,
-        h('div', { class: 'prow', style: 'margin-top:10px' },
-          h('div', { class: 'plabel' }, 'Sound level'),
-          chipRow<SilenceSens>([['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], s.silenceSens, (v) => save({ silenceSens: v })),
-          h('button', {
-            class: 'zg-ico', 'aria-label': 'Zoom graph', title: 'Zoom graph', disabled: s.silenceZoom ? undefined : 'true',
-            onclick: () => { const alt = (s.silenceZoomMode ?? 'alternate') === 'alternate'; void askAutoZoom(app.settings, { title: 'Zoom at cuts', simple: alt, hint: alt ? 'Zoom-in pieces ease in at the cut and stay zoomed until the next cut. Set the amount, speed and curve here.' : 'At every silence cut the picture zooms in, holds, and eases out. Set the amount, timing and the graph here.', cta: 'Save zoom' }).then(() => renderPanel()); },
-          }, icon('curve', 20))),
-        h('div', { style: 'margin-top:10px' },
-          toggle('Zoom at cuts', !!s.silenceZoom, (on) => save({ silenceZoom: on })),
-          s.silenceZoom ? chipRow<'alternate' | 'punch'>([['alternate', 'Alternate'], ['punch', 'Punch + out']], s.silenceZoomMode ?? 'alternate', (v) => save({ silenceZoomMode: v })) : null),
+        dsSlider('Silence duration', 200, 5000, 100, s.silenceMinMs, (v) => `${(v / 1000).toFixed(1)} s`, (v) => { s.silenceMinMs = v; saveSettings(s); }),
+        dsSlider('Padding margin', 0, 500, 50, s.silencePadMs, (v) => `${(v / 1000).toFixed(2)} s`, (v) => { s.silencePadMs = v; saveSettings(s); }),
+        dsSeg<SilenceSens>('Sound level', [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], s.silenceSens, (v) => save({ silenceSens: v })),
+        h('div', { class: 'ds-row ds-zoom' },
+          h('div', { class: 'ds-top' }, h('span', {}, 'Zoom at cuts'), h('span', { class: 'ds-end' },
+            s.silenceZoom ? h('button', { class: 'ds-ico', 'aria-label': 'Zoom graph', onclick: zoomGraph }, icon('curve', 20)) : null,
+            h('button', { class: 'ds-sw' + (s.silenceZoom ? ' on' : ''), role: 'switch', 'aria-checked': String(!!s.silenceZoom), 'aria-label': 'Zoom at cuts', onclick: () => save({ silenceZoom: !s.silenceZoom }) }, h('i', {})))),
+          s.silenceZoom ? dsSeg<'alternate' | 'punch'>('', [['alternate', 'Alternate'], ['punch', 'Punch + out']], s.silenceZoomMode ?? 'alternate', (v) => save({ silenceZoomMode: v })) : null),
         h('div', { class: 'pinfo', style: 'text-align:center;margin-top:12px' }, 'Finds the silent parts. You see them on a timeline first and choose what to remove.'),
         h('button', {
           class: 'btn primary', style: 'width:100%;min-height:48px;margin-top:10px;border-radius:10px;border:0;background:#F51B49;color:#fff;font-size:15px;font-weight:700;cursor:pointer',
@@ -3689,7 +3822,7 @@ export function editorScreen() {
       const key = seg ? `${seg.id}|${seg.style}|${seg.main}` : '';
       if (key !== lastCropKey) { lastCropKey = key; layoutCrop(); renderPanel(); }
     }
-    hudTimeBadge.textContent = `${fmtClock(playMs)} / ${fmtClock(p.durationMs)}`;
+    hudTimeBadge.textContent = `${fmtClock(cOf(playMs))} / ${fmtClock(viewTotalMs())}`;
     silenceStudio?.update(playMs);
     drawCaptionsPreview();
     draw();
