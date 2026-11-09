@@ -441,7 +441,7 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
   if (plan.silenceMinMs > 0) {
     try {
       const keep = coverage(segs);
-      silenceCuts = detectSilence(host, cons, p.offsetMs, total, { minMs: plan.silenceMinMs, padMs: Math.min(settings.silencePadMs ?? 150, 150), sens: settings.silenceSens ?? 'medium' }, keep);
+      silenceCuts = detectSilence(host, cons, p.offsetMs, total, { minMs: plan.silenceMinMs, gapMs: Math.min(settings.silenceGapMs ?? 100, 150), sens: settings.silenceSens ?? 'medium' }, keep);
       // keep the quiet beat where a "crickets" sound will play
       const beats = moments.filter((m) => m.kind === 'silence').map((m) => ({ startMs: m.startMs - 200, endMs: m.startMs + 1600 }));
       if (beats.length) silenceCuts = minusRanges(silenceCuts, beats);

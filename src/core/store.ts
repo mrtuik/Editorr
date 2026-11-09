@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS: Settings = {
   bothSpeaking: 'hold',
   silenceMinMs: 1000,
   silencePadMs: 150,
+  silenceGapMs: 100,
   silenceSens: 'medium',
   preferredAudio: 'auto',
   faceFollow: 'speaker',

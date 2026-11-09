@@ -10,8 +10,11 @@ const LEVEL: Record<SilenceSens, number> = { low: 0.12, medium: 0.22, high: 0.35
 export interface SilenceOptions {
   /** Both people quiet for at least this long. */
   minMs: number;
-  /** Quiet time kept next to speech. */
-  padMs: number;
+  /**
+   * Quiet time left between the two spoken parts after the cut (total). A little more of it stays after the
+   * word that ended (its tail / breath) and a little less before the next word, so the join sounds natural.
+   */
+  gapMs: number;
   sens: SilenceSens;
 }
 
@@ -70,6 +73,9 @@ export function detectSilence(
     f = e;
   }
 
+  const gap = Math.max(0, Math.round(o.gapMs));
+  const lead = Math.round(gap * 0.4);   // kept just before the next word
+  const tail = gap - lead;              // kept right after the word that ended
   const minFrames = Math.max(1, Math.round(o.minMs / HOP_MS));
   const cuts: Range[] = [];
   for (let f = 0; f < frames; f++) {
@@ -77,8 +83,8 @@ export function detectSilence(
     let e = f;
     while (e < frames && quiet[e]) e++;
     if (e - f >= minFrames) {
-      const a = f === 0 ? 0 : f * HOP_MS + o.padMs;
-      const b = e >= frames ? durationMs : e * HOP_MS - o.padMs;
+      const a = f === 0 ? 0 : f * HOP_MS + tail;
+      const b = e >= frames ? durationMs : e * HOP_MS - lead;
       if (b - a >= 100) cuts.push({ startMs: a, endMs: Math.min(durationMs, b) });
     }
     f = e;

@@ -102,6 +102,8 @@ export interface Settings {
   silenceMinMs: number;
   /** Keep this much quiet time next to speech so words are not clipped. */
   silencePadMs: number;
+  /** Silence cut: the quiet gap that is left between two spoken parts after a cut (total, ms). Default 100 = 0.1 s so it sounds natural. */
+  silenceGapMs?: number;
   silenceSens: SilenceSens;
   preferredAudio?: 'auto' | 'host' | 'constant';
   /** Faces / Autoframe: follow whoever talks in a camera ('speaker') or only the person picked ('picked'). */

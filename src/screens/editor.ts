@@ -1376,10 +1376,12 @@ export function editorScreen() {
     return { line, n: Math.max(1, ends.length) };
   }
   /** Rows under the waveform, like CapCut: Music, SFX and Text each get their own row; overlapping items stack. */
-  function tlRows() {
+  function tlRows(view = true) {
     const items = p.bgm?.items ?? [];
     const mus = items.filter((i) => i.kind !== 'sfx'), sfx = items.filter((i) => i.kind === 'sfx'), txt = p.texts ?? [], dcu = p.docu ?? [], brl = p.broll ?? [];
-    const pm = pack(mus.map((i) => [i.startMs, i.endMs])), ps = pack(sfx.map((i) => [i.startMs, i.endMs])), pt = pack(txt.map((t) => [t.s, t.e])), pd = pack(dcu.map((d) => [d.start, d.end])), pb = pack(brl.map((b) => [b.start, b.end]));
+    // packed in the timeline you SEE (cut parts squeezed out), so clips that now touch each other never draw on top of each other
+    const vs = (a: number, b: number): [number, number] => (view ? [cOf(a), cOf(b)] : [a, b]);
+    const pm = pack(mus.map((i) => vs(i.startMs, i.endMs))), ps = pack(sfx.map((i) => vs(i.startMs, i.endMs))), pt = pack(txt.map((t) => vs(t.s, t.e))), pd = pack(dcu.map((d) => vs(d.start, d.end))), pb = pack(brl.map((b) => vs(b.start, b.end)));
     let y = AUD_Y + AUD + GAP;
     const hasCap = !!p.captions?.words.length;
     const cap = hasCap ? { y, h: SUB_T } : null; if (cap) y += cap.h + GAP;
@@ -1390,7 +1392,7 @@ export function editorScreen() {
     const fx = sfx.length ? { y, h: ps.n * SUB_S + (ps.n - 1) * 3 } : null; if (fx) y += fx.h + GAP;
     return { mus, sfx, txt, dcu, brl, pm, ps, pt, pd, pb, music, fx, text, docu, broll, cap, tlH: y + 10 };
   }
-  let rowsNow = tlRows();
+  let rowsNow = tlRows(false);   // first pass before the view map exists; draw() refreshes it
   let minTlH = TL_H;
   function pill(g: CanvasRenderingContext2D, a: number, y: number, w: number, hh: number, color: string, label: string) {
     rrect(g, a, y, w, hh, 6); g.fillStyle = color; g.fill();
@@ -1462,14 +1464,15 @@ export function editorScreen() {
     g.save();
     g.beginPath(); g.rect(G, R.cap.y - 1, W - G, R.cap.h + 2); g.clip();
     for (const pg of capPages) {
+      if (fullyCut(pg.s, pg.e)) continue;
       const a = xOf(pg.s), b = xOf(pg.e);
       if (b < G || a > W) continue;
       const w = Math.max(10, b - a - 1);
-      clipBody(g, a, R.cap.y, w, R.cap.h, '#64d2ff');
+      clipBody(g, a, R.cap.y, w, R.cap.h);
       g.save();
       g.beginPath(); g.rect(Math.max(a, G), R.cap.y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), R.cap.h); g.clip();
       g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-      g.fillText(pg.words.map((x) => x.t).join(' '), Math.max(a + 14, G + 8), R.cap.y + R.cap.h / 2 + 0.5);
+      g.fillText(pg.words.map((x) => x.t).join(' '), Math.max(a + 8, G + 6), R.cap.y + R.cap.h / 2 + 0.5);
       g.restore();
     }
     g.restore();
@@ -1482,24 +1485,32 @@ export function editorScreen() {
       const a = xOf(t.s), b = xOf(t.e);
       if (b < G || a > W) return;
       {
-        const y = R.text!.y + R.pt.line[n]! * (SUB_T + 3), w = Math.max(16, b - a);
-        clipBody(g, a, y, w, SUB_T, '#8b5fd6');
+        const dead = fullyCut(t.s, t.e);
+        const y = R.text!.y + R.pt.line[n]! * (SUB_T + 3), w = Math.max(dead ? 22 : 16, b - a);
+        clipBody(g, a, y, w, SUB_T, undefined, dead);
         g.save();
         g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
         g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-        g.fillText(t.text, Math.max(a + 14, G + 8), y + SUB_T / 2 + 0.5);
+        g.fillText(dead ? '' : t.text, Math.max(a + 8, G + 6), y + SUB_T / 2 + 0.5);
         g.restore();
         if (laySel?.kind === 'text' && laySel.id === t.id) layOutline(g, a, y, w, SUB_T);
       }
     });
     g.restore();
   }
-  /** One look for every layer clip: a flat dark card tinted with the layer's colour, a slim colour bar on the left, no outline (selected: white ring). */
-  function clipBody(g: CanvasRenderingContext2D, a: number, y: number, w: number, hh: number, accent = '#8a8a8e') {
-    rrect(g, a, y + 1, w, hh - 2, 7); g.fillStyle = '#232326'; g.fill();
-    g.save(); g.globalAlpha = 0.16; g.fillStyle = accent; g.fill(); g.restore();
-    if (w > 14) { rrect(g, a + 5, y + 7, 3, hh - 14, 1.5); g.fillStyle = accent; g.fill(); }
+  /** One plain look for every layer clip: a dark grey card with a thin light edge (selected: white ring). `ghost` = the clip lies fully inside a removed part: dim and dashed, still tappable. */
+  function clipBody(g: CanvasRenderingContext2D, a: number, y: number, w: number, hh: number, _accent?: string, ghost = false) {
+    g.save();
+    if (ghost) g.globalAlpha = 0.6;
+    rrect(g, a + 0.5, y + 1.5, w - 1, hh - 3, 7);
+    g.fillStyle = ghost ? '#1a1a1c' : '#2a2a2d'; g.fill();
+    g.lineWidth = 1; g.strokeStyle = ghost ? 'rgba(255,255,255,.55)' : 'rgba(255,255,255,.16)';
+    if (ghost) g.setLineDash([3, 3]);
+    g.stroke();
+    g.restore();
   }
+  /** The clip has no length left on the visible timeline: every part of it was cut out. */
+  function fullyCut(s: number, e: number): boolean { return cOf(e) - cOf(s) < 1; }
   function layOutline(g: CanvasRenderingContext2D, a: number, y: number, w: number, hh: number) {
     rrect(g, a + 1, y + 2, w - 2, hh - 4, 7); g.strokeStyle = '#ffffff'; g.lineWidth = 1.5; g.stroke();
   }
@@ -1510,12 +1521,13 @@ export function editorScreen() {
     R.dcu.forEach((d, n) => {
       const a = xOf(d.start), b = xOf(d.end);
       if (b < G || a > W) return;
-      const y = R.docu!.y + R.pd.line[n]! * (SUB_T + 3), w = Math.max(16, b - a);
-      clipBody(g, a, y, w, SUB_T, d.accent_color);
+      const dead = fullyCut(d.start, d.end);
+      const y = R.docu!.y + R.pd.line[n]! * (SUB_T + 3), w = Math.max(dead ? 22 : 16, b - a);
+      clipBody(g, a, y, w, SUB_T, undefined, dead);
       g.save();
       g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
       g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-      g.fillText(d.headline || 'Beat', Math.max(a + 14, G + 8), y + SUB_T / 2 + 0.5);
+      g.fillText(dead ? '' : d.headline || 'Beat', Math.max(a + 8, G + 6), y + SUB_T / 2 + 0.5);
       g.restore();
       if (laySel?.kind === 'docu' && laySel.id === d.id) layOutline(g, a, y, w, SUB_T);
     });
@@ -1528,12 +1540,13 @@ export function editorScreen() {
     R.brl.forEach((bt, n) => {
       const a = xOf(bt.start), b = xOf(bt.end);
       if (b < G || a > W) return;
-      const y = R.broll!.y + R.pb.line[n]! * (SUB_T + 3), w = Math.max(16, b - a);
-      clipBody(g, a, y, w, SUB_T, '#C6F277');
+      const dead = fullyCut(bt.start, bt.end);
+      const y = R.broll!.y + R.pb.line[n]! * (SUB_T + 3), w = Math.max(dead ? 22 : 16, b - a);
+      clipBody(g, a, y, w, SUB_T, undefined, dead);
       g.save();
       g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
       g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
-      g.fillText(`${isBrollVideo(bt) ? '\u25B6 ' : ''}${bt.keyword || bt.title}`, Math.max(a + 14, G + 8), y + SUB_T / 2 + 0.5);
+      g.fillText(dead ? '' : `${isBrollVideo(bt) ? '\u25B6 ' : ''}${bt.keyword || bt.title}`, Math.max(a + 8, G + 6), y + SUB_T / 2 + 0.5);
       g.restore();
       if (laySel?.kind === 'broll' && laySel.id === bt.id) layOutline(g, a, y, w, SUB_T);
     });
@@ -1715,10 +1728,14 @@ export function editorScreen() {
 
     // silence found but not cut yet
     if (pendingCuts.length) {
-      g.fillStyle = 'rgba(239,68,68,.38)';
       for (const r of pendingCuts) {
         const x1 = Math.max(G, xOf(r.startMs)), x2 = Math.min(W, xOf(r.endMs));
-        if (x2 > x1) g.fillRect(x1, MAIN_Y, x2 - x1, AUD_Y + AUD - MAIN_Y);
+        if (x2 <= x1) continue;
+        g.fillStyle = 'rgba(255,255,255,.22)';
+        g.fillRect(x1, MAIN_Y, x2 - x1, AUD_Y + AUD - MAIN_Y);
+        g.fillStyle = 'rgba(255,255,255,.85)';
+        g.fillRect(x1, MAIN_Y, 1.5, AUD_Y + AUD - MAIN_Y);
+        g.fillRect(x2 - 1.5, MAIN_Y, 1.5, AUD_Y + AUD - MAIN_Y);
       }
     }
 
@@ -1970,7 +1987,7 @@ export function editorScreen() {
     let best: { id: string; s: number; e: number } | null = null;
     for (const it of items) {
       if (it.line !== line) continue;
-      const a = xOf(it.s), b = Math.max(xOf(it.e), a + 16);
+      const a = xOf(it.s), b = Math.max(xOf(it.e), a + 22);
       if (x >= a - 4 && x <= b + 4) best = it;
     }
     return best;
@@ -3278,10 +3295,10 @@ export function editorScreen() {
         o.fillers ? h('div', { class: 'ds-row' }, custom) : null,
         dsSwitch('AI reads the whole script', 'Finds wrong parts and retakes rules cannot see (Antigravity)', o.ai, (v) => { o.ai = v; }),
         h('div', { class: 'pinfo', style: 'text-align:center;margin-top:12px' }, 'You see every part on the timeline first and choose what to remove.'),
-        h('button', { class: 'btn primary', style: 'width:100%;min-height:48px;margin-top:10px;border-radius:10px;border:0;background:#F51B49;color:#fff;font-size:15px;font-weight:700;cursor:pointer', disabled: !(o.repeats || o.stutters || o.fillers || o.ai) ? 'true' : undefined, onclick: () => void startRetake() }, 'Start Analysis'));
+        h('button', { class: 'btn primary', style: 'width:100%;min-height:48px;margin-top:10px;border-radius:10px;border:0;background:#fff;color:#111;font-size:15px;font-weight:700;cursor:pointer', disabled: !(o.repeats || o.stutters || o.fillers || o.ai) ? 'true' : undefined, onclick: () => void startRetake() }, 'Start Analysis'));
       return;
     }
-    const applyBtn = h('button', { class: 'btn primary', style: 'flex:1;min-height:48px;border-radius:10px;border:0;background:#F51B49;color:#fff;font-size:15px;font-weight:700;cursor:pointer', disabled: !pendingCuts.length, onclick: applySilence }, pendingCuts.length ? `Remove ${pendingCuts.length} ${pendingCuts.length === 1 ? 'part' : 'parts'}` : 'Nothing selected');
+    const applyBtn = h('button', { class: 'btn primary', style: 'flex:1;min-height:48px;border-radius:10px;border:0;background:#fff;color:#111;font-size:15px;font-weight:700;cursor:pointer', disabled: !pendingCuts.length, onclick: applySilence }, pendingCuts.length ? `Remove ${pendingCuts.length} ${pendingCuts.length === 1 ? 'part' : 'parts'}` : 'Nothing selected');
     silenceStudio?.dispose();
     silenceStudio = buildSilenceStudio({
       items: silenceItems, durationMs: p.durationMs,
@@ -3327,7 +3344,7 @@ export function editorScreen() {
   function runDetect() {
     const s = app.settings;
     const found = detectSilence(runtime.hostPcm!, runtime.constPcm!, p.offsetMs, p.durationMs,
-      { minMs: s.silenceMinMs, padMs: s.silencePadMs, sens: s.silenceSens }, coverage(p.segments));
+      { minMs: s.silenceMinMs, gapMs: s.silenceGapMs ?? 100, sens: s.silenceSens }, coverage(p.segments));
     silenceItems = found.map((r) => ({ r: { ...r }, orig: { ...r }, on: true }));
     syncPending();
   }
@@ -3348,8 +3365,11 @@ export function editorScreen() {
     edit(next);
     if (!isKept(p.segments, playMs)) seek(nextKeptStart(p.segments, playMs) ?? firstStart());
     // like Meitu: the review sheet goes away once the silence is removed, back to the normal editor
+    const wasRetake = panel === 'retake';
     closePanel();
-    toast(`Removed ${secText(removed)} of ${panel === 'retake' ? 'retakes and fillers' : 'silence'} (${count} ${count === 1 ? 'cut' : 'cuts'}). New length ${secText(keptMs(p.segments))}. Undo to go back.`, 3600);
+    // text / documentary / B-roll clips that now lie fully inside a removed part: they stay (shown dashed on the timeline) so nothing is lost silently
+    const stranded = [...(p.texts ?? []).map((t) => [t.s, t.e]), ...(p.docu ?? []).map((d) => [d.start, d.end]), ...(p.broll ?? []).map((b) => [b.start, b.end])].filter(([s, e]) => fullyCut(s!, e!)).length;
+    toast(`Removed ${secText(removed)} of ${wasRetake ? 'retakes and fillers' : 'silence'} (${count} ${count === 1 ? 'cut' : 'cuts'}). New length ${secText(keptMs(p.segments))}.${stranded ? ` ${stranded} text / B-roll ${stranded === 1 ? 'clip is' : 'clips are'} inside the removed parts (dashed boxes): tap one to move or delete it.` : ''} Undo to go back.`, stranded ? 6500 : 3600);
     draw();
   }
 
@@ -3628,7 +3648,7 @@ export function editorScreen() {
       const zoomGraph = () => { const alt = (s.silenceZoomMode ?? 'alternate') === 'alternate'; void askAutoZoom(app.settings, { title: 'Zoom at cuts', simple: alt, hint: alt ? 'Zoom-in pieces ease in at the cut and stay zoomed until the next cut. Set the amount, speed and curve here.' : 'At every silence cut the picture zooms in, holds, and eases out. Set the amount, timing and the graph here.', cta: 'Save zoom' }).then(() => renderPanel()); };
       setPanel('Detect Silence',
         dsSlider('Silence duration', 200, 5000, 100, s.silenceMinMs, (v) => `${(v / 1000).toFixed(1)} s`, (v) => { s.silenceMinMs = v; saveSettings(s); }),
-        dsSlider('Padding margin', 0, 500, 50, s.silencePadMs, (v) => `${(v / 1000).toFixed(2)} s`, (v) => { s.silencePadMs = v; saveSettings(s); }),
+        dsSlider('Gap left at each cut', 0, 500, 10, s.silenceGapMs ?? 100, (v) => `${(v / 1000).toFixed(2)} s`, (v) => { s.silenceGapMs = v; saveSettings(s); }),
         dsSeg<SilenceSens>('Sound level', [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], s.silenceSens, (v) => save({ silenceSens: v })),
         h('div', { class: 'ds-row ds-zoom' },
           h('div', { class: 'ds-top' }, h('span', {}, 'Zoom at cuts'), h('span', { class: 'ds-end' },
@@ -3637,14 +3657,14 @@ export function editorScreen() {
           s.silenceZoom ? dsSeg<'alternate' | 'punch'>('', [['alternate', 'Alternate'], ['punch', 'Punch + out']], s.silenceZoomMode ?? 'alternate', (v) => save({ silenceZoomMode: v })) : null),
         h('div', { class: 'pinfo', style: 'text-align:center;margin-top:12px' }, 'Finds the silent parts. You see them on a timeline first and choose what to remove.'),
         h('button', {
-          class: 'btn primary', style: 'width:100%;min-height:48px;margin-top:10px;border-radius:10px;border:0;background:#F51B49;color:#fff;font-size:15px;font-weight:700;cursor:pointer',
+          class: 'btn primary', style: 'width:100%;min-height:48px;margin-top:10px;border-radius:10px;border:0;background:#fff;color:#111;font-size:15px;font-weight:700;cursor:pointer',
           onclick: () => { runDetect(); if (!silenceItems.length) { toast('No silence found. Try a shorter duration or a higher sound level.', 3500); return; } silenceStage = 'review'; renderPanel(); draw(); },
         }, 'Start Detection'));
     } else {
       // step 2 (separate review sheet): the timeline with every silent part; Remove closes it and goes back to the editor
       const applyBtn = h('button', {
         class: 'btn primary',
-        style: 'flex:1;min-height:48px;border-radius:10px;border:0;background:#F51B49;color:#fff;font-size:15px;font-weight:700;cursor:pointer',
+        style: 'flex:1;min-height:48px;border-radius:10px;border:0;background:#fff;color:#111;font-size:15px;font-weight:700;cursor:pointer',
         disabled: !pendingCuts.length,
         onclick: applySilence
       }, pendingCuts.length ? `Remove silent clips (${pendingCuts.length})` : 'No Silence to Cut');
