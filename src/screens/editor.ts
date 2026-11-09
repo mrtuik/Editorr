@@ -1145,6 +1145,8 @@ export function editorScreen() {
   let retakeStage: 'setup' | 'busy' | 'review' = 'setup';
   let retakeNote = '';
   let retakeListEl: HTMLElement | undefined;
+  let retakeScriptEl: HTMLElement | undefined;
+  let scriptAnchor = -1;
   const retakeOpts: RetakeOpts & { custom: string } = { repeats: true, stutters: true, fillers: true, ai: true, extraWords: [], custom: '' };
   const retakeWords = () => (p.captions?.words?.length ? p.captions.words : p.agentWords?.words ?? []);
   /** every silence Detect found (with the user's edits and on/off); pendingCuts = the ones that are on */
@@ -3193,10 +3195,51 @@ export function editorScreen() {
   function paintRetakeList() {
     if (!retakeListEl) return;
     retakeListEl.replaceChildren(...silenceItems.map((it, n) => h('div', { class: 'rt-row' + (it.on ? ' on' : ''), onclick: () => { stopRange(); setPlaying(false); seek(Math.max(0, it.r.startMs - 500)); } },
-      h('button', { class: 'rt-tick' + (it.on ? ' on' : ''), 'aria-label': `${it.on ? 'Keep' : 'Cut'} part ${n + 1}`, 'aria-pressed': String(it.on), onclick: (e: Event) => { e.stopPropagation(); it.on = !it.on; syncPending(); silenceStudio?.refresh(); renderPanelSoftSilence(); paintRetakeList(); draw(); } }, it.on ? icon('check', 12) : ''),
+      h('button', { class: 'rt-tick' + (it.on ? ' on' : ''), 'aria-label': `${it.on ? 'Keep' : 'Cut'} part ${n + 1}`, 'aria-pressed': String(it.on), onclick: (e: Event) => { e.stopPropagation(); it.on = !it.on; retakeChanged(); } }, it.on ? icon('check', 12) : ''),
       h('div', { class: 'rt-main' },
         h('div', { class: 'rt-top' }, h('span', { class: `rt-kind k-${it.kind ?? 'manual'}` }, it.manual ? 'Yours' : KIND_LABEL[it.kind ?? ''] ?? 'Cut'), h('span', { class: 'rt-why' }, it.manual ? 'Cut you added' : it.reason ?? ''), h('span', { class: 'rt-time' }, `${clk(it.r.startMs)} · ${((it.r.endMs - it.r.startMs) / 1000).toFixed(1)}s`)),
         it.text ? h('div', { class: 'rt-text' }, `“${it.text}”`) : null))));
+  }
+
+  /** Everything that changed in the cut list: redraw blocks, list, script and the count on the button. */
+  function retakeChanged() {
+    syncPending(); silenceStudio?.refresh(); renderPanelSoftSilence(); paintRetakeList(); paintScript(); draw();
+  }
+
+  /** Manual cut from the script: tap the first word, then the last word. Overlapping cuts join into one. */
+  function addRangeCut(a: number, b: number) {
+    let s0 = a, e0 = b;
+    const hit = silenceItems.filter((i) => i.r.startMs < e0 && i.r.endMs > s0);
+    for (const i of hit) { s0 = Math.min(s0, i.r.startMs); e0 = Math.max(e0, i.r.endMs); }
+    const keepKind = hit.length === 1 && hit[0]!.kind ? hit[0]! : null;
+    for (const i of hit) silenceItems.splice(silenceItems.indexOf(i), 1);
+    silenceItems.push({ r: { startMs: Math.round(s0), endMs: Math.round(e0) }, orig: { startMs: Math.round(s0), endMs: Math.round(e0) }, on: true, manual: !keepKind, kind: keepKind?.kind, reason: keepKind?.reason, text: retakeWords().filter((w) => w.s >= s0 - 10 && w.e <= e0 + 10).map((w) => (w.orig || w.w).trim()).join(' ').slice(0, 90) });
+    silenceItems.sort((x, y) => x.r.startMs - y.r.startMs);
+  }
+
+  function paintScript() {
+    if (!retakeScriptEl) return;
+    const words = retakeWords();
+    const cov = coverage(p.segments);
+    const nodes: Node[] = [];
+    words.forEach((w, i) => {
+      if (!cov.some((c) => w.s < c.endMs && w.e > c.startMs)) return;
+      const it = silenceItems.find((x) => w.s >= x.r.startMs - 20 && w.e <= x.r.endMs + 20);
+      nodes.push(h('span', {
+        class: 'rt-w' + (it ? (it.on ? ' cut' : ' off') : '') + (i === scriptAnchor ? ' anchor' : ''),
+        onclick: () => {
+          if (it && scriptAnchor < 0) { it.on = !it.on; retakeChanged(); return; }          // a word inside a cut: switch that cut
+          if (scriptAnchor < 0) { scriptAnchor = i; paintScript(); return; }                  // first word
+          const a = Math.min(scriptAnchor, i), b = Math.max(scriptAnchor, i);
+          scriptAnchor = -1;
+          addRangeCut(words[a]!.s, words[b]!.e); retakeChanged();                              // last word
+        },
+        ondblclick: () => { stopRange(); setPlaying(false); seek(Math.max(0, w.s - 300)); },
+      }, (w.orig || w.w).trim()), document.createTextNode(' '));
+    });
+    retakeScriptEl.replaceChildren(
+      h('div', { class: 'rt-hint' }, scriptAnchor >= 0 ? 'Now tap the last word of the part to cut.' : 'Tap the first word, then the last word, to cut that part. Tap a red word to switch its cut.'),
+      h('div', { class: 'rt-words' }, ...nodes));
   }
 
   async function startRetake() {
@@ -3244,15 +3287,19 @@ export function editorScreen() {
       items: silenceItems, durationMs: p.durationMs,
       getMs: () => playMs, seek: (ms) => { stopRangeOnly(); seek(ms); }, isPlaying: () => playing, setPlaying,
       frames: () => hostStrip, peaks: () => hostPeaks ?? constPeaks, peaksPerSec: PEAKS_PER_SEC,
-      onToggle: () => { syncPending(); renderPanelSoftSilence(); paintRetakeList(); draw(); },
+      onToggle: () => { syncPending(); renderPanelSoftSilence(); paintRetakeList(); paintScript(); draw(); },
     });
+    scriptAnchor = -1;
     retakeListEl = h('div', { class: 'rt-list' });
-    paintRetakeList();
+    retakeScriptEl = h('div', { class: 'rt-script' });
+    paintRetakeList(); paintScript();
     setPanel('Retake',
       silenceStudio.el,
       retakeNote ? h('div', { class: 'pinfo', style: 'text-align:center' }, retakeNote) : null,
       h('div', { class: 'ssd-actions' }, applyBtn,
         h('button', { class: 're-detect', onclick: () => { stopRange(); retakeStage = 'setup'; pendingCuts = []; silenceItems = []; renderPanel(); draw(); } }, icon('sync', 16), 'Re-analyze')),
+      h('details', { class: 'ssd-set', open: 'true' }, h('summary', {}, 'Script (select by words)'), retakeScriptEl),
+      h('div', { class: 'at-label', style: 'margin-top:12px' }, 'Parts to cut'),
       retakeListEl);
   }
 

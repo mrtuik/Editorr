@@ -1867,3 +1867,11 @@ html body input[type=range]:disabled { opacity: .4; }
 .rt-why { flex: 1; min-width: 0; color: #d8d8dc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rt-time { color: #8d8d94; font-variant-numeric: tabular-nums; font-size: 12px; }
 .rt-text { margin-top: 4px; font-size: 13px; color: #a8a8ae; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+.rt-script { margin-top: 6px; }
+.rt-hint { font-size: 12.5px; color: #9a9aa0; margin-bottom: 8px; }
+.rt-words { max-height: 200px; overflow-y: auto; padding: 10px; border-radius: 10px; background: #141416; line-height: 2.1; font-size: 14.5px; color: #d0d0d5; -webkit-overflow-scrolling: touch; }
+.rt-w { padding: 3px 2px; border-radius: 5px; cursor: pointer; }
+.rt-w.cut { background: rgba(245,27,73,.35); color: #fff; text-decoration: line-through; text-decoration-color: rgba(255,255,255,.7); }
+.rt-w.off { outline: 1px dashed rgba(255,255,255,.4); color: #9a9aa0; }
+.rt-w.anchor { background: #fff; color: #111; }
