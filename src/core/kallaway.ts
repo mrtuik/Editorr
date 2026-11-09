@@ -398,18 +398,21 @@ function paintVersus(g: CanvasRenderingContext2D, spec: KallawaySpec, area: Area
 
 /** Quote card: a big two-font headline in the middle of the card and a supporting line. */
 function paintQuote(g: CanvasRenderingContext2D, spec: KallawaySpec, card: Area, k: number) {
-  const x = card.x + 6 * k, w = card.w - 12 * k;
-  const top = drawTitle(g, spec, card.x + card.w / 2, card.y + card.h * 0.2, w * 0.92, k * 1.5);
-  const sub = (spec.sub ?? '').trim();
-  g.fillStyle = KALLAWAY_RED; g.fillRect(card.x + card.w / 2 - 70 * k, top + 26 * k, 140 * k, 9 * k);
-  if (sub) {
-    g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.font = `600 ${Math.round(42 * k)}px ${SANS}`; g.fillStyle = 'rgba(255,255,255,0.78)';
-    wrapLines(g, sub, w * 0.86, 3).forEach((ln, i) => g.fillText(ln, card.x + card.w / 2, top + 100 * k + i * 54 * k));
-  }
+  const w = card.w - 12 * k;
+  // no supporting line: the headline sits in the middle of the card with a red bar under it
+  const scratch = document.createElement('canvas').getContext('2d')!;
+  const hTitle = drawTitle(scratch, spec, 0, 0, w * 0.92, k * 1.5);
+  const block = hTitle + 35 * k;
+  const top0 = card.y + Math.max(0, (card.h - block) / 2);
+  const bottom = drawTitle(g, spec, card.x + card.w / 2, top0, w * 0.92, k * 1.5);
+  g.fillStyle = KALLAWAY_RED; g.fillRect(card.x + card.w / 2 - 70 * k, bottom + 26 * k, 140 * k, 9 * k);
 }
 
 const shareFor = (spec: KallawaySpec, layout: 'side' | 'updown') => spec.share ?? (layout === 'updown' ? SHARE_TALL : SHARE_WIDE);
 export const isFullScreen = (spec: KallawaySpec) => spec.speaker === 'none';
+/** The speaker's side decides the split: top / bottom = stacked (even on a wide frame), left / right = side by side. */
+export const layoutFor = (spec: KallawaySpec, aspect: Aspect): 'side' | 'updown' =>
+  spec.speaker === 'top' || spec.speaker === 'bottom' ? 'updown' : spec.speaker === 'left' || spec.speaker === 'right' ? 'side' : docuLayoutFor(aspect);
 const posFor = (spec: KallawaySpec, layout: 'side' | 'updown'): 'bottom' | 'top' | 'right' | 'left' => {
   const want = spec.speaker;
   if (layout === 'updown') return want === 'top' ? 'top' : 'bottom';
@@ -422,7 +425,7 @@ const posFor = (spec: KallawaySpec, layout: 'side' | 'updown'): 'bottom' | 'top'
  */
 export function paintKallaway(g: CanvasRenderingContext2D, spec: KallawaySpec, active: number, aspect: Aspect, w: number, h: number, photo?: HTMLImageElement, mo: Motion = REST) {
   const k = Math.min(w, h) / 1080;
-  const layout = docuLayoutFor(aspect);
+  const layout = layoutFor(spec, aspect);
   const share = shareFor(spec, layout);
   const full = isFullScreen(spec);
   const geo = full ? { vertical: layout === 'updown', video: { x: 0, y: 0, w: 0, h: 0 }, card: { x: 24 * k, y: 40 * k, w: w - 48 * k, h: h - 80 * k } } : docuGeometry(layout, posFor(spec, layout), w, h, share);
@@ -566,7 +569,7 @@ export async function makeKallawayBeats(aspect: Aspect, spec: KallawaySpec, star
     ]);
   } catch { /* offline: the fallback fonts are used */ }
   const { w, h } = kallawaySize(aspect);
-  const layout = docuLayoutFor(aspect);
+  const layout = layoutFor(spec, aspect);
   const share = shareFor(spec, layout), pos = posFor(spec, layout);
   const gid = uid(), full = isFullScreen(spec);
   const per = (end - start) / count;

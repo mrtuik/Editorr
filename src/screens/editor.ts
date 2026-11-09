@@ -3070,7 +3070,7 @@ export function editorScreen() {
         tool('wand', 'Denoise', () => openPanel('denoise')),
         tool('enhance', 'Enhanced', openFx),
         tool('silence', 'Silence', () => openPanel('silence')),
-        tool('wand', 'Retake', () => openPanel('retake')),
+        tool('retake', 'Retake', () => openPanel('retake')),
         tool('trash', 'Delete', () => void doDeleteAudio()));
     } else if (!hasClipSel && !hasSegSel && toolGroup === 'text') {
       rows.push(groupBack(),
@@ -3090,7 +3090,7 @@ export function editorScreen() {
         tool('punch', 'Auto zoom', doAutoZoom),
         tool('note', 'Music', () => openGroup('music')),
         tool('silence', 'Silence', () => openPanel('silence')),
-        tool('wand', 'Retake', () => openPanel('retake')),
+        tool('retake', 'Retake', () => openPanel('retake')),
         tool('layout', 'Layout', () => openPanel('layout')),
         tool('user', 'On screen', () => openPanel('main')),
         tool('volume', 'Audio', openAudioGroup),

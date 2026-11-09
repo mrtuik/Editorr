@@ -94,7 +94,7 @@ function drawText(g: CanvasRenderingContext2D, b: DocuBeat, r: Rect, w: number, 
   const headText = st.caps === false ? b.headline : b.headline.toUpperCase();
   const head = wrap(g, headText, maxW).slice(0, maxHead);
   g.font = `500 ${subSize}px ${fam}`;
-  const sub = b.subtext ? wrap(g, b.subtext, maxW).slice(0, maxHead) : [];
+  const sub: string[] = []; // no supporting line: the headline stands alone in the middle
   const headH = head.length * headSize * 1.12, subH = sub.length * subSize * 1.35;
   const gap = sub.length ? headSize * 0.45 : 0;
   const total = headH + gap + subH;
@@ -233,7 +233,7 @@ export function exportDocu(beats: DocuBeat[] | undefined, outW: number, outH: nu
     if (b.image && !b.image.path) continue; // a Kallaway picture that only exists in the browser cannot be exported
     const geo = b.type === 'split_screen' ? docuGeometry(b.layout === 'one' ? 'side' : b.layout, b.video_position, outW, outH, b.share) : null;
     out.push({
-      type: b.type, s: Math.round(b.start), e: Math.round(b.end), headline: b.headline, subtext: b.subtext ?? '', accent: b.accent_color, theme: b.theme,
+      type: b.type, s: Math.round(b.start), e: Math.round(b.end), headline: b.headline, subtext: '', accent: b.accent_color, theme: b.theme,
       radius: radiusPx(b, outW, outH), fadeMs: b.image ? 1 : DOCU_FADE_MS,
       ...(b.image?.path ? { image: b.image.path } : {}),
       ...(b.image?.path && b.frames?.length && b.framesMs && b.frames.every((f) => f.path) ? { frames: b.frames.map((f) => f.path), framesMs: Math.round(b.framesMs) } : {}),

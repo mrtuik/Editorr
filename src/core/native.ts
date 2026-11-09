@@ -1,7 +1,7 @@
 import { exportCaptions, exportTexts } from './captions';
 import { registerPlugin, Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
-import { docuSegments, fixDocuLayout } from './docuApply';
+import { docuSegments } from './docuApply';
 import { exportBroll, exportBrollVideos } from './brollRenderer';
 import { exportDocu } from './docuRenderer';
 import { effectiveGain } from './gain';
@@ -189,7 +189,7 @@ export async function loadPcm(pcmPath: string): Promise<Float32Array> {
 
 export function toExportRequest(p: Project, hostUri: string, constUri: string, height: number, fps: number, mbps: number): ExportRequest {
   const { w, h } = outputSize(p.aspect, height);
-  fixDocuLayout(p);
+  // beats keep the layout they were given (it is fixed when the ratio changes)
   return {
     hostUri, constUri,
     fps, bitrate: Math.round(mbps * 1_000_000),

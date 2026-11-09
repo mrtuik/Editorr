@@ -1,5 +1,4 @@
 import type { CapWord } from '../core/captions';
-import { fixDocuLayout } from '../core/docuApply';
 import { planDocuBeats } from '../core/docuPlanner';
 import { KALLAWAY_SHARES, isFullScreen, makeKallawayBeats, syncStepStarts, type KallawaySpec } from '../core/kallaway';
 import { planKallaway } from '../core/kallawayDirector';
@@ -54,7 +53,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
   let brollPane: BrollPane | null = null;
   let scopeAll = false;
   const beats = (): DocuBeat[] => (ctx.p.docu ??= []);
-  fixDocuLayout(ctx.p);
+  // (the layout of a beat is only reset when the ratio changes, so a chosen top/bottom or left/right side stays)
   const layout = () => docuLayoutFor(ctx.p.aspect);
   let sel: string | null = (startId && beats().some((b) => b.id === startId) ? startId : beats()[0]?.id) ?? null;
   let busy = false;
@@ -113,7 +112,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     const lay = layout();
     const b: DocuBeat = {
       id: uid(), type: 'split_screen', start, end: Math.min(dur || start + 3500, start + 3500), layout: lay, video_position: defaultPos(lay),
-      card_radius: DEFAULT_CARD_RADIUS, headline: 'Your headline', subtext: 'Supporting line', accent_color: DOCU_ACCENTS[beats().length % DOCU_ACCENTS.length]!, theme: 'noir',
+      card_radius: DEFAULT_CARD_RADIUS, headline: 'Your headline', accent_color: DOCU_ACCENTS[beats().length % DOCU_ACCENTS.length]!, theme: 'noir',
     };
     beats().push(b);
     sel = b.id; ctx.changed(); render();
@@ -127,6 +126,8 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
   }
 
   // ------------------------------------------------------------ Kallaway frame (dot grid, step list / script card, video in a rounded window)
+  const SIT_CHOICES: [string, string][] = [['left', 'Left'], ['right', 'Right'], ['top', 'Top'], ['bottom', 'Bottom']];
+  let kwScreen: 'half' | 'full' | 'mixed' = 'half';
   const kw: KallawaySpec = { kind: 'steps', a: 'The', b: 'Desire Hook', c: 'Method', steps: ['Lead with the desired outcome', 'Tie the outcome to a relatable character', 'Hook formula one', 'Hook formula two', 'Hook formula three'], handle: '' };
   let kwSeconds = 10;
   let kwSync = true;
@@ -170,8 +171,8 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       for (const pk of r.picks) {
         // rhythm like the reference reels: scenes with a self-contained picture alternate between 'you in a window' and 'full screen'
         const idx = r.picks.indexOf(pk);
-        const fullOk = ['loop', 'versus', 'stat', 'quote'].includes(pk.spec.kind);
-        const spec: KallawaySpec = { ...pk.spec, handle: kw.handle, share: kw.share, speaker: fullOk && idx % 2 === 1 ? 'none' : kw.speaker };
+        const fullOk = ['loop', 'versus', 'stat', 'quote', 'steps'].includes(pk.spec.kind);
+        const spec: KallawaySpec = { ...pk.spec, handle: kw.handle, share: kw.share, speaker: fullOk && (kwScreen === 'full' || (kwScreen === 'mixed' && idx % 2 === 1)) ? 'none' : (kw.speaker === 'none' ? undefined : kw.speaker) };
         made.push(...await makeKallawayBeats(ctx.p.aspect, spec, pk.start, pk.end));
       }
       ctx.p.docu = [...beats().filter((x) => r.picks.every((pk) => x.end <= pk.start || x.start >= pk.end)), ...made].sort((a, b) => a.start - b.start);
@@ -230,7 +231,8 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       h('div', { class: 'at-hint', style: 'margin-top:4px' }, 'Reads your captions, picks 2 to 4 moments and the best card for each. Or make one by hand below.'),
       chipRow<KallawaySpec['kind']>('Card', [['steps', 'Step list'], ['script', 'Script card'], ['stat', 'Number'], ['quote', 'Quote'], ['loop', 'Loop'], ['versus', 'Versus'], ['photo', 'Picture'], ['svg', 'Graphic']], kw.kind, (v) => { kw.kind = v; render(); }),
       chipRow<string>('Card size', KALLAWAY_SHARES.map(([v, l]) => [String(v), l] as [string, string]), String(kw.share ?? (docuLayoutFor(ctx.p.aspect) === 'updown' ? 0.6 : 0.52)), (v) => { kw.share = Number(v); render(); }),
-      chipRow<string>('You sit', (docuLayoutFor(ctx.p.aspect) === 'updown' ? [['bottom', 'Bottom'], ['top', 'Top']] : [['right', 'Right'], ['left', 'Left']]) as [string, string][], kw.speaker ?? (docuLayoutFor(ctx.p.aspect) === 'updown' ? 'bottom' : 'right'), (v) => { kw.speaker = v as KallawaySpec['speaker']; render(); }),
+      chipRow<'half' | 'full' | 'mixed'>('Screen', [['half', 'Half screen'], ['full', 'Full screen'], ['mixed', 'Mixed']], kwScreen, (v) => { kwScreen = v; render(); }),
+      kwScreen === 'full' ? (null as unknown as Node) : chipRow<string>('You sit', SIT_CHOICES, kw.speaker && kw.speaker !== 'none' ? kw.speaker : (docuLayoutFor(ctx.p.aspect) === 'updown' ? 'bottom' : 'right'), (v) => { kw.speaker = v as KallawaySpec['speaker']; render(); }),
       kw.kind === 'photo' ? h('div', { style: 'margin-top:10px' }, h('button', { class: 'btn', style: 'width:100%;min-height:44px', onclick: pickPhoto }, kw.photo ? `Picture: ${kwPhotoName || 'chosen'} (tap to change)` : 'Pick a picture')) : (null as unknown as Node),
       kw.kind === 'steps' ? chipRow<string>('Timing', [['on', 'Follow my words'], ['off', 'Equal parts']], kwSync ? 'on' : 'off', (v) => { kwSync = v === 'on'; render(); }) : (null as unknown as Node),
       kw.kind === 'stat' ? h('div', {},
@@ -291,26 +293,71 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
   // ------------------------------------------------------------ Kallaway beats: the picture is redrawn when anything about it changes
   const kwNote = () => h('div', { class: 'at-hint', style: 'margin-top:10px' }, 'This is a Kallaway scene (a finished picture). Its look is set in the Beats and Layout tabs; Templates, Fonts and Colors do not apply.');
 
-  /** Redraws the whole card (all its beats) with `mut` applied to its recipe. Words are re-timed to the captions. */
-  async function rebake(b: DocuBeat, mut: (s: KallawaySpec) => void) {
-    if (busy || !b.kw) return;
-    const old = b.kw;
+  /** Draws one card again with `mut` applied to its recipe; returns its new beats. Words are re-timed to the captions. */
+  async function bakeGroup(b: DocuBeat, mut: (s: KallawaySpec) => void): Promise<DocuBeat[]> {
+    const old = b.kw!;
     const spec: KallawaySpec = { ...old.spec, stepStarts: undefined };
     mut(spec);
+    if (spec.kind === 'steps' || spec.kind === 'loop') {
+      const pts = spec.steps.filter((x) => x.trim()).slice(0, 5);
+      const words = ctx.p.captions?.words.length ? ctx.p.captions.words : ctx.p.agentWords?.words;
+      spec.stepStarts = syncStepStarts(pts, words, old.gStart, old.gEnd);
+    }
+    return makeKallawayBeats(ctx.p.aspect, spec, old.gStart, old.gEnd);
+  }
+
+  async function rebake(b: DocuBeat, mut: (s: KallawaySpec) => void) {
+    if (busy || !b.kw) return;
+    if (b.kw.spec.kind === 'photo') { toast('Picture cards cannot be redrawn. Delete it and add it again.', 4000); return; }
+    const old = b.kw;
     busy = true; render();
     try {
-      if (spec.kind === 'photo') throw new Error('Picture cards cannot be redrawn. Delete it and add it again.');
-      if (spec.kind === 'steps' || spec.kind === 'loop') {
-        const pts = spec.steps.filter((x) => x.trim()).slice(0, 5);
-        const words = ctx.p.captions?.words.length ? ctx.p.captions.words : ctx.p.agentWords?.words;
-        spec.stepStarts = syncStepStarts(pts, words, old.gStart, old.gEnd);
-      }
-      const nb = await makeKallawayBeats(ctx.p.aspect, spec, old.gStart, old.gEnd);
+      const nb = await bakeGroup(b, mut);
       ctx.p.docu = [...beats().filter((x) => x.kw?.gid !== old.gid), ...nb].sort((a, c) => a.start - c.start);
       sel = (nb.find((x) => b.start >= x.start && b.start < x.end) ?? nb[0])?.id ?? null;
       ctx.changed();
     } catch (e) { toast(`Could not redraw it: ${(e as Error).message || 'failed'}`, 5000); }
     finally { busy = false; render(); }
+  }
+
+  /** The same screen choice for EVERY scene: half screen (you in a window, on any side) or full screen. */
+  async function applyAll(o: { screen?: 'half' | 'full'; sit?: 'left' | 'right' | 'top' | 'bottom' }) {
+    if (busy) return;
+    busy = true; render();
+    try {
+      const done = new Set<string>();
+      let next: DocuBeat[] = [];
+      for (const b of beats()) {
+        if (b.kw) {
+          if (done.has(b.kw.gid)) continue;
+          done.add(b.kw.gid);
+          if (b.kw.spec.kind === 'photo') { next.push(...beats().filter((x) => x.kw?.gid === b.kw!.gid)); continue; }
+          const was = isFullScreen(b.kw.spec);
+          next.push(...await bakeGroup(b, (sp) => {
+            const keep = sp.speaker && sp.speaker !== 'none' ? sp.speaker : undefined;
+            const screen = o.screen ?? (was ? 'full' : 'half');
+            const sit = o.sit ?? keep;
+            sp.speaker = screen === 'full' ? 'none' : sit ?? undefined;
+          }));
+        } else {
+          const nb = { ...b };
+          if (o.screen === 'full') nb.type = 'black_screen';
+          else if (o.screen === 'half') nb.type = 'split_screen';
+          if (o.sit) { nb.video_position = o.sit; nb.layout = o.sit === 'top' || o.sit === 'bottom' ? 'updown' : 'side'; }
+          next.push(nb);
+        }
+      }
+      ctx.p.docu = next.sort((a, c) => a.start - c.start);
+      ctx.changed();
+    } catch (e) { toast(`Could not change all scenes: ${(e as Error).message || 'failed'}`, 5000); }
+    finally { busy = false; render(); }
+  }
+
+  /** "All scenes" block at the top of the Layout tab. */
+  function allScenesBlock(): Node {
+    return sec('All scenes at once',
+      chipRow<'half' | 'full'>('Screen', [['half', 'Half screen'], ['full', 'Full screen']], 'half', (v) => { void applyAll({ screen: v }); }),
+      chipRow<string>('You sit', SIT_CHOICES, '', (v) => { void applyAll({ screen: 'half', sit: v as 'left' | 'right' | 'top' | 'bottom' }); }));
   }
 
   /** Words of a Kallaway scene: title parts, points, number, supporting line. "Apply" redraws it. */
@@ -343,11 +390,10 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
   /** Layout of a Kallaway scene: with you in a window (side, size) or full screen. Every tap redraws the picture, so the video moves with it. */
   function renderKwLayout(b: DocuBeat): Node[] {
     const sp = b.kw!.spec, full = isFullScreen(sp), tall = layout() === 'updown';
-    const sides: [string, string][] = tall ? [['bottom', 'You at bottom'], ['top', 'You at top']] : [['right', 'You on right'], ['left', 'You on left']];
     return [
-      kwNote(),
+      allScenesBlock(),
       chipRow<'win' | 'full'>('Scene', [['win', 'With you in a window'], ['full', 'Full screen']], full ? 'full' : 'win', (v) => { void rebake(b, (s) => { s.speaker = v === 'full' ? 'none' : tall ? 'bottom' : 'right'; }); }),
-      full ? (null as unknown as Node) : chipRow<string>('You sit', sides, sp.speaker && sp.speaker !== 'none' ? sp.speaker : tall ? 'bottom' : 'right', (v) => { void rebake(b, (s) => { s.speaker = v as KallawaySpec['speaker']; }); }),
+      full ? (null as unknown as Node) : chipRow<string>('You sit', SIT_CHOICES, sp.speaker && sp.speaker !== 'none' ? sp.speaker : tall ? 'bottom' : 'right', (v) => { void rebake(b, (s) => { s.speaker = v as KallawaySpec['speaker']; }); }),
       full ? (null as unknown as Node) : chipRow<string>('Card size', KALLAWAY_SHARES.map(([v, l]) => [String(v), l] as [string, string]), String(sp.share ?? (tall ? 0.6 : 0.52)), (v) => { void rebake(b, (s) => { s.share = Number(v); }); }),
       slider('Length', 1, 10, 0.5, (b.end - b.start) / 1000, (v) => `${v}s`, (v) => { b.end = Math.min(ctx.durationMs() || b.start + v * 1000, b.start + Math.round(v * 1000)); ctx.changed(); }),
     ];
@@ -383,16 +429,16 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     if (!b) return [];
     if (b.kw) return renderKwLayout(b);
     const split = b.type === 'split_screen';
-    const [pa, pb] = posChoices(layout());
     const wide = layout() === 'side';
     const posTile = (pos: DocuPos) => h('button', { class: 'dt-tile' + (b.video_position === pos ? ' on' : '') + (split ? '' : ' dim'), 'aria-label': POS_LABEL[pos], disabled: split ? undefined : 'true',
-      onclick: () => { patch((x) => { x.video_position = pos; }); render(); } },
-      h('div', { class: 'dt-prev' }, miniLayout(pos, true)), h('span', { class: 'dt-name' }, POS_LABEL[pos]), h('span', { class: 'dt-sub' }, wide ? '16:9 mode' : '9:16 mode'));
+      onclick: () => { patch((x) => { x.video_position = pos; x.layout = pos === 'top' || pos === 'bottom' ? 'updown' : 'side'; }); render(); } },
+      h('div', { class: 'dt-prev' }, miniLayout(pos, true)), h('span', { class: 'dt-name' }, POS_LABEL[pos]));
     const lookTile = (k: DocuType) => h('button', { class: 'dt-tile' + (b.type === k ? ' on' : ''), 'aria-label': DOCU_TYPE_LABEL[k],
       onclick: () => { patch((x) => { x.type = k; if (k !== 'kinetic_quote' && x.style) delete x.style.lower; }); render(); } },
       h('div', { class: 'dt-prev' }, h('div', { class: 'dt-look ' + k })), h('span', { class: 'dt-name' }, DOCU_TYPE_LABEL[k]));
     return [
-      sec(wide ? 'Video side (wide frame)' : 'Video side (tall frame)', tileGrid(posTile(pa), posTile(pb))),
+      allScenesBlock(),
+      sec('You sit (half screen)', tileGrid(posTile('left'), posTile('right'), posTile('top'), posTile('bottom'))),
       sec('Look', tileGrid(...(Object.keys(DOCU_TYPE_LABEL) as DocuType[]).map(lookTile))),
       slider('Corner radius', 0, MAX_CARD_RADIUS, 1, b.card_radius, (v) => `${v}px`, (v) => { patch((x) => { x.card_radius = v; }); }),
       slider('Card padding', 0, 120, 2, b.style?.pad ?? 43, (v) => `${v}px`, (v) => { patch((x) => { st(x).pad = v; }); }),
@@ -469,7 +515,6 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     } else if (b) {
       kids.push(
         input('Headline', b.headline, (v) => { b.headline = v; ctx.changed(); }),
-        input('Supporting line', b.subtext ?? '', (v) => { b.subtext = v || undefined; ctx.changed(); }),
         slider('Length', 1, 10, 0.5, (b.end - b.start) / 1000, (v) => `${v}s`, (v) => { b.end = Math.min(ctx.durationMs() || b.start + v * 1000, b.start + Math.round(v * 1000)); ctx.changed(); }),
         h('div', { class: 'at-hint' }, 'Look, video side and padding: Layout tab. Ready-made looks: Templates tab.'),
       );
