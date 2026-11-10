@@ -1661,7 +1661,7 @@ public class EditorrNativePlugin extends Plugin {
         private final WStyle base;
         private final double size, y, xPos, activeScale, bounceMs, boxR;
         private final int weight, highlight, boxColor, anim;
-        private final boolean activeColor, hasBox;
+        private final boolean activeColor, hasBox, activeBg;
         private long lastKey = -2;
         private Bitmap lastBmp;
 
@@ -1677,6 +1677,7 @@ public class EditorrNativePlugin extends Plugin {
             this.boxColor = css(box, Color.BLACK);
             this.boxR = st.optDouble("boxR", 0.3);
             this.activeColor = st.optBoolean("activeColor", false);
+            this.activeBg = st.optBoolean("activeBg", false);
             String an = st.optString("anim", "none");
             this.anim = "fade".equals(an) ? 1 : "pop".equals(an) ? 2 : "rise".equals(an) ? 3 : 0;
             this.base = WStyle.from(st, null);
@@ -1696,8 +1697,44 @@ public class EditorrNativePlugin extends Plugin {
             return def;
         }
 
-        /** Same names as FONTS in captions.ts; the phone's own system families. */
+        /** Set at the start of an export: the app's assets, where the bundled caption fonts live (public/fonts, same files as the preview). */
+        static android.content.res.AssetManager assets;
+        private static final java.util.Map<String, Typeface> FONT_CACHE = new java.util.HashMap<>();
+        /** id -> { file, italic file or "" }. Same list as BUNDLED_FONTS in captions.ts. */
+        private static final String[][] BUNDLED = {
+            { "heavy", "inter-black.otf", "" },
+            { "poppins", "poppins-bold.ttf", "poppins-bolditalic.ttf" },
+            { "soft", "poppins-medium.ttf", "poppins-mediumitalic.ttf" },
+            { "editorial", "caladea-bold.ttf", "caladea-bolditalic.ttf" },
+            { "baskerville", "gfsbaskerville.otf", "" },
+            { "typewriter", "liberationmono-bold.ttf", "" },
+            { "slab", "dejavuserif-bold.ttf", "" },
+        };
+        private static Typeface bundled(String font, boolean italic) {
+            if (assets == null) return null;
+            for (String[] b : BUNDLED) {
+                if (!b[0].equals(font)) continue;
+                boolean real = italic && b[2].length() > 0;
+                String file = real ? b[2] : b[1];
+                String key = file + (italic && !real ? "#i" : "");
+                Typeface tf = FONT_CACHE.get(key);
+                if (tf == null) {
+                    try {
+                        tf = Typeface.createFromAsset(assets, "public/fonts/" + file);
+                        // no italic file: the letters are slanted (same as the preview)
+                        if (italic && !real) tf = Typeface.create(tf, Typeface.ITALIC);
+                        FONT_CACHE.put(key, tf);
+                    } catch (Exception e) { return null; }
+                }
+                return tf;
+            }
+            return null;
+        }
+
+        /** Same names as FONTS in captions.ts; the phone's own system families, or a bundled font file. */
         private static Typeface face(String font, boolean bold, boolean italic) {
+            Typeface bf = bundled(font, italic);
+            if (bf != null) return bf;
             String fam;
             if ("condensed".equals(font)) fam = "sans-serif-condensed";
             else if ("serif".equals(font)) fam = "serif";
@@ -1893,7 +1930,13 @@ public class EditorrNativePlugin extends Plugin {
                     }
                     p.setTypeface(face(r.font, bold, r.italic));
                     p.setTextSize(fs * r.scale * sc * k);
-                    int col = (activeColor && on && !r.ownColor) ? highlight : r.color;
+                    // the spoken word on a rounded pill in the highlight colour, dark letters (look "pill")
+                    if (activeBg && on) {
+                        p.setStyle(Paint.Style.FILL);
+                        p.setColor(highlight);
+                        rrect(c, p, x - fs * 0.22f, lineCy - fs * 0.62f, x - fs * 0.22f + tw + fs * 0.44f, lineCy - fs * 0.62f + fs * 1.24f, fs * 0.3f);
+                    }
+                    int col = (activeColor && on && !r.ownColor) ? highlight : (activeBg && on && !r.ownColor) ? 0xFF111111 : r.color;
                     if (r.glowB > 0f) {
                         p.setStyle(Paint.Style.FILL);
                         p.setColor(col);
@@ -2669,6 +2712,7 @@ public class EditorrNativePlugin extends Plugin {
             for (int i = 0; i < ranges.size(); i++) { capRa[i] = ranges.get(i).a; capRb[i] = ranges.get(i).b; }
             final float[] capSp = new float[ranges.size()];
             for (int i = 0; i < ranges.size(); i++) capSp[i] = ranges.get(i).speed;
+            CaptionOverlay.assets = getContext().getAssets();
             final CaptionOverlay captionOverlay = captionsJson == null ? null : CaptionOverlay.create(captionsJson, outW, outH, capRa, capRb, capSp);
             // free text pieces (Text > Add text): one overlay each, drawn above the captions
             final List<TextureOverlay> overlayList = new ArrayList<>();
@@ -2679,6 +2723,14 @@ public class EditorrNativePlugin extends Plugin {
             final DocuOverlay docuOverlay = DocuOverlay.create(docuJson, outW, outH, capRa, capRb, capSp);
             if (docuOverlay != null) overlayList.add(docuOverlay);
             if (captionOverlay != null) overlayList.add(captionOverlay);
+            // Kallaway caption zones: one big word at a time on a card boundary, each zone is its own caption overlay
+            JSONArray zoneJson = captionsJson == null ? null : captionsJson.optJSONArray("zones");
+            for (int zi = 0; zoneJson != null && zi < zoneJson.length(); zi++) {
+                JSONObject zj = zoneJson.optJSONObject(zi);
+                if (zj == null) continue;
+                CaptionOverlay zo = CaptionOverlay.create(zj, outW, outH, capRa, capRb, capSp);
+                if (zo != null) overlayList.add(zo);
+            }
             for (int ti = 0; textsJson != null && ti < textsJson.length(); ti++) {
                 JSONObject tj = textsJson.optJSONObject(ti);
                 if (tj == null) continue;

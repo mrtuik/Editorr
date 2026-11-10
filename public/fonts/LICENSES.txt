@@ -1,0 +1,7 @@
+Fonts bundled for caption styles (preview and export use the same files):
+- Inter (inter-black.otf): SIL Open Font License 1.1, The Inter Project Authors
+- Poppins (poppins-*.ttf): SIL Open Font License 1.1, Indian Type Foundry
+- Caladea (caladea-*.ttf): Apache License 2.0 / SIL OFL, Huerta Tipografica
+- GFS Baskerville (gfsbaskerville.otf): SIL Open Font License 1.1, Greek Font Society
+- Liberation Mono (liberationmono-bold.ttf): SIL Open Font License 1.1, Red Hat
+- DejaVu Serif (dejavuserif-bold.ttf): Bitstream Vera / DejaVu free license
