@@ -45,6 +45,8 @@ export interface ExportRequest {
   broll?: unknown[];
   /** B-roll video clips (see brollRenderer.ts exportBrollVideos): one extra video track in the export. */
   brollVideos?: { uri: string; startMs: number; endMs: number; inMs: number }[];
+  /** Colour look of the talking head (creator template): contrast/brightness -1..1, saturation -100..100. */
+  grade?: { contrast: number; sat: number; bright: number };
   /** Baked background music / effects track (file uri), at timeline time. */
   bgmUri?: string;
   /** Overlay videos on top (see OverlayClip). */
@@ -208,6 +210,7 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     ...(exportDocu(p.docu, w, h) ? { docu: exportDocu(p.docu, w, h) } : {}),
     ...(exportBroll(p.broll, w, h) ? { broll: exportBroll(p.broll, w, h) } : {}),
     ...(exportBrollVideos(p.broll) ? { brollVideos: exportBrollVideos(p.broll) } : {}),
+    ...(p.grade && (p.grade.contrast || p.grade.sat || p.grade.bright) ? { grade: p.grade } : {}),
     ...(p.bgm?.path ? { bgmUri: 'file://' + p.bgm.path } : {}),
     ...(p.overlays?.length ? { overlays: p.overlays.map((o) => ({ uri: o.uri, startMs: Math.round(o.startMs), lenMs: Math.round(o.lenMs), durationMs: Math.round(o.durationMs), cx: o.cx, cy: o.cy, scale: o.scale, volume: Math.max(0, Math.min(1, o.volume / 100)) })) } : {}),
     ...(fxForExport(p) ? { fx: fxForExport(p) } : {}),

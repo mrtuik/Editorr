@@ -44,7 +44,7 @@ export interface DocuBeat {
 }
 
 export type DocuFont = 'inter' | 'oswald' | 'playfair' | 'jetbrains';
-export type DocuTemplateId = 'glass' | 'hormozi' | 'vox' | 'noir' | 'swiss' | 'cyber' | 'keynote' | 'breaking';
+export type DocuTemplateId = 'glass' | 'hormozi' | 'vox' | 'noir' | 'swiss' | 'cyber' | 'keynote' | 'breaking' | 'neon' | 'rose' | 'purple' | 'mono';
 export interface DocuShadow { blur: number; dist: number; color: string }
 export interface DocuStyle {
   template?: DocuTemplateId;
@@ -102,6 +102,14 @@ export const DOCU_TEMPLATES: DocuTemplate[] = [
     style: { template: 'keynote', font: 'inter', caps: false, text: '#F5F5F7', bg: '#161618', card: '#2A2A2D', pad: 56, border: 0, shadow: { blur: 25, dist: 10, color: '#000000' } } },
   { id: 'breaking', label: 'Breaking News', hint: 'Lower third, red tag', type: 'kinetic_quote', accent: '#E5192B', radius: 6,
     style: { template: 'breaking', font: 'oswald', caps: true, text: '#FFFFFF', bg: '#000000', card: '#0E0E12', pad: 36, border: 0, lower: true, tag: 'BREAKING NEWS', shadow: { blur: 10, dist: 4, color: '#000000' } } },
+  { id: 'neon', label: 'Neon Hook', hint: 'Big neon word over the video', type: 'kinetic_quote', accent: '#D7FF00', radius: 0,
+    style: { template: 'neon', font: 'inter', caps: false, text: '#D7FF00', bg: '#000000', card: '#0E0E0E', pad: 40, border: 0, shadow: { blur: 0, dist: 6, color: '#000000' } } },
+  { id: 'rose', label: 'Studio Rose', hint: 'Light card, deep red type', type: 'split_screen', accent: '#E0122B', radius: 30,
+    style: { template: 'rose', font: 'playfair', caps: false, text: '#8B0012', bg: '#ECE8EA', card: '#FFFFFF', pad: 48, border: 0, shadow: { blur: 22, dist: 8, color: '#5A0A14' } } },
+  { id: 'purple', label: 'Purple Tech', hint: 'Dark violet glow, condensed title', type: 'split_screen', accent: '#8B5CF6', radius: 34,
+    style: { template: 'purple', font: 'oswald', caps: true, text: '#F1ECFF', bg: '#0B0720', card: '#1B1240', pad: 44, border: 0, shadow: { blur: 28, dist: 0, color: '#8B5CF6' } } },
+  { id: 'mono', label: 'Mono Docu', hint: 'Black and white, grey card', type: 'split_screen', accent: '#FFFFFF', radius: 10,
+    style: { template: 'mono', font: 'inter', caps: false, text: '#111111', bg: '#0A0A0A', card: '#D9D9D4', pad: 44, border: 0, shadow: { blur: 16, dist: 0, color: '#000000' } } },
 ];
 
 

@@ -216,6 +216,8 @@ export interface Project {
   docu?: import('./docuTypes').DocuBeat[];
   /** The creator template last applied (Kallaway when missing): decides the caption zones on cards. */
   creator?: import('./creators').CreatorId;
+  /** colour look of the talking head set by the creator template (preview filter + export effects) */
+  grade?: import('./creators').Grade;
   /** B-roll photos (a still with a slow move) that cut in over the video, at timeline time. */
   broll?: import('./brollTypes').BrollBeat[];
   /** the sound designer already ran on this project */

@@ -11,7 +11,7 @@ import { openTextItemsSheet, type TextSheetHandle } from './textSheet';
 import { openDocuSheet, type DocuSheetHandle, type DocuTab } from './docuSheet';
 import { docuCrop, fixDocuLayout, splitBeatAt } from '../core/docuApply';
 import { drawDocuFrame } from '../core/docuRenderer';
-import { captionZonesFor } from '../core/creators';
+import { captionZonesFor, gradeCss } from '../core/creators';
 import { drawBrollFrame, pauseBrollVideos } from '../core/brollRenderer';
 import { brollBeatAt, isBrollVideo } from '../core/brollTypes';
 import { docuBeatAt } from '../core/docuTypes';
@@ -370,6 +370,7 @@ export function editorScreen() {
     clip.style.boxSizing = 'border-box';
     // Mirroring only flips the picture, never the border.
     v.style.transform = mirrored ? 'scaleX(-1)' : '';
+    v.style.filter = gradeCss(p.grade);
 
     if (cell) { cell.style.border = ''; cell.style.borderRadius = ''; }
     if (role === selClip) updateSelFrame();

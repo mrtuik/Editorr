@@ -2638,6 +2638,10 @@ public class EditorrNativePlugin extends Plugin {
             final JSONArray docuJson = call.getData().optJSONArray("docu");
             final JSONArray brollJson = call.getData().optJSONArray("broll");
             final JSONArray brollVideosJson = call.getData().optJSONArray("brollVideos");
+            final JSONObject gradeJson = call.getData().optJSONObject("grade");
+            gradeContrast = gradeJson == null ? 0f : (float) Math.max(-1.0, Math.min(1.0, gradeJson.optDouble("contrast", 0)));
+            gradeSat = gradeJson == null ? 0f : (float) Math.max(-100.0, Math.min(100.0, gradeJson.optDouble("sat", 0)));
+            gradeBright = gradeJson == null ? 0f : (float) Math.max(-1.0, Math.min(1.0, gradeJson.optDouble("bright", 0)));
             final float gain = (float) Math.max(0.0, Math.min(10.0, call.getDouble("gain", 1.0)));
             // Enhanced Audio: EQ + de-esser + compressor + limiter on the audio-source mic ("voice") and on the final mix ("master")
             final JSONObject fxJson = call.getData().optJSONObject("fx");
@@ -2743,8 +2747,8 @@ public class EditorrNativePlugin extends Plugin {
             List<EditedMediaItem> cleanAudioItems = new ArrayList<>();
             for (Range r : ranges) {
                 boolean useCleanTrack = cleanAudioUri != null && !cleanAudioUri.isEmpty();
-                hostItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, useCleanTrack || !hostAudio, mirrorHost, r.cropHost, hostAudio ? gain : 1f, voiceFx, r.speed));
-                constItems.add(item(constUri, r.a + offsetMs, r.b - r.a, outW, outH, useCleanTrack || hostAudio, mirrorConst, r.cropConst, hostAudio ? 1f : gain, voiceFx, r.speed));
+                hostItems.add(item(hostUri, r.a, r.b - r.a, outW, outH, useCleanTrack || !hostAudio, mirrorHost, r.cropHost, hostAudio ? gain : 1f, voiceFx, r.speed, true));
+                constItems.add(item(constUri, r.a + offsetMs, r.b - r.a, outW, outH, useCleanTrack || hostAudio, mirrorConst, r.cropConst, hostAudio ? 1f : gain, voiceFx, r.speed, true));
                 if (useCleanTrack) {
                     long audioStart = hostAudio ? r.a : r.a + offsetMs;
                     cleanAudioItems.add(audioItem(cleanAudioUri, audioStart, r.b - r.a, gain, voiceFx, r.speed));
@@ -2948,7 +2952,14 @@ public class EditorrNativePlugin extends Plugin {
         }
     }
 
+    // Creator-template colour look of the talking head (set per export in the handler; applied by item(..., true))
+    private float gradeContrast = 0f, gradeSat = 0f, gradeBright = 0f;
+
     private EditedMediaItem item(String uri, long startMs, long totalMs, int w, int h, boolean removeAudio, boolean mirror, CropSpec crop, float gain, FxCfg fx, float speed) {
+        return item(uri, startMs, totalMs, w, h, removeAudio, mirror, crop, gain, fx, speed, false);
+    }
+
+    private EditedMediaItem item(String uri, long startMs, long totalMs, int w, int h, boolean removeAudio, boolean mirror, CropSpec crop, float gain, FxCfg fx, float speed, boolean graded) {
         MediaItem mi = new MediaItem.Builder()
                 .setUri(uri)
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
@@ -2999,6 +3010,11 @@ public class EditorrNativePlugin extends Plugin {
                 video.add(new Crop(cx - half, cx + half, cy - half, cy + half));
                 video.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
             }
+        }
+        if (graded) {
+            if (Math.abs(gradeBright) > 0.001f) video.add(new androidx.media3.effect.Brightness(gradeBright));
+            if (Math.abs(gradeContrast) > 0.001f) video.add(new androidx.media3.effect.Contrast(gradeContrast));
+            if (Math.abs(gradeSat) > 0.001f) video.add(new androidx.media3.effect.HslAdjustment.Builder().adjustSaturation(gradeSat).build());
         }
         return new EditedMediaItem.Builder(mi)
                 .setRemoveAudio(removeAudio)
