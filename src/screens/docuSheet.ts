@@ -1,10 +1,11 @@
 import type { CapWord } from '../core/captions';
 import { planDocuBeats } from '../core/docuPlanner';
-import { KALLAWAY_SHARES, isFullScreen, makeKallawayBeats, syncStepStarts, type KallawaySpec } from '../core/kallaway';
+import { KALLAWAY_SHARES, isFullScreen, makeKallawayBeats, parseReceiptLines, receiptLinesText, syncStepStarts, type KallawaySpec } from '../core/kallaway';
 import { planKallaway } from '../core/kallawayDirector';
 import { autoBroll } from '../core/brollPlanner';
 import { placeBroll } from '../core/brollTypes';
 import { aspectValue } from '../core/types';
+import { applyCreator, CREATORS } from '../core/creators';
 import {
   DEFAULT_CARD_RADIUS, DOCU_ACCENTS, DOCU_FONT_CSS, DOCU_FONT_LABEL, DOCU_FONT_SUB, DOCU_FONT_WEIGHT, DOCU_TEMPLATES, DOCU_TYPE_LABEL, MAX_CARD_RADIUS,
   defaultPos, docuLayoutFor, posChoices,
@@ -215,6 +216,16 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     inp.click();
   }
 
+  const blankPost = (p?: KallawaySpec['post']) => ({ name: p?.name ?? '', handle: p?.handle ?? '', text: p?.text ?? '', likes: p?.likes, reposts: p?.reposts });
+  const blankReceipt = (r?: KallawaySpec['receipt']) => ({ shop: r?.shop ?? '', lines: r?.lines ?? [], total: r?.total });
+  /** One line per item: "Label | $amount". */
+  function receiptBox(lines: { label: string; amount: string }[] | undefined, on: (l: { label: string; amount: string }[]) => void): Node {
+    const el = h('textarea', { class: 'ts-input', rows: 5, 'aria-label': 'Receipt lines', placeholder: 'One item per line, like: Coffee | $4.50', style: 'width:100%;margin-top:6px;background:#242424;border-radius:2px;padding:10px;resize:none' }) as HTMLTextAreaElement;
+    el.value = receiptLinesText(lines);
+    el.addEventListener('input', () => on(parseReceiptLines(el.value)));
+    return el;
+  }
+
   function kallawayForm(): Node {
     const text = (label: string, value: string, onInput: (v: string) => void) => {
       const el = h('input', { type: 'text', class: 'ts-input', value, 'aria-label': label, placeholder: label, enterkeyhint: 'done', style: 'width:100%;margin-top:6px' }) as HTMLInputElement;
@@ -229,7 +240,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       h('div', { class: 'at-hint' }, 'Dot-grid background, a card on top and you in a rounded window. The card pops in, the red bar wipes to each point as you say it, and numbers count up.'),
       h('button', { class: 'btn primary', style: 'width:100%;min-height:46px;margin-top:8px', disabled: busy ? 'true' : undefined, onclick: () => void runKallawayAi() }, busy ? 'Working...' : 'Generate Kallaway cards (AI)'),
       h('div', { class: 'at-hint', style: 'margin-top:4px' }, 'Reads your captions, picks 2 to 4 moments and the best card for each. Or make one by hand below.'),
-      chipRow<KallawaySpec['kind']>('Card', [['steps', 'Step list'], ['script', 'Script card'], ['stat', 'Number'], ['quote', 'Quote'], ['loop', 'Loop'], ['versus', 'Versus'], ['photo', 'Picture'], ['svg', 'Graphic']], kw.kind, (v) => { kw.kind = v; render(); }),
+      chipRow<KallawaySpec['kind']>('Card', [['steps', 'Step list'], ['script', 'Script card'], ['stat', 'Number'], ['quote', 'Quote'], ['loop', 'Loop'], ['versus', 'Versus'], ['tweet', 'Post'], ['receipt', 'Receipt'], ['photo', 'Picture'], ['svg', 'Graphic']], kw.kind, (v) => { kw.kind = v; render(); }),
       chipRow<string>('Card size', KALLAWAY_SHARES.map(([v, l]) => [String(v), l] as [string, string]), String(kw.share ?? (docuLayoutFor(ctx.p.aspect) === 'updown' ? 0.6 : 0.52)), (v) => { kw.share = Number(v); render(); }),
       chipRow<'half' | 'full' | 'mixed'>('Screen', [['half', 'Half screen'], ['full', 'Full screen'], ['mixed', 'Mixed']], kwScreen, (v) => { kwScreen = v; render(); }),
       kwScreen === 'full' ? (null as unknown as Node) : chipRow<string>('You sit', SIT_CHOICES, kw.speaker && kw.speaker !== 'none' ? kw.speaker : (docuLayoutFor(ctx.p.aspect) === 'updown' ? 'bottom' : 'right'), (v) => { kw.speaker = v as KallawaySpec['speaker']; render(); }),
@@ -241,6 +252,19 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
         text('Line under it (optional)', kw.stat?.label ?? '', (v) => { kw.stat = { ...(kw.stat ?? { big: '' }), label: v || undefined }; }),
         chipRow<string>('Trend', [['none', 'None'], ['up', 'Up'], ['down', 'Down']], kw.stat?.trend ?? 'none', (v) => { kw.stat = { ...(kw.stat ?? { big: '' }), trend: v === 'none' ? undefined : (v as 'up' | 'down') }; render(); })) : (null as unknown as Node),
       kw.kind === 'quote' ? h('div', {}, text('Supporting line under the headline', kw.sub ?? '', (v) => { kw.sub = v; })) : (null as unknown as Node),
+      kw.kind === 'tweet' ? h('div', {},
+        h('div', { class: 'at-label', style: 'margin-top:10px' }, 'Post card'),
+        h('div', { class: 'at-hint' }, 'Use a made-up or generic name unless you really are quoting that account.'),
+        text('Author name (optional)', kw.post?.name ?? '', (v) => { kw.post = { ...blankPost(kw.post), name: v }; }),
+        text('@handle (optional)', kw.post?.handle ?? '', (v) => { kw.post = { ...blankPost(kw.post), handle: v }; }),
+        text('What the post says', kw.post?.text ?? '', (v) => { kw.post = { ...blankPost(kw.post), text: v }; }),
+        text('Likes, e.g. 12.4K (optional)', kw.post?.likes ?? '', (v) => { kw.post = { ...blankPost(kw.post), likes: v || undefined }; }),
+        text('Reposts, e.g. 3.1K (optional)', kw.post?.reposts ?? '', (v) => { kw.post = { ...blankPost(kw.post), reposts: v || undefined }; })) : (null as unknown as Node),
+      kw.kind === 'receipt' ? h('div', {},
+        h('div', { class: 'at-label', style: 'margin-top:10px' }, 'Receipt'),
+        text('Heading, e.g. The Math', kw.receipt?.shop ?? '', (v) => { kw.receipt = { ...blankReceipt(kw.receipt), shop: v }; }),
+        receiptBox(kw.receipt?.lines, (lines) => { kw.receipt = { ...blankReceipt(kw.receipt), lines }; }),
+        text('Total, e.g. $27.00 (optional)', kw.receipt?.total ?? '', (v) => { kw.receipt = { ...blankReceipt(kw.receipt), total: v || undefined }; })) : (null as unknown as Node),
       kw.kind === 'svg' ? h('div', {},
         h('div', { class: 'at-hint', style: 'margin-top:10px' }, 'Paste one <svg> with a viewBox (plain shapes and text). Scripts, pictures and links are removed.'),
         svgBox()) : (null as unknown as Node),
@@ -363,7 +387,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
   /** Words of a Kallaway scene: title parts, points, number, supporting line. "Apply" redraws it. */
   function renderKwEdit(b: DocuBeat): Node[] {
     const sp = b.kw!.spec;
-    const draft = { a: sp.a, b: sp.b, c: sp.c, steps: sp.steps.join('\n'), big: sp.stat?.big ?? '', label: sp.stat?.label ?? '', sub: sp.sub ?? '' };
+    const draft = { a: sp.a, b: sp.b, c: sp.c, steps: sp.steps.join('\n'), big: sp.stat?.big ?? '', label: sp.stat?.label ?? '', sub: sp.sub ?? '', pName: sp.post?.name ?? '', pHandle: sp.post?.handle ?? '', pText: sp.post?.text ?? '', pLikes: sp.post?.likes ?? '', pReposts: sp.post?.reposts ?? '', rShop: sp.receipt?.shop ?? '', rLines: sp.receipt?.lines ?? [], rTotal: sp.receipt?.total ?? '' };
     const field = (label: string, v: string, on: (x: string) => void) => {
       const el = h('input', { type: 'text', class: 'ts-input', value: v, 'aria-label': label, placeholder: label, enterkeyhint: 'done', style: 'width:100%;margin-top:6px' }) as HTMLInputElement;
       el.addEventListener('input', () => on(el.value)); return el;
@@ -378,11 +402,15 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       box ? h('div', {}, h('div', { class: 'at-label', style: 'margin-top:8px' }, sp.kind === 'versus' ? 'Two sides (2 lines)' : 'Points (1 per line)'), box) : (null as unknown as Node),
       sp.kind === 'stat' ? h('div', {}, field('Big number', draft.big, (x) => { draft.big = x; }), field('Line under it', draft.label, (x) => { draft.label = x; })) : (null as unknown as Node),
       sp.kind === 'quote' || sp.kind === 'loop' ? field(sp.kind === 'loop' ? 'Centre word' : 'Supporting line', draft.sub, (x) => { draft.sub = x; }) : (null as unknown as Node),
+      sp.kind === 'tweet' ? h('div', {}, field('Author name', draft.pName, (x) => { draft.pName = x; }), field('@handle', draft.pHandle, (x) => { draft.pHandle = x; }), field('Post text', draft.pText, (x) => { draft.pText = x; }), field('Likes', draft.pLikes, (x) => { draft.pLikes = x; }), field('Reposts', draft.pReposts, (x) => { draft.pReposts = x; })) : (null as unknown as Node),
+      sp.kind === 'receipt' ? h('div', {}, field('Heading', draft.rShop, (x) => { draft.rShop = x; }), receiptBox(draft.rLines, (l) => { draft.rLines = l; }), field('Total', draft.rTotal, (x) => { draft.rTotal = x; })) : (null as unknown as Node),
       h('button', { class: 'btn primary', style: 'width:100%;min-height:46px;margin-top:10px', disabled: busy ? 'true' : undefined, onclick: () => void rebake(b, (s) => {
         s.a = draft.a.trim(); s.b = draft.b.trim(); s.c = draft.c.trim();
         if (pts) s.steps = draft.steps.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, sp.kind === 'versus' ? 2 : 5);
         if (sp.kind === 'stat') s.stat = { ...(s.stat ?? { big: '' }), big: draft.big.trim() || s.stat?.big || '', label: draft.label.trim() || undefined };
         if (sp.kind === 'quote' || sp.kind === 'loop') s.sub = draft.sub.trim();
+        if (sp.kind === 'tweet') s.post = { name: draft.pName.trim(), handle: draft.pHandle.trim(), text: draft.pText.trim() || s.post?.text || '', likes: draft.pLikes.trim() || undefined, reposts: draft.pReposts.trim() || undefined };
+        if (sp.kind === 'receipt') s.receipt = { shop: draft.rShop.trim(), lines: draft.rLines.filter((l) => l.label || l.amount).length >= 2 ? draft.rLines : s.receipt?.lines ?? [], total: draft.rTotal.trim() || undefined };
       }) }, busy ? 'Drawing...' : 'Redraw'),
     ];
   }
@@ -482,6 +510,23 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     ];
   }
 
+  /** One-tap creator looks (captions, cards, B-roll moves). */
+  function creatorBlock(): Node {
+    return h('div', { class: 'at-sec', style: 'margin-top:6px' },
+      h('div', { class: 'at-label' }, 'Creator templates'),
+      h('div', { class: 'at-hint' }, 'Dresses captions, cards and B-roll moves in one tap. Finished Kallaway pictures keep their picture.'),
+      tileGrid(...CREATORS.map((c) => {
+        const face = h('div', { class: 'dt-prev', style: `background:${c.swatch[0]};` },
+          h('div', { class: 'dt-card', style: `background:${c.swatch[1]};border:1px solid rgba(255,255,255,.18);border-radius:6px` },
+            h('b', { style: `color:${c.id === 'hormozi' ? '#000' : '#fff'}` }, 'AA'), h('i', { style: `background:${c.swatch[2]}` })));
+        return h('button', { class: 'dt-tile' + (ctx.p.creator === c.id ? ' on' : ''), 'aria-label': c.name, onclick: () => {
+          const r = applyCreator(ctx.p, c.id);
+          ctx.changed(); render();
+          toast(`${c.name} template applied: captions${r.beats ? `, ${r.beats} card${r.beats > 1 ? 's' : ''}` : ''}${r.broll ? `, ${r.broll} B-roll move${r.broll > 1 ? 's' : ''}` : ''}.`, 3500);
+        } }, face, h('span', { class: 'dt-name' }, c.name), h('span', { class: 'dt-sub' }, c.hint));
+      })));
+  }
+
   function render() {
     renderTabs();
     if (tab === 'broll') {
@@ -493,11 +538,13 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     const list = sorted();
     if (tab !== 'beats') {
       const kids = [...styleHead(list)];
+      if (tab === 'templates') kids.push(creatorBlock());
       if (list.length) kids.push(...(tab === 'templates' ? renderTemplates(b) : tab === 'layout' ? renderLayout(b) : tab === 'fonts' ? renderFonts(b) : renderColors(b)));
       body.replaceChildren(...kids);
       return;
     }
     const kids: Node[] = [];
+    kids.push(creatorBlock());
     kids.push(h('div', { class: 'at-sec', style: 'display:flex;gap:8px;flex-wrap:wrap;margin-top:6px' },
       h('button', { class: 'btn primary', style: 'flex:1;min-height:46px', onclick: () => void runAi(), disabled: busy ? 'true' : undefined }, busy ? 'Finding moments...' : 'AI beats'),
       h('button', { class: 'btn', style: 'flex:1;min-height:46px', onclick: add }, 'Add at playhead'),

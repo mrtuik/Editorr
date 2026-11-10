@@ -11,6 +11,7 @@ import { openTextItemsSheet, type TextSheetHandle } from './textSheet';
 import { openDocuSheet, type DocuSheetHandle, type DocuTab } from './docuSheet';
 import { docuCrop, fixDocuLayout, splitBeatAt } from '../core/docuApply';
 import { drawDocuFrame } from '../core/docuRenderer';
+import { captionZonesFor } from '../core/creators';
 import { drawBrollFrame, pauseBrollVideos } from '../core/brollRenderer';
 import { brollBeatAt, isBrollVideo } from '../core/brollTypes';
 import { docuBeatAt } from '../core/docuTypes';
@@ -23,7 +24,7 @@ import { BGM_RATE, decodeFile, decodeUrl, renderMix, toBase64, toBuffer, toWav }
 import { MOOD_LABEL, analyzeMood, moodQuery, type MusicLang } from '../core/mood';
 import { synthLoop, synthSfx } from '../core/synth';
 import { AUTO_INFO, planSfx, type AutoKind } from '../core/sfxPlan';
-import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, pageAt, type CapPage, type HitRect, textDrawOpts, textPage, textStyleOf } from '../core/captions';
+import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, dualPage, dualStyle, loadCaptionFonts, pageAt, zoneStyle, type CapPage, type CapZone, type HitRect, textDrawOpts, textPage, textStyleOf } from '../core/captions';
 import { transcribe } from '../core/transcribe';
 import { addAlternateZooms, addCutZooms, addPunchZooms, addReactions, findPeaks, removeAllReactions, removeReaction } from '../core/autocut';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
@@ -91,6 +92,7 @@ export function editorScreen() {
   let bgmSource: AudioBufferSourceNode | null = null;
   let bgmLoading = false;
   let capPages: CapPage[] = [];
+  let capZones: CapZone[] = [];
   let capKey = '';
   let capVersion = 0;
   /** Text (Add text) and caption word being edited: the preview draws a dashed frame around them. */
@@ -266,6 +268,8 @@ export function editorScreen() {
     updateSelFrame();
     drawCaptionsPreview();
   }
+  // the caption fonts that ship with the app: canvas text does not wait for a font, so draw again once they are in
+  void loadCaptionFonts().then(() => { capVersion++; drawCaptionsPreview(); });
   const ro = new ResizeObserver(() => { applyPreviewHeight(); fitStage(); layoutCrop(); });
   ro.observe(preview);
 
@@ -1459,8 +1463,9 @@ export function editorScreen() {
   function drawCaptionRow(g: CanvasRenderingContext2D) {
     const R = rowsNow; if (!R.cap || !p.captions) return;
     const st = p.captionStyle ?? DEFAULT_CAPTION_STYLE;
-    const key = `${p.captions.words.length}|${JSON.stringify(st)}|${p.captions.words[0]!.w}|${p.captions.words[p.captions.words.length - 1]!.w}|${capVersion}`;
-    if (key !== capKey) { capKey = key; capPages = buildPages(p.captions, st); }
+    const zs = captionZonesFor(p);
+    const key = `${p.captions.words.length}|${JSON.stringify(st)}|${p.captions.words[0]!.w}|${p.captions.words[p.captions.words.length - 1]!.w}|${capVersion}|${JSON.stringify(zs)}`;
+    if (key !== capKey) { capKey = key; capZones = zs; capPages = buildPages(p.captions, st, zs); }
     g.save();
     g.beginPath(); g.rect(G, R.cap.y - 1, W - G, R.cap.h + 2); g.clip();
     for (const pg of capPages) {
@@ -2529,13 +2534,18 @@ export function editorScreen() {
     }
     if (!p.captions?.words.length) return;
     const st = p.captionStyle ?? DEFAULT_CAPTION_STYLE;
-    const key = `${p.captions.words.length}|${JSON.stringify(st)}|${p.captions.words[0].w}|${p.captions.words[p.captions.words.length - 1].w}|${capVersion}`;
-    if (key !== capKey) { capKey = key; capPages = buildPages(p.captions, st); }
+    const zs = captionZonesFor(p);
+    const key = `${p.captions.words.length}|${JSON.stringify(st)}|${p.captions.words[0].w}|${p.captions.words[p.captions.words.length - 1].w}|${capVersion}|${JSON.stringify(zs)}`;
+    if (key !== capKey) { capKey = key; capZones = zs; capPages = buildPages(p.captions, st, zs); }
     const page = pageAt(capPages, playMs);
     if (!page) return;
     const hits: HitRect[] = [];
-    drawCaption(g, w, hh, page, playMs, st, { fx: st.fx, hits, selected: capSel >= page.from && capSel <= page.to ? capSel - page.from : undefined });
+    const zone = page.zone !== undefined ? capZones[page.zone] : undefined;
+    drawCaption(g, w, hh, page, playMs, zone ? zoneStyle(st, zone) : st, { fx: st.fx, ...(zone ? { x: zone.x } : {}), hits, selected: capSel >= page.from && capSel <= page.to ? capSel - page.from : undefined });
     for (const r of hits) previewHits.push({ kind: 'cap', id: '', word: page.from + r.word, ...box([r]) });
+    // dual writing: Banglish / Hinglish in small letters under the original script
+    const dp = st.dual && !zone ? dualPage(page) : undefined;
+    if (dp) drawCaption(g, w, hh, dp, playMs, dualStyle(st));
   }
 
   /** Whistle on the main audio, shifted so that time 0 is timeline 0. */

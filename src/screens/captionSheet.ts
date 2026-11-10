@@ -1,4 +1,5 @@
-import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, LOOKS, fxIsEmpty, lookOf, type CapLook, type CaptionStyle, type Fx } from '../core/captions';
+import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, FONTS, LOOKS, fxIsEmpty, loadCaptionFonts, lookOf, pageAt, type CapLook, type CaptionStyle, type FontId, type Fx } from '../core/captions';
+import { applyCaptionTemplate, CAPTION_TEMPLATES } from '../core/captionTemplates';
 import { needsRoman } from '../core/romanize';
 import { LANGS, WHISTLE_MODELS, normLang } from '../core/transcribe';
 import type { Project, Settings } from '../core/types';
@@ -91,8 +92,10 @@ export function openCaptionSheet(ctx: CaptionCtx, startWord = -1, single = false
   let tapMode: 'edit' | 'cut' = 'edit';
   type WTab = 'Styles' | 'Fonts' | 'Effects';
   let wordTab: WTab = 'Styles';
-  type STab = 'Style' | 'Layout' | 'Text' | 'Words';
-  let styleTab: STab = 'Style';
+  type STab = 'Templates' | 'Style' | 'Font' | 'Layout' | 'Text';
+  let styleTab: STab = 'Templates';
+  let textSub: 'captions' | 'words' = 'captions';
+  let fontsReady = false;
   /** where Done in the word editor goes back to */
   let backTo: 'style' | 'caption' = 'style';
   let capRange: { from: number; to: number } | null = null;
@@ -238,22 +241,39 @@ export function openCaptionSheet(ctx: CaptionCtx, startWord = -1, single = false
       h('button', { class: 'btn primary cs-done', onclick: done }, icon('check', 20), 'Done')));
   }
 
+  /** A small sample of a caption style (two words and the one being spoken), drawn with the real caption code. */
+  function sample(sty: CaptionStyle): HTMLCanvasElement {
+    const cv = h('canvas', { width: '240', height: '120', class: 'cap-cv' }) as HTMLCanvasElement;
+    const g = cv.getContext('2d')!;
+    g.fillStyle = '#2a2a2e'; g.fillRect(0, 0, 240, 120);
+    const demo = { lang: 'en', words: [{ w: 'Make', orig: 'Make', s: 0, e: 400 }, { w: 'it', orig: 'it', s: 400, e: 700 }, { w: 'count', orig: 'count', s: 700, e: 1200 }] };
+    const view: CaptionStyle = { ...sty, size: Math.min(0.2, sty.size * 3), y: 0.55, wordsPerLine: Math.min(3, Math.max(2, sty.wordsPerLine)), roman: true, dual: false };
+    const pg = pageAt(buildPages(demo, view), 450) ?? buildPages(demo, view)[0];
+    if (pg) drawCaption(g, 240, 120, pg, 450, view, { fx: view.fx });
+    return cv;
+  }
+
   function renderStyle() {
     title.textContent = 'Captions';
     const st = style();
+    // the sample tiles use the fonts that ship with the app: draw them again once they are loaded (only if this screen is still the one showing)
+    if (!fontsReady) void loadCaptionFonts().then(() => { fontsReady = true; if (!closed && title.textContent === 'Captions') renderStyle(); });
     const hasScript = !!p.captions?.words.some((w) => needsRoman(w.orig));
-    const looks = h('div', { class: 'cap-looks' });
-    const drawLooks = () => looks.replaceChildren(...LOOKS.map((lk) => {
-      const cv = h('canvas', { width: '240', height: '120', class: 'cap-cv' }) as HTMLCanvasElement;
-      const g = cv.getContext('2d')!;
-      g.fillStyle = '#2a2a2e'; g.fillRect(0, 0, 240, 120);
-      drawCaption(g, 240, 120, { s: 0, e: 1, from: 0, to: 1, words: [{ t: 'Your', s: 0, e: 1 }, { t: 'words', s: 2, e: 3 }] }, 2.5,
-        { ...st, look: lk.id, size: 0.2, y: 0.55 });
-      return h('button', { class: 'cap-look' + (st.look === lk.id ? ' on' : ''), onclick: () => { st.look = lk.id as CapLook; ctx.changed(); drawLooks(); } }, cv, h('span', {}, lk.name));
-    }));
-    drawLooks();
 
-    // Transcript: tap a word to style it (font, colour, shadow...). Switch to "Cut" to remove words from the video, Descript-style.
+    // ---- Templates: whole looks in one tap
+    const tplGrid = h('div', { class: 'cap-looks' });
+    // ---- Style: the base look
+    const looks = h('div', { class: 'cap-looks' });
+    const drawGrids = () => {
+      tplGrid.replaceChildren(...CAPTION_TEMPLATES.map((t) => h('button', { class: 'cap-look', onclick: () => {
+        p.captionStyle = applyCaptionTemplate(p.captionStyle, t); ctx.changed(); toast(`${t.name} applied.`, 1800); renderStyle();
+      } }, sample({ ...DEFAULT_CAPTION_STYLE, ...t.style } as CaptionStyle), h('span', {}, t.name), h('span', { class: 'cap-hint' }, t.hint))));
+      looks.replaceChildren(...LOOKS.map((lk) => h('button', { class: 'cap-look' + (st.look === lk.id ? ' on' : ''), onclick: () => { st.look = lk.id as CapLook; ctx.changed(); drawGrids(); } },
+        sample({ ...st, look: lk.id, pair: undefined }), h('span', {}, lk.name))));
+    };
+    drawGrids();
+
+    // ---- Text: fix a caption, or style words
     const trans = h('div', { class: 'cap-trans' });
     const drawTrans = () => {
       const c = p.captions; if (!c) return;
@@ -277,27 +297,59 @@ export function openCaptionSheet(ctx: CaptionCtx, startWord = -1, single = false
     };
     drawList(); drawTrans();
 
-    const tabsBar = h('div', { class: 'ts-tabs', style: 'padding:0;margin:0 0 8px' }, ...(['Style', 'Layout', 'Text', 'Words'] as STab[]).map((t) =>
+    const tabsBar = h('div', { class: 'ts-tabs', style: 'padding:0;margin:0 0 8px' }, ...(['Templates', 'Style', 'Font', 'Layout', 'Text'] as STab[]).map((t) =>
       h('button', { class: 'ts-tab' + (t === styleTab ? ' on' : ''), onclick: () => { styleTab = t; renderStyle(); } }, t)));
-    const pane: Node[] = styleTab === 'Style' ? [
-      h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Style'), looks),
-      swatches('Text colour', st.color, (c) => { st.color = c; ctx.changed(); drawLooks(); }),
-      swatches('Highlight colour', st.highlight, (c) => { st.highlight = c; ctx.changed(); drawLooks(); }),
+
+    // dual font: a second font for some words of every caption
+    const pairModes: [string, string][] = [['off', 'Off'], ['alt', 'Every other word'], ['first', 'First word'], ['last', 'Last word'], ['key', 'Longest word']];
+    const pair = st.pair;
+    const dualFont: Node[] = [
+      h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Dual font'), h('div', { class: 'at-hint' }, 'Use a second font (and colour) for some words of every caption, like a bold word with an italic serif word.')),
+      chips<string>('Second font on', '', pairModes, pair ? pair.mode : 'off', (v) => {
+        if (v === 'off') delete st.pair; else st.pair = { font: pair?.font ?? 'editorial', mode: v as NonNullable<CaptionStyle['pair']>['mode'], italic: pair?.italic ?? true, color: pair?.color };
+        ctx.changed(); renderStyle();
+      }),
+      ...(pair ? [
+        chips<string>('Second font', '', FONTS.map((f) => [f.id, f.name] as [string, string]), pair.font, (v) => { st.pair = { ...pair, font: v as FontId }; ctx.changed(); renderStyle(); }),
+        chips<string>('Slant', '', [['n', 'Upright'], ['i', 'Italic']], pair.italic ? 'i' : 'n', (v) => { st.pair = { ...pair, italic: v === 'i' }; ctx.changed(); renderStyle(); }),
+        swatches('Second colour', pair.color ?? st.color, (c) => { st.pair = { ...pair, color: c }; ctx.changed(); }),
+      ] : []),
+    ];
+    const writing = (): string => (st.dual ? 'both' : st.roman ? 'roman' : 'orig');
+
+    const pane: Node[] = styleTab === 'Templates' ? [
+      h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Templates'), h('div', { class: 'at-hint' }, 'One tap sets the look, colours, font, size and place. It shows the same in the exported video.'), tplGrid),
+    ] : styleTab === 'Style' ? [
+      h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Look'), looks),
+      swatches('Text colour', st.color, (c) => { st.color = c; ctx.changed(); drawGrids(); }),
+      swatches('Highlight colour', st.highlight, (c) => { st.highlight = c; ctx.changed(); drawGrids(); }),
+      h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Effects (all words)'), effectsPanel(allModel(), renderStyle)),
+    ] : styleTab === 'Font' ? [
+      h('div', { class: 'at-sec' }, h('div', { class: 'at-label' }, 'Font (all words)'),
+        h('div', { class: 'at-hint' }, "Bangla, Hindi, Arabic and every other writing still show: when a font has no letters for it, the phone's own font fills in."),
+        fontsPanel(allModel(), renderStyle)),
+      ...dualFont,
     ] : styleTab === 'Layout' ? [
-      chips<string>('Words on screen', 'How many words show at one time.', [['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']], String(st.wordsPerLine), (v) => { st.wordsPerLine = Number(v); ctx.changed(); drawList(); }),
-      chips<string>('Size', '', [['0.04', 'Small'], ['0.055', 'Medium'], ['0.075', 'Large']], String(st.size), (v) => { st.size = Number(v); ctx.changed(); }),
+      chips<string>('Words on screen', 'How many words show at one time.', [['1', '1'], ['2', '2'], ['3', '3'], ['4', '4'], ['5', '5']], String(st.wordsPerLine), (v) => { st.wordsPerLine = Number(v); ctx.changed(); drawList(); }),
+      chips<string>('Size', '', [['0.04', 'Small'], ['0.055', 'Medium'], ['0.075', 'Large'], ['0.095', 'Huge']], String(st.size), (v) => { st.size = Number(v); ctx.changed(); }),
       chips<string>('Position', '', [['0.2', 'Top'], ['0.5', 'Middle'], ['0.78', 'Bottom']], String(st.y), (v) => { st.y = Number(v); ctx.changed(); }),
-      ...(hasScript ? [chips<string>('Writing', 'Banglish / Hinglish or the original script.', [['roman', 'Banglish / Hinglish'], ['orig', 'Original']], st.roman ? 'roman' : 'orig', (v) => { st.roman = v === 'roman'; ctx.changed(); drawList(); })] : []),
+      chips<string>('Writing', hasScript ? 'Banglish / Hinglish, the original script, or both (original big, Banglish small under it).' : 'For Bangla / Hindi captions: Banglish / Hinglish, the original script, or both.', [['roman', 'Banglish / Hinglish'], ['orig', 'Original'], ['both', 'Both']], writing(), (v) => {
+        st.roman = v === 'roman'; if (v === 'both') st.dual = true; else delete st.dual;
+        ctx.changed(); drawList();
+      }),
       chips<string>('Letters', '', [['n', 'Normal'], ['u', 'CAPITALS']], st.upper ? 'u' : 'n', (v) => { st.upper = v === 'u'; ctx.changed(); drawList(); }),
-    ] : styleTab === 'Text' ? [
-      h('div', { class: 'at-sec' }, h('div', { class: 'at-hint' }, 'Tap a caption (here or on the video) to fix its text. Only that caption changes.'), list),
     ] : [
-      h('div', { class: 'at-sec' },
-        h('div', { class: 'at-hint' }, 'Tap a word to change its font, colour, shadow, glow and more.'),
-        h('button', { class: 'btn cs-all', onclick: () => { selWord = -1; scope = 'all'; wordTab = 'Styles'; renderWord(); } }, icon('text', 20), 'Style all words'),
-        h('div', { class: 'cs-mode' }, ...(['edit', 'cut'] as const).map((m) => h('button', { class: 'cs-mode-b' + (tapMode === m ? ' on' : ''),
-          onclick: (e: Event) => { tapMode = m; (e.currentTarget as HTMLElement).parentElement?.querySelectorAll('.cs-mode-b').forEach((n, k) => n.classList.toggle('on', (k === 0) === (m === 'edit'))); } }, m === 'edit' ? 'Tap to style' : 'Tap to cut'))),
-        trans),
+      chips<string>('Show', '', [['captions', 'Captions'], ['words', 'Words']], textSub, (v) => { textSub = v as 'captions' | 'words'; renderStyle(); }),
+      ...(textSub === 'captions' ? [
+        h('div', { class: 'at-sec' }, h('div', { class: 'at-hint' }, 'Tap a caption (here or on the video) to fix its text. Only that caption changes.'), list),
+      ] : [
+        h('div', { class: 'at-sec' },
+          h('div', { class: 'at-hint' }, 'Tap a word to change its font, colour, shadow, glow and more.'),
+          h('button', { class: 'btn cs-all', onclick: () => { selWord = -1; scope = 'all'; wordTab = 'Styles'; renderWord(); } }, icon('text', 20), 'Style all words'),
+          h('div', { class: 'cs-mode' }, ...(['edit', 'cut'] as const).map((m) => h('button', { class: 'cs-mode-b' + (tapMode === m ? ' on' : ''),
+            onclick: (e: Event) => { tapMode = m; (e.currentTarget as HTMLElement).parentElement?.querySelectorAll('.cs-mode-b').forEach((n, k) => n.classList.toggle('on', (k === 0) === (m === 'edit'))); } }, m === 'edit' ? 'Tap to style' : 'Tap to cut'))),
+          trans),
+      ]),
     ];
     body.replaceChildren(tabsBar, ...pane);
     foot.replaceChildren(
