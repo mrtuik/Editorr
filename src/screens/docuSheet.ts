@@ -33,7 +33,7 @@ export interface DocuCtx {
 }
 export interface DocuSheetHandle { close: () => void; select: (tab: DocuTab, id: string) => void }
 export type DocuTab = 'beats' | 'templates' | 'layout' | 'fonts' | 'colors' | 'broll' | 'kallaway';
-const TAB_LABEL: [DocuTab, string][] = [['beats', 'Beats'], ['templates', 'Templates'], ['layout', 'Layout'], ['fonts', 'Fonts'], ['colors', 'Colors'], ['broll', 'B-roll']];
+const TAB_LABEL: [DocuTab, string][] = [['beats', 'Beats'], ['templates', 'Templates'], ['layout', 'Layout'], ['fonts', 'Fonts'], ['colors', 'Colors']];
 const THEME_BG_HEX = { noir: '#0A0A0C', investigative: '#10141B', modern: '#14141A' } as const;
 const THEME_CARD_HEX = { noir: '#121216', investigative: '#161C26', modern: '#1C1C24' } as const;
 
@@ -57,8 +57,10 @@ function chipRow<T extends string>(label: string, opts: [T, string][], value: T,
  * and edit the words. Shows on the video straight away; the export draws the same.
  */
 export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId?: string, only?: 'docu' | 'broll' | 'kallaway'): DocuSheetHandle {
-  let tab: DocuTab = only === 'kallaway' ? 'kallaway' : only === 'broll' ? 'broll' : (only === 'docu' && startTab === 'broll') ? 'beats' : startTab;
+  // There is no separate B-roll tab any more: a tapped B-roll clip is edited at the bottom of the Beats tab.
+  let tab: DocuTab = only === 'kallaway' ? 'kallaway' : startTab === 'broll' ? 'beats' : startTab;
   let brollPane: BrollPane | null = null;
+  let selBroll: string | undefined = startTab === 'broll' ? startId : undefined;
   let scopeAll = false;
   const beats = (): DocuBeat[] => (ctx.p.docu ??= []);
   // (the layout of a beat is only reset when the ratio changes, so a chosen top/bottom or left/right side stays)
@@ -78,7 +80,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
   };
   const tabsEl = h('div', { class: 'br-tabs dt-tabs' });
   const renderTabs = () => {
-    const shownTabs: [DocuTab, string][] = only === 'kallaway' ? [['kallaway', 'Kallaway']] : only === 'docu' ? TAB_LABEL.filter(([k]) => k !== 'broll') : only === 'broll' ? TAB_LABEL.filter(([k]) => k === 'broll') : TAB_LABEL;
+    const shownTabs: [DocuTab, string][] = only === 'kallaway' ? [['kallaway', 'Kallaway']] : TAB_LABEL;
     tabsEl.replaceChildren(...shownTabs.map(([k, l]) =>
       h('button', { class: 'br-tab' + (tab === k ? ' on' : ''), onclick: () => { if (tab !== k) { tab = k; render(); } } }, l)));
     (tabsEl.querySelector('.on') as HTMLElement | null)?.scrollIntoView?.({ inline: 'center', block: 'nearest' });
@@ -161,20 +163,22 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
   }
 
   /** The director picks the moments and templates from the transcript; every card is drawn and put on the timeline. */
-  async function runKallawayAi() {
+  async function runKallawayAi(auto = false) {
     if (busy) return;
     const words = ctx.words();
     if (!words.length) { toast('No transcript yet. Make Auto captions first, then tap Generate.', 5000); return; }
+    if (auto && ((ctx.p.docu ?? []).length || (ctx.p.broll ?? []).length) && !window.confirm('Auto edit replaces the current cards and B-roll. Continue?')) return;
     busy = true; render();
     try {
+      if (auto) { ctx.p.docu = []; ctx.p.broll = []; selBroll = undefined; toast('Auto edit: planning the moments...', 2500); }
       const r = await planKallaway(words, ctx.durationMs(), true);
-      if (!r.picks.length) { toast('No good moments found for cards. Add one by hand at the playhead.', 5000); return; }
+      if (!r.picks.length && !auto) { toast('No good moments found for cards. Add one by hand at the playhead.', 5000); return; }
       const made: DocuBeat[] = [];
       for (const pk of r.picks) {
         // rhythm like the reference reels: scenes with a self-contained picture alternate between 'you in a window' and 'full screen'
         const idx = r.picks.indexOf(pk);
         const fullOk = ['loop', 'versus', 'stat', 'quote', 'steps'].includes(pk.spec.kind);
-        const spec: KallawaySpec = { ...pk.spec, handle: kw.handle, share: kw.share, speaker: fullOk && (kwScreen === 'full' || (kwScreen === 'mixed' && idx % 2 === 1)) ? 'none' : (kw.speaker === 'none' ? undefined : kw.speaker) };
+        const spec: KallawaySpec = { ...pk.spec, handle: kw.handle, share: kw.share, speaker: fullOk && (kwScreen === 'full' || ((auto || kwScreen === 'mixed') && idx % 2 === 1)) ? 'none' : (kw.speaker === 'none' ? undefined : kw.speaker) };
         made.push(...await makeKallawayBeats(ctx.p.aspect, spec, pk.start, pk.end));
       }
       ctx.p.docu = [...beats().filter((x) => r.picks.every((pk) => x.end <= pk.start || x.start >= pk.end)), ...made].sort((a, b) => a.start - b.start);
@@ -193,6 +197,9 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
         for (const b of gap.beats) next = placeBroll(next, b);
         ctx.p.broll = next; filled = gap.beats.length; ctx.changed();
       } catch (e) { fillNote = ` B-roll fill failed: ${(e as Error).message || 'error'}.`; }
+      // Auto edit also dresses everything in one look (the chosen one, else Kallaway): captions, cards, B-roll moves
+      if (auto) { applyCreator(ctx.p, ctx.p.creator ?? 'kallaway'); ctx.changed(); }
+      if (auto) { toast(`Auto edit done: ${r.picks.length} cards + ${filled} B-roll cuts.${fillNote}`, 6000); return; }
       toast((r.note ?? `${r.picks.length} Kallaway cards + ${filled} B-roll cuts added (${r.source === 'llm' ? 'Antigravity' : 'built-in rules'}).`) + fillNote, r.note || fillNote ? 7000 : 4500);
     } catch (e) { toast(`Could not make the cards: ${(e as Error).message || 'failed'}`, 6000); }
     finally { busy = false; render(); }
@@ -563,11 +570,6 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
   function render() {
     renderTabs();
     if (tab === 'kallaway') { body.replaceChildren(...renderKallawayTab()); return; }
-    if (tab === 'broll') {
-      brollPane ??= buildBrollPane({ p: ctx.p, playMs: ctx.playMs, durationMs: ctx.durationMs, changed: ctx.changed, seek: ctx.seek, words: ctx.words, aspect: ctx.aspect, startId: tabBrollId });
-      body.replaceChildren(brollPane.el);
-      return;
-    }
     if (cur()?.kw && tab === 'beats') sel = beats().find((x) => !x.kw)?.id ?? null;
     const b = cur();
     const list = sorted();
@@ -580,28 +582,35 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     }
     // Beats tab: creator looks first, then the two ways to add visuals, then the plain beats (Kallaway cards live in their own sheet)
     const plain = list.filter((x) => !x.kw);
-    const kids: Node[] = [creatorBlock()];
+    const kids: Node[] = [
+      h('button', { class: 'btn primary', style: 'width:100%;min-height:52px;font-size:16px;margin-top:4px', disabled: busy ? 'true' : undefined, onclick: () => void runKallawayAi(true) }, busy ? 'Editing...' : 'Auto edit'),
+      h('div', { class: 'at-hint', style: 'margin-top:6px' }, 'One tap: cards, photos, clips and motion graphics are placed from your words, in the look chosen below (Kallaway if none).'),
+      creatorBlock(),
+    ];
     kids.push(h('div', { class: 'at-sec', style: 'display:flex;gap:8px;margin-top:10px' },
       h('button', { class: 'btn', style: 'flex:1;min-height:46px', onclick: () => ctx.openKallaway?.() }, 'Kallaway cards'),
       h('button', { class: 'btn', style: 'flex:1;min-height:46px', onclick: () => void runAi(), disabled: busy ? 'true' : undefined }, busy ? 'Finding moments...' : 'AI beats')));
     if (plain.length) kids.push(h('div', { class: 'schips', style: 'margin-top:12px;flex-wrap:nowrap;overflow-x:auto' },
-      ...plain.map((x, i) => h('button', { class: 'chip' + (x.id === sel ? ' on' : ''), onclick: () => pick(x.id) }, `${i + 1} · ${x.headline.slice(0, 14) || 'Beat'}`)),
+      ...plain.map((x, i) => h('button', { class: 'chip' + (x.id === sel ? ' on' : ''), onclick: () => { selBroll = undefined; pick(x.id); } }, `${i + 1} · ${x.headline.slice(0, 14) || 'Beat'}`)),
       h('button', { class: 'chip', onclick: add }, '+ Add')));
     else kids.push(h('div', { class: 'at-hint', style: 'margin-top:12px' }, 'Tap a creator look, or let AI beats pick documentary moments from your words. Cards with numbers, steps and quotes are in Kallaway cards.'));
     if (b && !b.kw) kids.push(
       input('Headline', b.headline, (v) => { b.headline = v; ctx.changed(); }),
       slider('Length', 1, 10, 0.5, (b.end - b.start) / 1000, (v) => `${v}s`, (v) => { b.end = Math.min(ctx.durationMs() || b.start + v * 1000, b.start + Math.round(v * 1000)); ctx.changed(); }),
       h('div', { class: 'at-hint' }, 'Look, video side and padding: Layout tab.'));
+    if (selBroll) {
+      brollPane ??= buildBrollPane({ p: ctx.p, playMs: ctx.playMs, durationMs: ctx.durationMs, changed: ctx.changed, seek: ctx.seek, words: ctx.words, aspect: ctx.aspect, startId: selBroll });
+      brollPane.select(selBroll);
+      kids.push(h('div', { class: 'at-sec', style: 'margin-top:14px' }, brollPane.el));
+    }
     body.replaceChildren(...kids);
   }
-  let tabBrollId: string | undefined = tab === 'broll' ? startId : undefined;
   render();
   return {
     close,
     select: (t, id) => {
-      if (t === 'broll') { if (only === 'docu') return; tabBrollId = id; tab = 'broll'; brollPane?.select(id); render(); return; }
-      if (only === 'broll') return;
-      if (beats().some((x) => x.id === id)) { sel = id; if (only === 'kallaway') kwNew = false; else if (tab === 'broll') tab = 'beats'; render(); }
+      if (t === 'broll') { selBroll = id; tab = 'beats'; render(); return; }
+      if (beats().some((x) => x.id === id)) { sel = id; selBroll = undefined; if (only === 'kallaway') kwNew = false; render(); }
     },
   };
 }

@@ -3202,7 +3202,7 @@ export function editorScreen() {
         tool('autoframe', 'Autoframe', doAutoframe),
         tool('face', 'Faces', doFaces),
         tool('text', 'Text', () => openGroup('text')),
-        tool('layout', 'Docu / B-roll', () => openDocu('beats')),
+        tool('layout', 'B-roll', () => openDocu('beats')),
         tool('reaction', 'Reaction', doReactionTool),
         tool('overlay', 'Overlay', () => { if (ovList().length) openPanel('overlay'); else void addOverlay(false); }),
         tool('punch', 'Auto zoom', doAutoZoom),
