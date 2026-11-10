@@ -40,7 +40,7 @@ import { openFxSheet } from './fxSheet';
 import { openExportSheet, resChipText } from './exportSheet';
 import { endTask, minimizeAllDialogs, minimizeTask, onTasks, startTask, updateTask, type Task } from '../core/tasks';
 import {
-  coverage, defaultSegments, deleteSegment, dropSlivers, fitSegmentsToDuration, intersectRanges, isKept, keptMs, mergeWithPrev,
+  coverage, defaultSegments, dropSlivers, fitSegmentsToDuration, intersectRanges, isKept, keptMs, mergeWithPrev,
   moveBoundary, nextKeptStart, overlapDuration, segmentAt, splitAt, subtractRanges, updateSegment, type Range,
 } from '../core/timeline';
 import { Aspect, ASPECTS, aspectValue, Corner, CropRatio, CropState, LayoutStyle, NO_CROP, PopupSize, Project, Role, Segment, segmentColor, SilenceSens, STYLE_LABEL } from '../core/types';
@@ -1518,6 +1518,9 @@ export function editorScreen() {
   function fullyCut(s: number, e: number): boolean { return cOf(e) - cOf(s) < 1; }
   function layOutline(g: CanvasRenderingContext2D, a: number, y: number, w: number, hh: number) {
     rrect(g, a + 1, y + 2, w - 2, hh - 4, 7); g.strokeStyle = '#ffffff'; g.lineWidth = 1.5; g.stroke();
+    // trim handles (drag the edges to change the timing, drag the middle to move)
+    g.fillStyle = '#ffffff';
+    g.fillRect(a + 3, y + 7, 3, hh - 14); g.fillRect(a + w - 6, y + 7, 3, hh - 14);
   }
   function drawDocuRow(g: CanvasRenderingContext2D) {
     const R = rowsNow; if (!R.docu) return;
@@ -1833,7 +1836,9 @@ export function editorScreen() {
   // ======================================================================= Gestures
   type Ptr = { x: number; y: number };
   const ptrs = new Map<number, Ptr>();
-  let mode: 'none' | 'scrub' | 'boundary' | 'pinch' | 'clip' = 'none';
+  let mode: 'none' | 'scrub' | 'boundary' | 'pinch' | 'clip' | 'layer' = 'none';
+  type LayDrag = { kind: 'text' | 'docu' | 'broll'; id: string; zone: 'l' | 'r' | 'm'; s0: number; e0: number; pushed: boolean };
+  let layDrag: LayDrag | null = null;
   let startX = 0, startY = 0, startT = 0, moved = false, boundaryIdx = -1, pinchDist = 0, pinchZoom = 0, lpTimer = 0;
   let clipStartMs0 = 0, clipPushed = false, clipBefore: Snapshot | null = null;
 
@@ -1902,7 +1907,9 @@ export function editorScreen() {
     dragStartPlayMs = playMs; dragSamples.length = 0; dragSamples.push({ t: performance.now(), x: startX });
     const lane = laneAt(startY);
     const bi = startX >= G ? hitBoundary(startX, startY) : -1;
+    const lh = bi < 0 && startX >= G ? layerHandleAt(lane, startX, startY) : null;
     if (bi >= 0) { mode = 'boundary'; boundaryIdx = bi; hist.push(snap()); }
+    else if (lh) { mode = 'layer'; layDrag = lh; }
     else if (panel === 'sync' && startX >= G) {
       mode = 'clip'; clipStartMs0 = -p.offsetMs; clipPushed = false; clipBefore = structuredClone(snap());
     }
@@ -1937,6 +1944,8 @@ export function editorScreen() {
         tlWrap.scrollTop -= (e.clientY - lastClientY);
       }
       lastClientY = e.clientY;
+    } else if (mode === 'layer' && layDrag && moved) {
+      dragLayer(x);
     } else if (mode === 'boundary') {
       p.segments = moveBoundary(p.segments, boundaryIdx, msOf(x));
       applyLayout(segmentAt(p.segments, playMs));
@@ -1969,6 +1978,16 @@ export function editorScreen() {
       if (span > 0 && age < 80) { const v = (a1.x - a0.x) / span; if (Math.abs(v) > 0.15) startFling(v); }
     }
     if (mode === 'boundary') scheduleSave();
+    if (mode === 'layer') {
+      const ld = layDrag; layDrag = null;
+      if (ld?.pushed) {
+        updateBtns(); scheduleSave();
+        if (ld.kind === 'text') textHandle?.select(ld.id); else docuHandle?.select(ld.kind === 'docu' ? 'beats' : 'broll', ld.id);
+      } else if (ld && !moved && Date.now() - startT < 400) {
+        const hit = layerAt(ld.kind, startX, startY);
+        if (hit) selectLayer(ld.kind, hit.id, hit.s, hit.e);
+      }
+    }
     if (mode === 'clip') {
       snapMs = null;
       if (clipPushed) commitOffset(clipBefore!.durationMs);
@@ -1979,6 +1998,54 @@ export function editorScreen() {
   tl.addEventListener('pointerup', end);
   tl.addEventListener('pointercancel', end);
 
+  /** Pressing on the layer that is already selected grabs it: its left or right edge trims it, the middle moves it (like CapCut). */
+  function layerHandleAt(lane: Lane, x: number, y: number): LayDrag | null {
+    if (lane !== 'text' && lane !== 'docu' && lane !== 'broll') return null;
+    if (!laySel || laySel.kind !== lane) return null;
+    const hit = layerAt(lane, x, y);
+    if (!hit || hit.id !== laySel.id) return null;
+    const a = xOf(hit.s), b = Math.max(xOf(hit.e), a + 22), edge = Math.min(22, (b - a) / 3);
+    return { kind: lane, id: hit.id, zone: x < a + edge ? 'l' : x > b - edge ? 'r' : 'm', s0: hit.s, e0: hit.e, pushed: false };
+  }
+  const MIN_LAYER_MS = 200;
+  function dragLayer(x: number) {
+    const ld = layDrag; if (!ld) return;
+    if (!ld.pushed) { hist.push(snap()); ld.pushed = true; }
+    const dur = p.durationMs;
+    const dMs = ((x - startX) / pxPerSec) * 1000;
+    const thr = (8 / pxPerSec) * 1000;
+    const snapTo = (v: number) => { for (const c of [0, playMs, dur]) if (Math.abs(c - v) <= thr) return c; return v; };
+    let s = ld.s0, e = ld.e0;
+    if (ld.zone === 'l') s = Math.max(0, Math.min(ld.e0 - MIN_LAYER_MS, snapTo(uOf(cOf(ld.s0) + dMs))));
+    else if (ld.zone === 'r') e = Math.min(dur, Math.max(ld.s0 + MIN_LAYER_MS, snapTo(uOf(cOf(ld.e0) + dMs))));
+    else {
+      const len = ld.e0 - ld.s0;
+      let ns = uOf(cOf(ld.s0) + dMs);
+      const a = snapTo(ns), b = snapTo(ns + len) - len;
+      ns = Math.abs(a - ns) <= Math.abs(b - ns) ? a : b;
+      s = Math.max(0, Math.min(dur - len, ns)); e = s + len;
+    }
+    setLayerRange(ld.kind, ld.id, s, e, ld.zone);
+    drawCaptionsPreview(); requestDraw();
+  }
+  function setLayerRange(kind: 'text' | 'docu' | 'broll', id: string, s: number, e: number, zone: 'l' | 'r' | 'm') {
+    s = Math.round(s); e = Math.round(e);
+    if (kind === 'text') { const t = p.texts?.find((x) => x.id === id); if (t) { t.s = s; t.e = e; } return; }
+    if (kind === 'broll') { const b = p.broll?.find((x) => x.id === id); if (b) { b.start = s; b.end = e; } return; }
+    const d = p.docu?.find((x) => x.id === id); if (!d) return;
+    const gid = d.kw?.gid;
+    const grp = gid ? (p.docu ?? []).filter((x) => x.kw?.gid === gid) : [d];
+    if (gid && zone === 'm') {
+      // a Kallaway card is one scene of several frames: the whole card moves together
+      const gMin = Math.min(...grp.map((x) => x.start)), gMax = Math.max(...grp.map((x) => x.end));
+      const delta = Math.max(-gMin, Math.min(p.durationMs - gMax, s - d.start));
+      for (const x of grp) { x.start += delta; x.end += delta; }
+    } else { d.start = s; d.end = e; }
+    if (gid) {
+      const gs = Math.min(...grp.map((x) => x.start)), ge = Math.max(...grp.map((x) => x.end));
+      for (const x of grp) if (x.kw) x.kw = { ...x.kw, gStart: gs, gEnd: ge };
+    }
+  }
   /** The text / docu beat / B-roll beat under a tap on its timeline row. */
   function layerAt(lane: 'text' | 'docu' | 'broll', x: number, y: number): { id: string; s: number; e: number } | null {
     const R = rowsNow;
@@ -2002,6 +2069,7 @@ export function editorScreen() {
     setPlaying(false);
     if (playMs < s0 || playMs >= e0) seek(Math.min(e0 - 1, s0 + 120));
     if (kind === 'text') { if (textHandle) textHandle.select(id); else openTexts(id); textSel = id; }
+    else if (kind === 'docu' && p.docu?.find((x) => x.id === id)?.kw) openDocu('kallaway', id, 'kallaway');
     else openDocu(kind === 'docu' ? 'beats' : 'broll', id);
     laySel = { kind, id };
     drawCaptionsPreview(); requestDraw();
@@ -2096,8 +2164,10 @@ export function editorScreen() {
     segments: p.segments, offsetMs: p.offsetMs, durationMs: p.durationMs,
     cropHost: p.cropHost, cropConst: p.cropConst, mirrorHost: p.mirrorHost, mirrorConst: p.mirrorConst,
     noiseHost: p.noiseHost, noiseConst: p.noiseConst,
+    layers: { texts: (p.texts ?? []).map((x) => ({ ...x })), docu: (p.docu ?? []).map((x) => ({ ...x })), broll: (p.broll ?? []).map((x) => ({ ...x })) },
   });
   function restore(s: Snapshot) {
+    if (s.layers) { p.texts = s.layers.texts.map((x) => ({ ...x })); p.docu = s.layers.docu.map((x) => ({ ...x })); p.broll = s.layers.broll.map((x) => ({ ...x })); laySel = null; textSel = null; drawCaptionsPreview(); requestDraw(); }
     p.segments = s.segments; p.offsetMs = s.offsetMs; p.durationMs = s.durationMs;
     p.cropHost = s.cropHost; p.cropConst = s.cropConst;
     p.mirrorHost = s.mirrorHost; p.mirrorConst = s.mirrorConst;
@@ -2604,7 +2674,7 @@ export function editorScreen() {
     }, startWord, single);
   }
 
-  function openDocu(startTab: DocuTab = 'beats', startId?: string, only?: 'docu' | 'broll') {
+  function openDocu(startTab: DocuTab = 'beats', startId?: string, only?: 'docu' | 'broll' | 'kallaway') {
     capHandle?.close();
     textHandle?.close();
     docuHandle?.close();
@@ -2614,6 +2684,7 @@ export function editorScreen() {
       seek: (ms) => seek(ms),
       aspect: () => aspectValue(p.aspect),
       words: () => p.captions?.words?.length ? p.captions.words : p.agentWords?.words ?? [],
+      openKallaway: (id) => openDocu('kallaway', id, 'kallaway'),
       onClosed: () => { docuHandle = null; laySel = null; requestDraw(); },
     }, startTab, startId, only);
   }
@@ -3066,11 +3137,31 @@ export function editorScreen() {
   function doSwap() { edit(p.segments.map((s) => ({ ...s, main: (s.main === 'host' ? 'constant' : 'host') as Role }))); }
   function doSplit() { edit(splitAt(p.segments, playMs)); selectedId = segmentAt(p.segments, playMs)?.id ?? null; tick(); }
   function doMerge() { const s = selected(); if (s) { edit(mergeWithPrev(p.segments, s.id)); selectedId = null; afterEdit(); } else toast('Tap a segment in the bottom row first.'); }
+  /** Delete on the timeline, like CapCut: the part is taken out of the video AND its sound, the clips after it move up,
+   *  and text / Docu / B-roll clips that lay only inside it go too. Undo brings everything back. */
   async function doDelete() {
     const s = selected();
     if (!s) { toast('Tap a segment in the bottom row first.'); return; }
-    if (p.segments.length <= 1) { toast('Cannot delete the only segment.'); return; }
-    if (await confirmDialog('Delete segment?', 'The neighbouring segment will fill the gap.')) { edit(deleteSegment(p.segments, s.id)); selectedId = null; afterEdit(); }
+    if (keptMs(p.segments) - (s.endMs - s.startMs) < 300) { toast('Cannot delete the only part that is left.'); return; }
+    if (!(await confirmDialog('Delete this part?', 'The video and its sound are removed and the clips after it move up. Undo brings it back.', 'Delete'))) return;
+    const r: Range = { startMs: s.startMs, endMs: s.endMs };
+    hist.push(snap());
+    const inside = (a: number, b: number) => a >= r.startMs - 40 && b <= r.endMs + 40;
+    const gone = new Set<string>();
+    for (const d of p.docu ?? []) if (inside(d.start, d.end)) gone.add(d.id);
+    // a Kallaway card goes whole or stays whole
+    const goneGid = new Set((p.docu ?? []).filter((d) => gone.has(d.id) && d.kw).map((d) => d.kw!.gid));
+    const nText = (p.texts ?? []).length, nDocu = (p.docu ?? []).length, nBroll = (p.broll ?? []).length;
+    p.texts = (p.texts ?? []).filter((t) => !inside(t.s, t.e));
+    p.docu = (p.docu ?? []).filter((d) => !gone.has(d.id) && !(d.kw && goneGid.has(d.kw.gid)));
+    p.broll = (p.broll ?? []).filter((b) => !inside(b.start, b.end));
+    const removedLayers = nText - p.texts.length + nDocu - p.docu.length + nBroll - p.broll.length;
+    p.segments = dropSlivers(subtractRanges(p.segments, [r]), 1);
+    selectedId = null; laySel = null; textSel = null;
+    afterEdit();
+    if (!isKept(p.segments, playMs)) seek(nextKeptStart(p.segments, playMs) ?? firstStart());
+    drawCaptionsPreview(); draw();
+    toast(`Part deleted with its sound. New length ${secText(keptMs(p.segments))}.${removedLayers ? ` ${removedLayers} clip${removedLayers > 1 ? 's' : ''} on top of it removed too.` : ''}`, 3600);
   }
 
   function setAudio(role: Role) {

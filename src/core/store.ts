@@ -251,27 +251,31 @@ export interface Snapshot {
   mirrorConst: boolean;
   noiseHost: number;
   noiseConst: number;
+  /** Text / Docu / B-roll clips (shallow copies: a card's picture is shared, never duplicated). */
+  layers?: { texts: import('./captions').TextItem[]; docu: import('./docuTypes').DocuBeat[]; broll: import('./brollTypes').BrollBeat[] };
 }
+
+const cloneSnap = (s: Snapshot): Snapshot => { const { layers, ...rest } = s; return { ...structuredClone(rest), ...(layers ? { layers } : {}) } as Snapshot; };
 
 /** Undo/redo (50 steps, spec asks >= 30). */
 export class History {
   private past: Snapshot[] = [];
   private future: Snapshot[] = [];
   push(current: Snapshot): void {
-    this.past.push(structuredClone(current));
+    this.past.push(cloneSnap(current));
     if (this.past.length > MAX_UNDO) this.past.shift();
     this.future = [];
   }
   undo(current: Snapshot): Snapshot | null {
     const prev = this.past.pop();
     if (!prev) return null;
-    this.future.push(structuredClone(current));
+    this.future.push(cloneSnap(current));
     return prev;
   }
   redo(current: Snapshot): Snapshot | null {
     const next = this.future.pop();
     if (!next) return null;
-    this.past.push(structuredClone(current));
+    this.past.push(cloneSnap(current));
     return next;
   }
   reset(): void { this.past = []; this.future = []; }
