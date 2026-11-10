@@ -5,7 +5,7 @@ import { planKallaway } from '../core/kallawayDirector';
 import { autoBroll } from '../core/brollPlanner';
 import { placeBroll } from '../core/brollTypes';
 import { aspectValue } from '../core/types';
-import { applyCreator, CREATORS } from '../core/creators';
+import { applyCreator, CREATORS, type CreatorId } from '../core/creators';
 import {
   DEFAULT_CARD_RADIUS, DOCU_ACCENTS, DOCU_FONT_CSS, DOCU_FONT_LABEL, DOCU_FONT_SUB, DOCU_FONT_WEIGHT, DOCU_TEMPLATES, DOCU_TYPE_LABEL, MAX_CARD_RADIUS,
   defaultPos, docuLayoutFor, posChoices,
@@ -14,7 +14,7 @@ import {
 import { uid } from '../core/speaker';
 import { buildBrollPane, type BrollPane } from './brollSheet';
 import type { Project } from '../core/types';
-import { h, icon, toast, slider as uiSlider, optionRow } from '../ui';
+import { h, icon, toast, spinner, slider as uiSlider, optionRow } from '../ui';
 
 export interface DocuCtx {
   p: Project;
@@ -512,30 +512,35 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
 
   /** One-tap creator looks (captions, cards, B-roll moves). */
   function creatorBlock(): Node {
+    const none = h('button', { class: 'dt-tile' + (!ctx.p.creator ? ' on' : ''), 'aria-label': 'None', disabled: loadingTile ? 'true' : undefined, onclick: () => applyLook(null) },
+      h('div', { class: 'dt-prev' }, icon('close', 30)), h('span', { class: 'dt-name' }, 'None'), h('span', { class: 'dt-sub' }, 'Remove the look'));
     return h('div', { class: 'at-sec', style: 'margin-top:6px' },
-      h('div', { class: 'at-label' }, 'Creator templates'),
-      h('div', { class: 'at-hint' }, 'Dresses captions, cards and B-roll moves in one tap. Finished Kallaway pictures keep their picture.'),
-      tileGrid(...CREATORS.map((c) => {
+      tileGrid(none, ...CREATORS.map((c) => {
         const face = h('div', { class: 'dt-prev', style: `background:${c.swatch[0]};` },
           h('div', { class: 'dt-card', style: `background:${c.swatch[1]};border:1px solid rgba(255,255,255,.18);border-radius:6px` },
-            h('b', { style: `color:${isLightHex(c.swatch[1]) ? '#000' : '#fff'}` }, 'AA'), h('i', { style: `background:${c.swatch[2]}` })));
-        return h('button', { class: 'dt-tile' + (ctx.p.creator === c.id ? ' on' : ''), 'aria-label': c.name, onclick: () => {
-          const r = applyCreator(ctx.p, c.id);
-          ctx.changed(); render();
-          toast(`${c.name} template applied: captions${r.beats ? `, ${r.beats} card${r.beats > 1 ? 's' : ''}` : ''}${r.broll ? `, ${r.broll} B-roll move${r.broll > 1 ? 's' : ''}` : ''}.`, 3500);
-        } }, face, h('span', { class: 'dt-name' }, c.name), h('span', { class: 'dt-sub' }, c.hint));
+            h('b', { style: `color:${isLightHex(c.swatch[1]) ? '#000' : '#fff'}` }, 'AA'), h('i', { style: `background:${c.swatch[2]}` })),
+          loadingTile === c.id ? h('div', { class: 'dt-load' }, spinner(26)) : (null as unknown as Node));
+        return h('button', { class: 'dt-tile' + (ctx.p.creator === c.id ? ' on' : ''), 'aria-label': c.name, disabled: loadingTile ? 'true' : undefined, onclick: () => applyLook(c.id) },
+          face, h('span', { class: 'dt-name' }, c.name), h('span', { class: 'dt-sub' }, c.hint));
       })));
   }
-
-  /** Delete one card (all its frames) or one plain beat. */
-  function removeBeat(b: DocuBeat) {
-    const gid = b.kw?.gid;
-    ctx.p.docu = beats().filter((x) => (gid ? x.kw?.gid !== gid : x.id !== b.id));
-    sel = (only === 'kallaway' ? beats().find((x) => x.kw) : beats().find((x) => !x.kw))?.id ?? null;
-    if (only === 'kallaway' && !sel) kwNew = true;
-    ctx.changed(); render();
+  /** Tap a look: the card shows a loading ring, then the look is on. None takes the whole look off (cards, B-roll, caption look). */
+  let loadingTile: string | null = null;
+  function applyLook(id: CreatorId | null) {
+    if (loadingTile) return;
+    loadingTile = id ?? 'none'; render();
+    window.setTimeout(() => {
+      if (id) {
+        const r = applyCreator(ctx.p, id);
+        toast(`${CREATORS.find((c) => c.id === id)!.name} applied${r.beats ? `, ${r.beats} card${r.beats > 1 ? 's' : ''}` : ''}.`, 2500);
+      } else {
+        ctx.p.docu = []; ctx.p.broll = []; delete ctx.p.creator; delete ctx.p.captionStyle;
+        sel = null; kwNew = true;
+        toast('Look removed.', 2000);
+      }
+      loadingTile = null; ctx.changed(); render();
+    }, 450);
   }
-  const deleteBtn = (b: DocuBeat) => h('button', { class: 'btn danger', style: 'width:100%;min-height:44px;margin-top:14px', onclick: () => removeBeat(b) }, icon('trash', 18), ' Delete');
 
   /** The Kallaway bottom sheet: one chip per card, edit words + layout of the chosen card, or make a new one. */
   function renderKallawayTab(): Node[] {
@@ -551,7 +556,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     if (kwNew || !b) { kids.push(kallawayForm()); return kids; }
     if (b.kw!.spec.kind === 'photo') kids.push(h('div', { class: 'at-hint', style: 'margin-top:10px' }, 'This card is a picture. Change its side, size and length below, or delete it and add it again.'));
     else kids.push(...renderKwEdit(b));
-    kids.push(h('div', { class: 'at-label', style: 'margin-top:14px' }, 'Layout'), ...renderKwLayout(b), deleteBtn(b));
+    kids.push(h('div', { class: 'at-label', style: 'margin-top:14px' }, 'Layout'), ...renderKwLayout(b));
     return kids;
   }
 
@@ -566,10 +571,10 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     if (cur()?.kw && tab === 'beats') sel = beats().find((x) => !x.kw)?.id ?? null;
     const b = cur();
     const list = sorted();
+    if (tab === 'templates') { body.replaceChildren(creatorBlock()); return; }
     if (tab !== 'beats') {
       const kids = [...styleHead(list)];
-      if (tab === 'templates') kids.push(creatorBlock());
-      if (list.length) kids.push(...(tab === 'layout' ? renderLayout(b) : tab === 'fonts' ? renderFonts(b) : tab === 'colors' ? renderColors(b) : renderTemplates(b)));
+      if (list.length) kids.push(...(tab === 'layout' ? renderLayout(b) : tab === 'fonts' ? renderFonts(b) : renderColors(b)));
       body.replaceChildren(...kids);
       return;
     }
@@ -586,8 +591,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     if (b && !b.kw) kids.push(
       input('Headline', b.headline, (v) => { b.headline = v; ctx.changed(); }),
       slider('Length', 1, 10, 0.5, (b.end - b.start) / 1000, (v) => `${v}s`, (v) => { b.end = Math.min(ctx.durationMs() || b.start + v * 1000, b.start + Math.round(v * 1000)); ctx.changed(); }),
-      h('div', { class: 'at-hint' }, 'Look, video side and padding: Layout tab.'),
-      deleteBtn(b));
+      h('div', { class: 'at-hint' }, 'Look, video side and padding: Layout tab.'));
     body.replaceChildren(...kids);
   }
   let tabBrollId: string | undefined = tab === 'broll' ? startId : undefined;

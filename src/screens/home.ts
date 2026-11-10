@@ -152,7 +152,7 @@ export function homeScreen() {
       onclick: () => { searching = !searching; if (!searching) query = ''; if (searching) app.homeTab = 'projects'; render(); if (searching) (body.querySelector('input') as HTMLInputElement | null)?.focus(); },
     }, icon(searching ? 'close' : 'search', 22));
     const av = h('button', { class: 'avatarbtn', 'aria-label': 'Profile menu', 'aria-haspopup': 'menu', onclick: openMenu }, avatar(40));
-    return h('div', { class: 'htop' + (searching ? ' searching' : '') }, av, searching ? input : h('div', { class: 'htitle' }, 'Editorr'), btn);
+    return h('div', { class: 'htop' + (searching ? ' searching' : '') }, av, searching ? input : h('div', { class: 'htitle' }, 'Editorr', h('i', {}, '.')), btn);
   }
 
   /** Dropdown under the avatar (top left), with the same card as the Me page. */
@@ -168,14 +168,16 @@ export function homeScreen() {
     const list = all();
     const last = projects[0];
 
-    const tools: [keyof typeof ICON, string, () => void][] = [
-      ['switchSlider', 'Auto switch', () => newProject()],
-      ['lips', 'Lips scan', () => newSingleProject()],
-      ['silence', 'Silence cut', () => newSingleProject('silence')],
+    const auto: [keyof typeof ICON, string, string, () => void][] = [
+      ['switchSlider', 'Auto switch', 'Cuts between two mics', () => newProject()],
+      ['sync', 'Auto sync', 'Line up two videos', () => newProject()],
+      ['silence', 'Silence cut', 'Remove quiet parts', () => newSingleProject('silence')],
+      ['lips', 'Lips scan', 'Find who is talking', () => newSingleProject()],
+    ];
+    const basic: [keyof typeof ICON, string, () => void][] = [
       ['crop', 'Crop', () => newSingleProject('crop')],
       ['ratio', 'Aspect ratio', () => newSingleProject('ratio')],
       ['layout', 'Layouts', () => newSingleProject()],
-      ['sync', 'Auto sync', () => newProject()],
       ['volume', 'Audio source', () => newSingleProject()],
       ['gear', 'Settings', () => app.go('settings')],
     ];
@@ -190,7 +192,11 @@ export function homeScreen() {
             ...list.slice(0, 6).map((p) => h('button', { class: 'rthumb', style: thumbStyle(p), 'aria-label': p.name, onclick: () => openProject(p) }, h('span', {}, `${shortDate(p.updatedAt)}-${p.name}`))),
             h('button', { class: 'rthumb more', 'aria-label': 'All projects', onclick: () => { app.homeTab = 'projects'; render(); } }, icon('chevR', 24)))
         : null,
-      h('div', { class: 'tools' }, ...tools.map(([ic, label, run]) => h('button', { class: 'toolcell', onclick: run }, icon(ic, 28), label))),
+      h('div', { class: 'sechead' }, 'Smart tools'),
+      h('div', { class: 'autogrid' }, ...auto.map(([ic, label, sub, run]) => h('button', { class: 'autocell', onclick: run },
+        h('span', { class: 'tico' }, icon(ic, 24)), h('span', { class: 'ttxt' }, h('b', {}, label), h('small', {}, sub))))),
+      h('div', { class: 'sechead' }, 'Basics'),
+      h('div', { class: 'tools' }, ...basic.map(([ic, label, run]) => h('button', { class: 'toolcell', onclick: run }, h('span', { class: 'tico' }, icon(ic, 24)), label))),
     ];
   }
 
