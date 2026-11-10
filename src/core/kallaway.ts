@@ -12,7 +12,7 @@
 import { Capacitor } from '@capacitor/core';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { docuGeometry } from './docuRenderer';
-import { dotGrid, glassCard } from './glass';
+import { glassCard } from './glass';
 import { docuLayoutFor, type DocuBeat } from './docuTypes';
 import { uid } from './speaker';
 import { motionAt, introPlan, springOvershoot, REST, type Motion } from './kallawayMotion';
@@ -49,11 +49,44 @@ export interface KallawaySpec {
   speaker?: 'bottom' | 'top' | 'right' | 'left' | 'none';
   /** steps list only: timeline ms at which each point starts being spoken (from the captions). Missing = equal shares. */
   stepStarts?: number[];
+  /** look of the card (colours, fonts, corners): set by the creator template. Missing = the Kallaway look. */
+  theme?: CardTheme;
 }
 
 /** The ratios the sheet offers (card share). */
 export const KALLAWAY_SHARES: [number, string][] = [[0.5, '50-50'], [0.6, 'Kallaway'], [0.65, '65-35'], [0.72, '70-30']];
 
+
+/** The colours, fonts and corners of the cards. Every creator template can bring its own, so a Kallaway card, a Studio card and a Purple card do not look alike. */
+export interface CardTheme {
+  bg: string; /** dot colour */ dot: string; /** edge darkening colour */ vig: string;
+  accent: string; text: string; muted: string; surface: string; surfaceOn: string; line: string;
+  cardFill: string; cardStroke: string; /** r,g,b of the card's specular edge */ edge: string;
+  sans: string; serif: string; titleW: number;
+  /** corner of the video window, and the share of the frame the card takes */
+  radius?: number; share?: number;
+}
+export const KALLAWAY_THEME: CardTheme = {
+  bg: '#060607', dot: 'rgba(255,255,255,0.22)', vig: 'rgba(6,6,7,0.95)', accent: '#D1121B', text: '#FFFFFF', muted: '#a9a9ae', surface: '#222226', surfaceOn: '#2a2a2e', line: '#4b4b50',
+  cardFill: 'rgba(20,20,24,0.92)', cardStroke: 'rgba(255,255,255,0.12)', edge: '255,255,255',
+  sans: '"Inter","Noto Sans Bengali","Noto Sans Devanagari",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif',
+  serif: '"Playfair Display","Georgia","Noto Serif Bengali","Noto Serif",serif', titleW: 900,
+};
+let T: CardTheme = KALLAWAY_THEME;
+const hexRgb = (hx: string): string => { const m = /^#?([0-9a-f]{6})$/i.exec(hx.trim()); if (!m) return '255,255,255'; const n = parseInt(m[1]!, 16); return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`; };
+const ink = (a: number) => `rgba(${hexRgb(T.text)},${a})`;
+const accentA = (a: number) => `rgba(${hexRgb(T.accent)},${a})`;
+const gc = (g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, k: number) => glassCard(g, x, y, w, h, r, k, { fill: T.cardFill, stroke: T.cardStroke, edge: T.edge });
+function backdrop(g: CanvasRenderingContext2D, w: number, h: number, k: number) {
+  g.fillStyle = T.bg; g.fillRect(0, 0, w, h);
+  const step = Math.max(8, Math.round(30 * k)), r = Math.max(0.7, 0.75 * k);
+  g.fillStyle = T.dot; g.beginPath();
+  for (let y = step / 2; y < h; y += step) for (let x = step / 2; x < w; x += step) { g.moveTo(x + r, y); g.arc(x, y, r, 0, Math.PI * 2); }
+  g.fill();
+  const v = g.createRadialGradient(w / 2, h * 0.4, Math.min(w, h) * 0.3, w / 2, h * 0.4, Math.hypot(w, h) * 0.62);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, T.vig);
+  g.fillStyle = v; g.fillRect(0, 0, w, h);
+}
 export const KALLAWAY_RED = '#D1121B';
 /** Share of the frame the card takes; the video window gets the rest (the default split beat gives the card 45 %). */
 const SHARE_TALL = 0.6;
@@ -105,7 +138,7 @@ function drawTitle(g: CanvasRenderingContext2D, spec: KallawaySpec, cx: number, 
   const hFor = (px: number) => px * (lines === 2 ? 2.35 : 1.35);
   while (size > 26 * k && hFor(size) > maxH) size -= 2;
   const a = spec.a.trim(), b = spec.b.trim(), c = spec.c.trim();
-  const sansFont = (px: number) => `900 ${px}px ${SANS}`, serifFont = (px: number) => `italic 500 ${Math.round(px * 1.08)}px ${SERIF}`;
+  const sansFont = (px: number) => `${T.titleW} ${px}px ${T.sans}`, serifFont = (px: number) => `italic 500 ${Math.round(px * 1.08)}px ${T.serif}`;
   const lineW = (px: number) => {
     g.font = sansFont(px); const wa = a ? g.measureText(a + ' ').width : 0;
     g.font = serifFont(px); const wb = b ? g.measureText(b).width : 0;
@@ -117,13 +150,13 @@ function drawTitle(g: CanvasRenderingContext2D, spec: KallawaySpec, cx: number, 
   if (a || b) {
     const total = lineW(size);
     let x = cx - total / 2;
-    g.fillStyle = '#fff';
+    g.fillStyle = T.text;
     if (a) { g.font = sansFont(size); g.fillText(a + ' ', x, y); x += g.measureText(a + ' ').width; }
     if (b) { g.font = serifFont(size); g.fillText(b, x, y); }
     y += size * 0.2;
   }
   if (c) {
-    g.textAlign = 'center'; g.font = sansFont(size); g.fillStyle = '#fff';
+    g.textAlign = 'center'; g.font = sansFont(size); g.fillStyle = T.text;
     y += size * 0.95;
     g.fillText(c, cx, y);
     y += size * 0.2;
@@ -158,7 +191,7 @@ function paintSteps(g: CanvasRenderingContext2D, spec: KallawaySpec, active: num
       g.save();
       g.globalAlpha *= show;
       g.shadowColor = 'rgba(0,0,0,0.5)'; g.shadowBlur = 18 * k; g.shadowOffsetY = 6 * k;
-      g.fillStyle = isActive ? '#2a2a2e' : '#222226';
+      g.fillStyle = isActive ? T.surfaceOn : T.surface;
       rr(g, boxX, y, boxW, rowH, 8 * k); g.fill();
       g.restore();
       g.save(); rr(g, boxX, y, boxW, rowH, 8 * k); g.clip();
@@ -168,15 +201,15 @@ function paintSteps(g: CanvasRenderingContext2D, spec: KallawaySpec, active: num
     const crisp = active < 0 ? 1 : isActive ? w : wasActive ? 1 - w : 0;
     // number: always crisp
     g.textAlign = 'left'; g.textBaseline = 'middle';
-    g.font = `800 ${Math.round(font * 1.05)}px ${SANS}`;
-    g.fillStyle = crisp > 0.5 ? '#fff' : '#a9a9ae';
+    g.font = `800 ${Math.round(font * 1.05)}px ${T.sans}`;
+    g.fillStyle = crisp > 0.5 ? T.text : T.muted;
     g.fillText(String(i + 1).padStart(2, '0'), boxX + 38 * k, y + rowH / 2);
     // text: crisp for the spoken point, blurred for the rest (blur eases with the wipe)
     const tx = boxX + 38 * k + font * 2.4, maxW = boxW - (tx - boxX) - 24 * k;
-    g.font = `800 ${font}px ${SANS}`;
+    g.font = `800 ${font}px ${T.sans}`;
     const lines = wrapLines(g, txt, maxW, 2);
     const drawTxt = () => {
-      g.fillStyle = '#fff'; g.textAlign = 'left'; g.textBaseline = 'middle';
+      g.fillStyle = T.text; g.textAlign = 'left'; g.textBaseline = 'middle';
       const lh = font * 1.08, y0 = y + rowH / 2 - ((lines.length - 1) * lh) / 2;
       lines.forEach((ln, j) => g.fillText(ln, tx, y0 + j * lh));
     };
@@ -191,11 +224,11 @@ const BAR_LEN = [0.84, 0.9, 0.78, 0.6, 0.88, 0.7, 0.8, 0.94, 0.5, 0.82, 0.76, 0.
 function paintScript(g: CanvasRenderingContext2D, active: number, area: { x: number; y: number; w: number; h: number }, k: number, mo: Motion) {
   const cardW = Math.min(area.w * 0.82, 760 * k), cardH = area.h;
   const x = area.x + (area.w - cardW) / 2, y = area.y;
-  glassCard(g, x, y, cardW, cardH, 24 * k, k);
+  gc(g, x, y, cardW, cardH, 24 * k, k);
 
   const pad = 40 * k, innerW = cardW - pad * 2;
-  g.textBaseline = 'alphabetic'; g.textAlign = 'center'; g.fillStyle = '#fff';
-  g.font = `italic 500 ${Math.round(54 * k)}px ${SERIF}`;
+  g.textBaseline = 'alphabetic'; g.textAlign = 'center'; g.fillStyle = T.text;
+  g.font = `italic 500 ${Math.round(54 * k)}px ${T.serif}`;
   g.fillText('Script', x + cardW / 2, y + 74 * k);
 
   // sections share the rest of the card: Hook 4 lines, Body 14, CTA 3
@@ -207,13 +240,13 @@ function paintScript(g: CanvasRenderingContext2D, active: number, area: { x: num
   let yy = y + 112 * k;
   let li = 0;
   sections.forEach(([name, count], si) => {
-    g.textAlign = 'left'; g.textBaseline = 'alphabetic'; g.fillStyle = '#fff';
-    g.font = `800 ${Math.round(30 * k)}px ${SANS}`;
+    g.textAlign = 'left'; g.textBaseline = 'alphabetic'; g.fillStyle = T.text;
+    g.font = `800 ${Math.round(30 * k)}px ${T.sans}`;
     g.fillText(name, x + pad, yy + 30 * k);
     yy += labelH;
     for (let i = 0; i < count; i++) {
       const len = innerW * BAR_LEN[li++ % BAR_LEN.length]!;
-      g.fillStyle = '#4b4b50';
+      g.fillStyle = T.line;
       rr(g, x + pad, yy, len, barH, barH / 2); g.fill();
       // red grows over the grey bar for the spoken section and shrinks away from the one before
       const red = si === active ? mo.wipe : si === mo.prev && active >= 0 ? 1 - mo.wipe : 0;
@@ -229,7 +262,7 @@ type Area = { x: number; y: number; w: number; h: number };
 /** Picture card: the picture fills the card area (centre crop; `contain` fits it whole instead, for drawings), rounded, soft shadow, thin light edge. */
 function paintPhoto(g: CanvasRenderingContext2D, img: HTMLImageElement | undefined, area: Area, k: number, contain = false) {
   const r = 22 * k;
-  glassCard(g, area.x, area.y, area.w, area.h, r, k);
+  gc(g, area.x, area.y, area.w, area.h, r, k);
   if (img && img.width > 0) {
     g.save();
     rr(g, area.x, area.y, area.w, area.h, r); g.clip();
@@ -238,7 +271,7 @@ function paintPhoto(g: CanvasRenderingContext2D, img: HTMLImageElement | undefin
     g.drawImage(img, area.x + (area.w - iw * sc) / 2, area.y + (area.h - ih * sc) / 2, iw * sc, ih * sc);
     g.restore();
   }
-  g.lineWidth = 2 * k; g.strokeStyle = 'rgba(255,255,255,0.22)';
+  g.lineWidth = 2 * k; g.strokeStyle = ink(0.22);
   rr(g, area.x + k, area.y + k, area.w - 2 * k, area.h - 2 * k, r - k); g.stroke();
 }
 
@@ -264,9 +297,9 @@ export function countText(big: string, count: number): string {
 /** Number card: a big number that counts up, a bar, the line under it, and a trend line that draws itself. */
 function paintStat(g: CanvasRenderingContext2D, spec: KallawaySpec, area: Area, k: number, mo: Motion) {
   const st = spec.stat ?? { big: '' };
-  const accent = st.trend === 'up' ? '#2ee59d' : st.trend === 'down' ? '#ff4d5e' : KALLAWAY_RED;
+  const accent = st.trend === 'up' ? '#2ee59d' : st.trend === 'down' ? '#ff4d5e' : T.accent;
   const x = area.x + 6 * k, w = area.w - 12 * k;
-  glassCard(g, x, area.y, w, area.h, 24 * k, k);
+  gc(g, x, area.y, w, area.h, 24 * k, k);
   if (st.trend) {
     const pts = st.trend === 'up' ? [0.8, 0.72, 0.76, 0.6, 0.62, 0.46, 0.48, 0.3, 0.22] : [0.22, 0.32, 0.28, 0.44, 0.42, 0.6, 0.58, 0.76, 0.84];
     g.save();
@@ -283,15 +316,15 @@ function paintStat(g: CanvasRenderingContext2D, spec: KallawaySpec, area: Area, 
   // size from the final text so the number does not jump while it counts
   let size = Math.round(220 * k);
   const maxW = w * 0.86;
-  for (; size > 40 * k; size -= 4) { g.font = `900 ${size}px ${SANS}`; if (g.measureText(full).width <= maxW) break; }
-  g.font = `900 ${size}px ${SANS}`;
+  for (; size > 40 * k; size -= 4) { g.font = `900 ${size}px ${T.sans}`; if (g.measureText(full).width <= maxW) break; }
+  g.font = `900 ${size}px ${T.sans}`;
   const midY = area.y + area.h * (st.label ? 0.42 : 0.5);
-  g.fillStyle = '#fff';
+  g.fillStyle = T.text;
   g.fillText(text, x + w / 2, midY);
   const barW = Math.min(maxW * 0.3, 200 * k), barY = midY + size * 0.62;
   g.fillStyle = accent; g.fillRect(x + w / 2 - barW / 2, barY, barW, 9 * k);
   if (st.label) {
-    g.font = `700 ${Math.round(44 * k)}px ${SANS}`; g.fillStyle = 'rgba(255,255,255,0.8)';
+    g.font = `700 ${Math.round(44 * k)}px ${T.sans}`; g.fillStyle = ink(0.8);
     wrapLines(g, st.label, maxW, 3).forEach((ln, i) => g.fillText(ln, x + w / 2, barY + 62 * k + i * 56 * k));
   }
 }
@@ -307,14 +340,14 @@ function paintLoop(g: CanvasRenderingContext2D, spec: KallawaySpec, active: numb
   const ang = (i: number) => -Math.PI / 2 + (i / n) * Math.PI * 2;
   g.save();
   g.shadowColor = KALLAWAY_RED; g.shadowBlur = 26 * k;
-  g.strokeStyle = 'rgba(209,18,27,0.9)'; g.lineWidth = 5 * k;
+  g.strokeStyle = accentA(0.9); g.lineWidth = 5 * k;
   g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); g.stroke();
   g.restore();
-  g.save(); g.setLineDash([2 * k, 11 * k]); g.lineCap = 'round'; g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 3 * k;
+  g.save(); g.setLineDash([2 * k, 11 * k]); g.lineCap = 'round'; g.strokeStyle = ink(0.55); g.lineWidth = 3 * k;
   g.beginPath(); g.ellipse(cx, cy, rx + 14 * k, ry + 14 * k, 0, 0, Math.PI * 2); g.stroke(); g.restore();
   // the part of the ring already told glows brighter
   if (active > 0) {
-    g.save(); g.strokeStyle = '#fff'; g.globalAlpha = 0.9; g.lineWidth = 6 * k; g.lineCap = 'round';
+    g.save(); g.strokeStyle = T.text; g.globalAlpha = 0.9; g.lineWidth = 6 * k; g.lineCap = 'round';
     g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, ang(0), ang(active) + (ang(Math.min(n - 1, active + 1)) - ang(active)) * 0 , false); g.stroke(); g.restore();
   }
   const font = Math.round(Math.min(40 * k, area.h * 0.075));
@@ -325,24 +358,24 @@ function paintLoop(g: CanvasRenderingContext2D, spec: KallawaySpec, active: numb
     const r = 30 * k * grow;
     g.save();
     if (on) { g.shadowColor = KALLAWAY_RED; g.shadowBlur = 30 * k; }
-    g.fillStyle = on || i < active ? KALLAWAY_RED : '#1b1b20'; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    g.fillStyle = on || i < active ? T.accent : T.surface; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
     g.restore();
-    g.lineWidth = 3 * k; g.strokeStyle = on ? '#fff' : 'rgba(255,255,255,0.45)'; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke();
-    g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `900 ${Math.round(r * 0.95)}px ${SANS}`;
+    g.lineWidth = 3 * k; g.strokeStyle = on ? T.text : ink(0.45); g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = T.text; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `900 ${Math.round(r * 0.95)}px ${T.sans}`;
     g.fillText(String(i + 1), x, y + 1 * k);
     // label outside the ring, on the side the node sits
     const right = Math.cos(a) > 0.3, left = Math.cos(a) < -0.3;
     const lx = right ? x + r + 14 * k : left ? x - r - 14 * k : x;
     const ly = right || left ? y : Math.sin(a) < 0 ? y - r - font * 0.9 : y + r + font * 0.9;
     g.textAlign = right ? 'left' : left ? 'right' : 'center';
-    g.font = `${on ? 800 : 600} ${font}px ${SANS}`;
+    g.font = `${on ? 800 : 600} ${font}px ${T.sans}`;
     g.globalAlpha *= on ? 1 : 0.55;
     const room = right ? area.x + area.w - lx : left ? lx - area.x : area.w * 0.6;
     const ln = wrapLines(g, txt, Math.max(80 * k, room), 2);
     ln.forEach((t, j) => g.fillText(t, lx, ly + (j - (ln.length - 1) / 2) * font * 1.1));
     g.globalAlpha = 1;
   });
-  if (spec.sub?.trim()) { g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff'; g.font = `italic 500 ${Math.round(font * 1.15)}px ${SERIF}`; g.fillText(spec.sub.trim(), cx, cy); }
+  if (spec.sub?.trim()) { g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = T.text; g.font = `italic 500 ${Math.round(font * 1.15)}px ${T.serif}`; g.fillText(spec.sub.trim(), cx, cy); }
 }
 
 /** Versus card: two glass panels (items[0] vs items[1]) with a red VS badge between them. */
@@ -354,16 +387,16 @@ function paintVersus(g: CanvasRenderingContext2D, spec: KallawaySpec, area: Area
   items.forEach((txt, i) => {
     const slide = (1 - mo.wipe) * 40 * k * (i ? 1 : -1);
     const x = area.x + 6 * k + (tall ? 0 : i * (pw + gap)) + (tall ? 0 : slide), y = area.y + (tall ? i * (ph + gap) + slide : 0);
-    glassCard(g, x, y, pw, ph, 22 * k, k);
-    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = i ? KALLAWAY_RED : '#fff';
-    g.font = `900 ${Math.round(Math.min(56 * k, ph * 0.22))}px ${SANS}`;
+    gc(g, x, y, pw, ph, 22 * k, k);
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = i ? T.accent : T.text;
+    g.font = `900 ${Math.round(Math.min(56 * k, ph * 0.22))}px ${T.sans}`;
     const f = Math.round(Math.min(56 * k, ph * 0.22));
     const ln = wrapLines(g, txt.toUpperCase(), pw * 0.84, 3);
     ln.forEach((t, j) => g.fillText(t, x + pw / 2, y + ph / 2 + (j - (ln.length - 1) / 2) * f * 1.1));
   });
   const bx = tall ? area.x + area.w / 2 : area.x + area.w / 2, by = tall ? area.y + area.h / 2 : area.y + area.h / 2, br = 38 * k * (0.7 + 0.3 * springOvershoot(mo.wipe));
   g.save(); g.shadowColor = KALLAWAY_RED; g.shadowBlur = 26 * k; g.fillStyle = KALLAWAY_RED; g.beginPath(); g.arc(bx, by, br, 0, Math.PI * 2); g.fill(); g.restore();
-  g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `900 ${Math.round(br * 0.85)}px ${SANS}`; g.fillText('VS', bx, by + 1 * k);
+  g.fillStyle = T.text; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `900 ${Math.round(br * 0.85)}px ${T.sans}`; g.fillText('VS', bx, by + 1 * k);
 }
 
 /** Quote card: a big two-font headline in the middle of the card and a supporting line. */
@@ -398,36 +431,36 @@ export const receiptLinesText = (lines: { label: string; amount: string }[] | un
 function paintTweet(g: CanvasRenderingContext2D, spec: KallawaySpec, area: Area, k: number, mo: Motion) {
   const post = spec.post ?? { name: '', handle: '', text: '' };
   const x = area.x + 6 * k, y = area.y + 6 * k, w = area.w - 12 * k, h = area.h - 12 * k;
-  glassCard(g, x, y, w, h, 24 * k, k);
+  gc(g, x, y, w, h, 24 * k, k);
   const pad = 40 * k, ix = x + pad, maxW = w - pad * 2;
   let cy = y + pad;
   const av = 46 * k, name = post.name.trim() || 'Someone', handle = (post.handle.trim() || '@someone').replace(/^(?!@)/, '@');
   const grad = g.createLinearGradient(ix, cy, ix + av * 2, cy + av * 2);
-  grad.addColorStop(0, '#46464f'); grad.addColorStop(1, '#17171b');
+  grad.addColorStop(0, T.surfaceOn); grad.addColorStop(1, T.surface);
   g.fillStyle = grad; g.beginPath(); g.arc(ix + av, cy + av, av, 0, Math.PI * 2); g.fill();
-  g.lineWidth = 2 * k; g.strokeStyle = 'rgba(255,255,255,0.25)'; g.stroke();
-  g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `800 ${Math.round(av * 0.95)}px ${SANS}`;
+  g.lineWidth = 2 * k; g.strokeStyle = ink(0.25); g.stroke();
+  g.fillStyle = T.text; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `800 ${Math.round(av * 0.95)}px ${T.sans}`;
   g.fillText((name[0] ?? '?').toUpperCase(), ix + av, cy + av + 2 * k);
   const tx = ix + av * 2 + 20 * k;
   g.textAlign = 'left'; g.textBaseline = 'alphabetic';
-  g.font = `800 ${Math.round(38 * k)}px ${SANS}`; g.fillStyle = '#fff';
+  g.font = `800 ${Math.round(38 * k)}px ${T.sans}`; g.fillStyle = T.text;
   g.fillText(wrapLines(g, name, maxW - av * 2 - 20 * k, 1)[0] ?? name, tx, cy + av * 0.82);
-  g.font = `500 ${Math.round(31 * k)}px ${SANS}`; g.fillStyle = 'rgba(255,255,255,0.55)';
+  g.font = `500 ${Math.round(31 * k)}px ${T.sans}`; g.fillStyle = ink(0.55);
   g.fillText(handle, tx, cy + av * 1.5);
   cy += av * 2 + 34 * k;
   const hasStats = !!(post.likes?.trim() || post.reposts?.trim());
   const room = y + h - cy - pad - (hasStats ? 96 * k : 0);
   let fs = Math.round(60 * k);
   let lines: string[] = [];
-  for (; fs > 26 * k; fs -= 3) { g.font = `500 ${fs}px ${SANS}`; lines = wrapLines(g, post.text, maxW, 9); if (lines.length * fs * 1.28 <= room) break; }
-  g.fillStyle = '#fff';
+  for (; fs > 26 * k; fs -= 3) { g.font = `500 ${fs}px ${T.sans}`; lines = wrapLines(g, post.text, maxW, 9); if (lines.length * fs * 1.28 <= room) break; }
+  g.fillStyle = T.text;
   lines.forEach((ln, i) => g.fillText(ln, ix, cy + fs + i * fs * 1.28));
   cy += lines.length * fs * 1.28 + 30 * k;
   if (!hasStats) return;
-  g.fillStyle = 'rgba(255,255,255,0.12)'; g.fillRect(ix, cy, maxW, 2 * k);
+  g.fillStyle = ink(0.12); g.fillRect(ix, cy, maxW, 2 * k);
   cy += 52 * k;
   const sz = Math.round(36 * k);
-  g.font = `700 ${sz}px ${SANS}`;
+  g.font = `700 ${sz}px ${T.sans}`;
   let px = ix;
   if (post.likes?.trim()) {
     // heart
@@ -435,18 +468,18 @@ function paintTweet(g: CanvasRenderingContext2D, spec: KallawaySpec, area: Area,
     g.fillStyle = KALLAWAY_RED; g.beginPath(); g.moveTo(hx, hy + s * 0.9);
     g.bezierCurveTo(hx - s * 1.6, hy - s * 0.2, hx - s * 0.7, hy - s * 1.3, hx, hy - s * 0.4);
     g.bezierCurveTo(hx + s * 0.7, hy - s * 1.3, hx + s * 1.6, hy - s * 0.2, hx, hy + s * 0.9); g.fill();
-    g.fillStyle = '#fff'; g.textAlign = 'left';
+    g.fillStyle = T.text; g.textAlign = 'left';
     const t = countText(post.likes.trim(), mo.count);
     g.fillText(t, px + 44 * k, cy); px += 44 * k + g.measureText(post.likes.trim()).width + 48 * k;
   }
   if (post.reposts?.trim()) {
     const rx = px + 16 * k, ry = cy - 12 * k, r = 14 * k, a1 = Math.PI * 1.45;
-    g.strokeStyle = 'rgba(255,255,255,0.8)'; g.lineWidth = 3.4 * k; g.lineCap = 'round';
+    g.strokeStyle = ink(0.8); g.lineWidth = 3.4 * k; g.lineCap = 'round';
     g.beginPath(); g.arc(rx, ry, r, -Math.PI * 0.2, a1); g.stroke();
     const ex = rx + r * Math.cos(a1), ey = ry + r * Math.sin(a1), tgx = -Math.sin(a1), tgy = Math.cos(a1), nx = Math.cos(a1), ny = Math.sin(a1);
-    g.fillStyle = 'rgba(255,255,255,0.8)'; g.beginPath();
+    g.fillStyle = ink(0.8); g.beginPath();
     g.moveTo(ex + tgx * r * 0.6, ey + tgy * r * 0.6); g.lineTo(ex + nx * r * 0.5, ey + ny * r * 0.5); g.lineTo(ex - nx * r * 0.5, ey - ny * r * 0.5); g.closePath(); g.fill();
-    g.fillStyle = '#fff'; g.textAlign = 'left';
+    g.fillStyle = T.text; g.textAlign = 'left';
     g.fillText(countText(post.reposts.trim(), mo.count), px + 44 * k, cy);
   }
 }
@@ -456,7 +489,7 @@ function paintReceipt(g: CanvasRenderingContext2D, spec: KallawaySpec, area: Are
   const rc = spec.receipt ?? { shop: '', lines: [] };
   const lines = rc.lines.filter((l) => l.label.trim() || l.amount.trim()).slice(0, 7);
   const x = area.x + 6 * k, y = area.y + 6 * k, w = area.w - 12 * k, h = area.h - 12 * k;
-  glassCard(g, x, y, w, h, 24 * k, k);
+  gc(g, x, y, w, h, 24 * k, k);
   const MONO = '"JetBrains Mono","Roboto Mono","Courier New",monospace';
   const pw = Math.min(w * 0.8, 760 * k);
   const fs = Math.round(Math.min(42 * k, (h * 0.8) / (lines.length + 7) / 1.35)), pitch = fs * 1.5;
@@ -527,6 +560,10 @@ const posFor = (spec: KallawaySpec, layout: 'side' | 'updown'): 'bottom' | 'top'
  * `photo` = the loaded picture (picture and svg cards). `mo` = how far the motion is (missing = at rest, the final look).
  */
 export function paintKallaway(g: CanvasRenderingContext2D, spec: KallawaySpec, active: number, aspect: Aspect, w: number, h: number, photo?: HTMLImageElement, mo: Motion = REST) {
+  const prev = T; T = spec.theme ?? KALLAWAY_THEME;
+  try { paintKallawayInner(g, spec, active, aspect, w, h, photo, mo); } finally { T = prev; }
+}
+function paintKallawayInner(g: CanvasRenderingContext2D, spec: KallawaySpec, active: number, aspect: Aspect, w: number, h: number, photo?: HTMLImageElement, mo: Motion = REST) {
   const k = Math.min(w, h) / 1080;
   const layout = layoutFor(spec, aspect);
   const share = shareFor(spec, layout);
@@ -534,7 +571,7 @@ export function paintKallaway(g: CanvasRenderingContext2D, spec: KallawaySpec, a
   const geo = full ? { vertical: layout === 'updown', video: { x: 0, y: 0, w: 0, h: 0 }, card: { x: 24 * k, y: 40 * k, w: w - 48 * k, h: h - 80 * k } } : docuGeometry(layout, posFor(spec, layout), w, h, share);
   g.save();
   g.globalAlpha = mo.alpha;
-  dotGrid(g, w, h, k);
+  backdrop(g, w, h, k);
   const card = geo.card;
   // the card content pops (scales) around the middle of the card area
   g.translate(card.x + card.w / 2, card.y + card.h / 2); g.scale(mo.pop, mo.pop); g.translate(-(card.x + card.w / 2), -(card.y + card.h / 2));
@@ -559,8 +596,8 @@ export function paintKallaway(g: CanvasRenderingContext2D, spec: KallawaySpec, a
   g.restore();
   if (spec.handle.trim() && !full) {
     g.save(); g.globalAlpha = mo.alpha;
-    g.textAlign = 'left'; g.textBaseline = 'alphabetic'; g.fillStyle = '#fff';
-    g.font = `800 ${Math.round(26 * k)}px ${SANS}`;
+    g.textAlign = 'left'; g.textBaseline = 'alphabetic'; g.fillStyle = T.text;
+    g.font = `800 ${Math.round(26 * k)}px ${T.sans}`;
     // above the window; when the window is at the top of the frame there is no room above it, so the tag goes under it
     const y = geo.video.y > 60 * k ? geo.video.y - 14 * k : geo.video.y + geo.video.h + 34 * k;
     g.fillText(spec.handle.trim().toUpperCase(), geo.video.x + 8 * k, y);
@@ -571,7 +608,7 @@ export function paintKallaway(g: CanvasRenderingContext2D, spec: KallawaySpec, a
   g.save();
   g.globalCompositeOperation = 'destination-out';
   g.globalAlpha = 1;
-  rr(g, geo.video.x, geo.video.y, geo.video.w, geo.video.h, RADIUS * k);
+  rr(g, geo.video.x, geo.video.y, geo.video.w, geo.video.h, (T.radius ?? RADIUS) * k);
   g.fillStyle = '#000'; g.fill();
   g.restore();
 }

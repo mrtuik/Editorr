@@ -86,11 +86,10 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       h('button', { class: 'br-tab' + (tab === k ? ' on' : ''), onclick: () => { if (tab !== k) { tab = k; render(); } } }, l)));
     (tabsEl.querySelector('.on') as HTMLElement | null)?.scrollIntoView?.({ inline: 'center', block: 'nearest' });
   };
-  const fab = h('button', { class: 'btn primary at-fab', 'aria-label': 'Auto edit', onclick: () => void runTemplate(ctx.p.creator ?? 'kallaway') }, 'Auto edit') as HTMLButtonElement;
-  const sheet = h('div', { class: 'at-sheet ts', role: 'dialog', style: 'position:relative' },
+  const sheet = h('div', { class: 'at-sheet ts', role: 'dialog' },
     h('div', { class: 'at-head' }, tabsEl,
       h('button', { class: 'ts-ok', 'aria-label': 'Done', onclick: close }, icon('check', 26))),
-    body, only === 'kallaway' ? (null as unknown as Node) : fab);
+    body);
   const box = h('div', { class: 'at-scrim clear', onclick: (e: Event) => { if (e.target === box) close(); } }, sheet);
   document.body.append(box);
 
@@ -190,7 +189,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
           if (cancelled) break;
           const pk = r.picks[idx]!;
           const fullOk = ['loop', 'versus', 'stat', 'quote', 'steps'].includes(pk.spec.kind);
-          const spec: KallawaySpec = { ...pk.spec, handle: kw.handle, share: kw.share, speaker: fullOk && idx % 2 === 1 ? 'none' : (kw.speaker === 'none' ? undefined : kw.speaker) };
+          const spec: KallawaySpec = { ...pk.spec, handle: kw.handle, share: kw.share ?? c.card?.share, theme: c.card, speaker: fullOk && idx % 2 === 1 ? 'none' : (kw.speaker === 'none' ? undefined : kw.speaker) };
           made.push(...await makeKallawayBeats(ctx.p.aspect, spec, pk.start, pk.end));
           updateTask('autoedit', `Drawing cards ${idx + 1}/${r.picks.length}...`, 8 + 22 * (idx + 1) / Math.max(1, r.picks.length));
         }
@@ -644,8 +643,6 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
 
   function render() {
     renderTabs();
-    fab.textContent = busy ? 'Editing...' : 'Auto edit'; fab.disabled = busy;
-    body.style.paddingBottom = only === 'kallaway' ? '12px' : '84px';
     if (tab === 'kallaway') { body.replaceChildren(...renderKallawayTab()); return; }
     if (cur()?.kw && tab === 'beats') sel = beats().find((x) => !x.kw)?.id ?? null;
     const b = cur();

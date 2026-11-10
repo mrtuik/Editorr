@@ -11,6 +11,7 @@ import { captionZones } from './docuRenderer';
 import type { BrollFrame, BrollMotion } from './brollTypes';
 import type { VideoMode } from './brollRouter';
 import { aspectValue, type Project } from './types';
+import type { CardTheme } from './kallaway';
 
 export type CreatorId = 'kallaway' | 'hormozi' | 'vox' | 'noir' | 'keynote' | 'swiss' | 'cyber' | 'breaking'
   | 'cinema' | 'neonhook' | 'cinedocu' | 'studio' | 'purpletech' | 'monodocu';
@@ -43,6 +44,8 @@ export interface CreatorTemplate {
   zones: boolean;
   motions: BrollMotion[];
   recipe: EditRecipe;
+  /** look of the cards this template draws (Kallaway look when missing) */
+  card?: CardTheme;
 }
 
 export const CREATORS: CreatorTemplate[] = [
@@ -86,11 +89,17 @@ export const CREATORS: CreatorTemplate[] = [
   { id: 'studio', name: 'Studio Agency', hint: 'Light studio, deep red type, floating cards', swatch: ['#ECE8EA', '#FFFFFF', '#E0122B'],
     caption: { look: 'pop', size: 0.058, y: 0.2, wordsPerLine: 3, upper: false, color: '#8B0012', highlight: '#E0122B', fx: { font: 'editorial', italic: true } },
     docu: 'rose', zones: false, motions: ['zoom_in', 'slow_pan', 'pan_right', 'zoom_out'],
-    recipe: { cards: true, docuBeats: false, lenMs: 2200, frame: 'card', coverage: 'alternate', videoMode: 'photos', fillGaps: false, grade: { contrast: 0.06, sat: 4, bright: 0.04 } } },
+    recipe: { cards: true, docuBeats: false, lenMs: 2200, frame: 'card', coverage: 'alternate', videoMode: 'photos', fillGaps: false, grade: { contrast: 0.06, sat: 4, bright: 0.04 } },
+    card: { bg: '#ECE8EA', dot: 'rgba(139,0,18,0.12)', vig: 'rgba(150,120,130,0.28)', accent: '#E0122B', text: '#7A0012', muted: '#9A7A82', surface: '#FFFFFF', surfaceOn: '#FFE3E7', line: '#D9C5CA',
+      cardFill: 'rgba(255,255,255,0.97)', cardStroke: 'rgba(139,0,18,0.2)', edge: '255,255,255',
+      sans: '"Inter","Noto Sans Bengali","Noto Sans Devanagari",system-ui,sans-serif', serif: '"Playfair Display","Georgia","Noto Serif Bengali",serif', titleW: 800, radius: 30, share: 0.5 } },
   { id: 'purpletech', name: 'Purple Tech', hint: 'Dark violet glow, condensed titles, tilted cards', swatch: ['#0B0720', '#1B1240', '#8B5CF6'],
     caption: { look: 'pill', size: 0.05, y: 0.8, wordsPerLine: 3, upper: false, color: '#FFFFFF', highlight: '#8B5CF6', fx: { font: 'poppins' } },
     docu: 'purple', zones: false, motions: ['zoom_in', 'pan_right', 'slow_zoom', 'pan_left'],
-    recipe: { cards: true, docuBeats: false, lenMs: 2500, frame: 'card', coverage: 'alternate', videoMode: 'photos', fillGaps: false, grade: { contrast: 0.1, sat: 10, bright: 0 } } },
+    recipe: { cards: true, docuBeats: false, lenMs: 2500, frame: 'card', coverage: 'alternate', videoMode: 'photos', fillGaps: false, grade: { contrast: 0.1, sat: 10, bright: 0 } },
+    card: { bg: '#0B0720', dot: 'rgba(167,139,250,0.22)', vig: 'rgba(11,7,32,0.96)', accent: '#8B5CF6', text: '#F1ECFF', muted: '#9C93C4', surface: '#1B1240', surfaceOn: '#2A1B66', line: '#4B3B8F',
+      cardFill: 'rgba(27,18,64,0.92)', cardStroke: 'rgba(167,139,250,0.35)', edge: '196,181,253',
+      sans: 'Oswald,"Arial Narrow",Impact,"Noto Sans Bengali","Noto Sans Devanagari",sans-serif', serif: '"Playfair Display","Georgia","Noto Serif Bengali",serif', titleW: 700, radius: 36, share: 0.6 } },
   { id: 'monodocu', name: 'Mono Docu', hint: 'Black and white, archive photos, spotlight type', swatch: ['#0A0A0A', '#D9D9D4', '#FFFFFF'],
     caption: { look: 'minimal', size: 0.052, y: 0.2, wordsPerLine: 4, upper: false, color: '#F2F2EE', highlight: '#FFFFFF', fx: { font: 'sans' } },
     docu: 'mono', zones: false, motions: ['slow_zoom', 'drift', 'zoom_out', 'slow_pan'],

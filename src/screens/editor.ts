@@ -724,6 +724,9 @@ export function editorScreen() {
   // ---------- seeking (never queue seeks: only the latest one counts) ----------
   // ---------- seeking (never queue seeks: only the latest one counts, fastSeek when available) ----------
   const pendingSeek = new Map<HTMLVideoElement, number>();
+  const pendingPrecise = new Set<HTMLVideoElement>();
+  /** true while playback jumps over a cut: land EXACTLY on the frame (fastSeek lands on an earlier keyframe, which is inside the cut and makes the jump repeat = stutter). */
+  let preciseSeek = false;
   function seekVideo(v: HTMLVideoElement, t: number) {
     if (scanLock) return;
     if (!isFinite(t) || t < 0) return;
@@ -731,9 +734,9 @@ export function editorScreen() {
     t = Math.min(t, Math.max(0, dur - 0.05));
     if (v.readyState < 1) return; // metadata not there yet; loadedmetadata seeks again
     if (Math.abs(v.currentTime - t) < 0.025) return;
-    if (v.seeking) { pendingSeek.set(v, t); return; }
+    if (v.seeking) { pendingSeek.set(v, t); if (preciseSeek) pendingPrecise.add(v); return; }
     try {
-      if (typeof (v as any).fastSeek === 'function') {
+      if (!preciseSeek && typeof (v as any).fastSeek === 'function') {
         (v as any).fastSeek(t);
       } else {
         v.currentTime = t;
@@ -747,9 +750,10 @@ export function editorScreen() {
       const t = pendingSeek.get(v);
       if (t === undefined) return;
       pendingSeek.delete(v);
+      const exact = pendingPrecise.delete(v);
       if (Math.abs(v.currentTime - t) < 0.025) return;
       try {
-        if (typeof (v as any).fastSeek === 'function') {
+        if (!exact && typeof (v as any).fastSeek === 'function') {
           (v as any).fastSeek(t);
         } else {
           v.currentTime = t;
@@ -3203,7 +3207,7 @@ export function editorScreen() {
         tool('autoframe', 'Autoframe', doAutoframe),
         tool('face', 'Faces', doFaces),
         tool('text', 'Text', () => openGroup('text')),
-        tool('layout', 'B-roll', () => openDocu('beats')),
+        tool('layout', 'B-roll', () => openDocu('templates')),
         tool('reaction', 'Reaction', doReactionTool),
         tool('overlay', 'Overlay', () => { if (ovList().length) openPanel('overlay'); else void addOverlay(false); }),
         tool('punch', 'Auto zoom', doAutoZoom),
@@ -3999,7 +4003,7 @@ export function editorScreen() {
 
   // How long this phone needs to finish a seek. Jumping over a silence cut a little EARLY by that time hides the stuck picture.
   let seekT0 = 0;
-  let seekEma = 90;
+  let seekEma = 150;
   hostV.addEventListener('seeking', () => { seekT0 = performance.now(); });
   hostV.addEventListener('seeked', () => {
     if (!seekT0) return;
@@ -4008,6 +4012,12 @@ export function editorScreen() {
     if (dt > 5 && dt < 1500) seekEma = seekEma * 0.6 + dt * 0.4;
   });
 
+  /** Playback reaches a cut: seek both videos to the exact next frame and keep playing (no keyframe snap, no pause). */
+  function jumpCut() {
+    preciseSeek = true;
+    try { syncHost(true); syncConst(true); } finally { preciseSeek = false; }
+    if (playing && hostV.paused) hostV.play().catch(() => {});
+  }
   function loop() {
     if (playing) {
       // the Host video is the clock: the timeline follows it, so a slow decoder never makes the picture "stand still"
@@ -4018,14 +4028,14 @@ export function editorScreen() {
         if (p.segments.length && !isKept(p.segments, playMs)) {
           // jump over a part that was cut out
           const nx = nextKeptStart(p.segments, playMs);
-          if (nx !== null) { playMs = nx; syncHost(true); syncConst(true); }
+          if (nx !== null) { playMs = nx; jumpCut(); }
         } else if (p.segments.length && !hostV.seeking) {
           // a cut part is coming up: start the jump a little before it, so the new picture is ready right at the cut
-          const lead = Math.max(30, Math.min(220, seekEma));
+          const lead = Math.max(40, Math.min(450, seekEma * 1.15));
           const run = coverage(p.segments).find((r) => playMs >= r.startMs && playMs < r.endMs);
           if (run && run.endMs - playMs <= lead) {
             const nx = nextKeptStart(p.segments, run.endMs + 1);
-            if (nx !== null && nx > run.endMs + 1) { playMs = nx; syncHost(true); syncConst(true); }
+            if (nx !== null && nx > run.endMs + 1) { playMs = nx; jumpCut(); }
           }
         }
         // clips can play faster (AI Agent): the Host video, the saved music track and the cleaned voice follow the same speed

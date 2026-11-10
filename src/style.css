@@ -1902,3 +1902,15 @@ html body input[type=range]:disabled { opacity: .4; }
 /* floating Auto edit button at the bottom of the Beats / Templates sheet */
 .at-fab { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(var(--safe-bottom, 0px) + 14px); min-width: 180px; min-height: 50px; padding: 0 28px; border-radius: 26px; font-size: 16px; font-weight: 700; box-shadow: 0 6px 22px rgba(0,0,0,.55); z-index: 5; }
 .at-fab:disabled { opacity: .6; }
+
+
+/* play button: no card, just a plain white icon */
+.playbtn, .playbtn.wait { width: 44px; height: 44px; border-radius: 0; background: transparent !important; color: #fff !important; box-shadow: none; }
+.playbtn svg { width: 30px; height: 30px; }
+
+/* loading rings: a proper outline circle (no square, no pulse) */
+.pills .pill.tap .pill-ring, .pills .pill.tap .pill-ring.indet { border-radius: 50%; width: 16px; height: 16px; opacity: 1; background: conic-gradient(var(--accent, #C6F277) calc(var(--p, 0) * 1%), rgba(255,255,255,.22) 0); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px)); mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px)); animation: none; }
+.pills .pill.tap .pill-ring.indet { background: conic-gradient(var(--accent, #C6F277) 0 25%, rgba(255,255,255,.22) 0); animation: tdspin .9s linear infinite; }
+.td-ring2, .td-ring2.indet { border-radius: 50%; background: none; animation: none; }
+.td-ring2::before { inset: 0; border-radius: 50%; background: conic-gradient(var(--accent, #C6F277) calc(var(--p, 0) * 1%), rgba(255,255,255,.16) 0); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px)); mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px)); }
+.td-ring2.indet::before { background: conic-gradient(var(--accent, #C6F277) 0 25%, rgba(255,255,255,.16) 0); animation: tdspin 1s linear infinite; }

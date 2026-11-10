@@ -16,10 +16,12 @@ function rr(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: num
 }
 
 /** Glass card: #141418 at 92 %, inner sheen, layered contact + ambient shadow, and a specular edge along the top and right side. */
-export function glassCard(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, k: number) {
+export interface GlassLook { fill: string; stroke: string; /** r,g,b of the specular edge */ edge: string }
+export function glassCard(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, k: number, look?: GlassLook) {
+  const edge = look?.edge ?? '255,255,255';
   g.save();
   g.shadowColor = 'rgba(0,0,0,0.4)'; g.shadowBlur = 32 * k; g.shadowOffsetY = 16 * k;
-  g.fillStyle = 'rgba(20,20,24,0.92)'; rr(g, x, y, w, h, r); g.fill();
+  g.fillStyle = look?.fill ?? 'rgba(20,20,24,0.92)'; rr(g, x, y, w, h, r); g.fill();
   g.shadowColor = 'rgba(0,0,0,0.6)'; g.shadowBlur = 12 * k; g.shadowOffsetY = 4 * k;
   g.fill();
   g.restore();
@@ -29,13 +31,13 @@ export function glassCard(g: CanvasRenderingContext2D, x: number, y: number, w: 
   g.fillStyle = inner; g.fillRect(x, y, w, h);
   // specular: 2 px edge, bright near the top-right corner and fading away along both sides
   const top = g.createLinearGradient(x, y, x + w, y);
-  top.addColorStop(0, 'rgba(255,255,255,0)'); top.addColorStop(1, 'rgba(255,255,255,0.7)');
+  top.addColorStop(0, `rgba(${edge},0)`); top.addColorStop(1, `rgba(${edge},0.7)`);
   g.fillStyle = top; g.fillRect(x, y, w, 2 * k);
   const right = g.createLinearGradient(0, y, 0, y + h);
-  right.addColorStop(0, 'rgba(255,255,255,0.7)'); right.addColorStop(0.6, 'rgba(255,255,255,0)');
+  right.addColorStop(0, `rgba(${edge},0.7)`); right.addColorStop(0.6, `rgba(${edge},0)`);
   g.fillStyle = right; g.fillRect(x + w - 2 * k, y, 2 * k, h);
   g.restore();
-  g.lineWidth = 1 * k; g.strokeStyle = 'rgba(255,255,255,0.12)';
+  g.lineWidth = 1 * k; g.strokeStyle = look?.stroke ?? 'rgba(255,255,255,0.12)';
   rr(g, x + k / 2, y + k / 2, w - k, h - k, Math.max(0, r - k / 2)); g.stroke();
 }
 
