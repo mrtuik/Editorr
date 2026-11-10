@@ -4,6 +4,7 @@ import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { docuSegments } from './docuApply';
 import { exportBroll, exportBrollVideos } from './brollRenderer';
 import { exportDocu } from './docuRenderer';
+import { captionZonesFor } from './creators';
 import { effectiveGain } from './gain';
 import { fxForExport } from './fx';
 import { outputSize, type CropState, type Project } from './types';
@@ -202,7 +203,7 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     mirrorHost: p.mirrorHost, mirrorConst: p.mirrorConst,
     noiseHost: p.noiseHost, noiseConst: p.noiseConst,
     mainAudio: p.mainAudio,
-    captions: exportCaptions(p.captions, p.captionStyle),
+    captions: exportCaptions(p.captions, p.captionStyle, captionZonesFor(p)),
     ...(exportTexts(p.texts) ? { texts: exportTexts(p.texts) } : {}),
     ...(exportDocu(p.docu, w, h) ? { docu: exportDocu(p.docu, w, h) } : {}),
     ...(exportBroll(p.broll, w, h) ? { broll: exportBroll(p.broll, w, h) } : {}),

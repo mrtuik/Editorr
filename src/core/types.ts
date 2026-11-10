@@ -214,6 +214,8 @@ export interface Project {
   agentWords?: import('./captions').CaptionData;
   /** Documentary typography beats (black screen, split card, quote) at timeline time. */
   docu?: import('./docuTypes').DocuBeat[];
+  /** The creator template last applied (Kallaway when missing): decides the caption zones on cards. */
+  creator?: import('./creators').CreatorId;
   /** B-roll photos (a still with a slow move) that cut in over the video, at timeline time. */
   broll?: import('./brollTypes').BrollBeat[];
   /** the sound designer already ran on this project */

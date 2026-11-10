@@ -7,7 +7,9 @@ import { needsRoman, romanize } from './romanize';
 export interface CapWord { w: string; orig: string; s: number; e: number; /** own style of this word (tap a word in Captions) */ fx?: Fx }
 export interface CaptionData { lang: string; words: CapWord[] }
 
-export type CapLook = 'classic' | 'bold' | 'karaoke' | 'box' | 'minimal' | 'pop' | 'blink';
+export type CapLook = 'classic' | 'bold' | 'karaoke' | 'box' | 'minimal' | 'pop' | 'blink' | 'pill';
+/** Second font (dual font): which words of a caption use it. alt = every other word, first / last = that word, key = the longest word. */
+export interface CaptionPair { font: FontId; mode: 'alt' | 'first' | 'last' | 'key'; italic?: boolean; color?: string }
 export interface CaptionStyle {
   look: CapLook;
   /** text height as a fraction of the video height */
@@ -22,11 +24,17 @@ export interface CaptionStyle {
   roman: boolean;
   /** font, stroke, glow, shadow, background for ALL words (a word can add its own on top) */
   fx?: Fx;
+  /** dual font: a second font (and colour) for some words of every caption */
+  pair?: CaptionPair;
+  /** dual writing: the original script on the main line and Banglish / Hinglish in small letters under it */
+  dual?: boolean;
 }
 export const DEFAULT_CAPTION_STYLE: CaptionStyle = { look: 'karaoke', size: 0.055, y: 0.78, wordsPerLine: 3, upper: false, color: '#FFFFFF', highlight: '#FFD60A', roman: true };
 
 // ---------------------------------------------------------------------- per-word / per-text effects (Fx)
-export type FontId = 'sans' | 'condensed' | 'serif' | 'mono' | 'casual' | 'script';
+export type FontId = 'sans' | 'condensed' | 'serif' | 'mono' | 'casual' | 'script' | 'heavy' | 'poppins' | 'soft' | 'editorial' | 'baskerville' | 'typewriter' | 'slab';
+/** Every stack ends in generic families, so Bangla, Hindi, Arabic, Tamil ... (anything the phone has a font for) still shows when a font has no letter for it. */
+const FALLBACK = 'Roboto, "Noto Sans", "Noto Sans Bengali", "Noto Sans Devanagari", "Noto Sans Arabic", sans-serif';
 export const FONTS: { id: FontId; name: string; css: string }[] = [
   { id: 'sans', name: 'Clean', css: 'Roboto, "Noto Sans", Arial, sans-serif' },
   { id: 'condensed', name: 'Condensed', css: '"sans-serif-condensed", "Roboto Condensed", sans-serif' },
@@ -34,7 +42,43 @@ export const FONTS: { id: FontId; name: string; css: string }[] = [
   { id: 'mono', name: 'Mono', css: 'monospace' },
   { id: 'casual', name: 'Casual', css: 'casual, cursive' },
   { id: 'script', name: 'Script', css: 'cursive' },
+  { id: 'heavy', name: 'Heavy', css: `CapHeavy, ${FALLBACK}` },
+  { id: 'poppins', name: 'Poppins', css: `CapPoppins, ${FALLBACK}` },
+  { id: 'soft', name: 'Soft', css: `CapSoft, ${FALLBACK}` },
+  { id: 'editorial', name: 'Editorial', css: `CapEditorial, Georgia, \"Noto Serif\", serif` },
+  { id: 'baskerville', name: 'Baskerville', css: `CapBaskerville, Georgia, \"Noto Serif\", serif` },
+  { id: 'typewriter', name: 'Typewriter', css: `CapTypewriter, \"Noto Sans Mono\", monospace` },
+  { id: 'slab', name: 'Slab', css: `CapSlab, \"Noto Serif\", serif` },
 ];
+/**
+ * Font files that ship inside the app (public/fonts). The preview loads them with the FontFace API and the Android export
+ * reads the very same files, so a caption looks the same in both. `italic` = a real italic file (else the letters are slanted).
+ */
+export const BUNDLED_FONTS: { id: FontId; family: string; file: string; italic?: string }[] = [
+  { id: 'heavy', family: 'CapHeavy', file: 'inter-black.otf' },
+  { id: 'poppins', family: 'CapPoppins', file: 'poppins-bold.ttf', italic: 'poppins-bolditalic.ttf' },
+  { id: 'soft', family: 'CapSoft', file: 'poppins-medium.ttf', italic: 'poppins-mediumitalic.ttf' },
+  { id: 'editorial', family: 'CapEditorial', file: 'caladea-bold.ttf', italic: 'caladea-bolditalic.ttf' },
+  { id: 'baskerville', family: 'CapBaskerville', file: 'gfsbaskerville.otf' },
+  { id: 'typewriter', family: 'CapTypewriter', file: 'liberationmono-bold.ttf' },
+  { id: 'slab', family: 'CapSlab', file: 'dejavuserif-bold.ttf' },
+];
+let fontsLoading: Promise<void> | undefined;
+/** Loads the bundled fonts once. Canvas text does not wait for a font, so callers redraw when this resolves. */
+export function loadCaptionFonts(): Promise<void> {
+  if (fontsLoading) return fontsLoading;
+  if (typeof document === 'undefined' || !('fonts' in document) || typeof FontFace === 'undefined') return (fontsLoading = Promise.resolve());
+  const base = document.baseURI;
+  const jobs: Promise<unknown>[] = [];
+  for (const f of BUNDLED_FONTS) {
+    for (const [file, style] of [[f.file, 'normal'], ...(f.italic ? [[f.italic, 'italic']] : [])] as [string, string][]) {
+      const ff = new FontFace(f.family, `url(${new URL('fonts/' + file, base).href})`, { weight: '100 900', style });
+      document.fonts.add(ff);
+      jobs.push(ff.load().catch(() => undefined));
+    }
+  }
+  return (fontsLoading = Promise.all(jobs).then(() => undefined));
+}
 export const fontCss = (id: FontId | undefined) => (FONTS.find((f) => f.id === id) ?? FONTS[0]).css;
 
 /**
@@ -129,6 +173,8 @@ export interface LookDef {
   id: CapLook; name: string;
   weight: number; stroke: number; strokeColor: string; shadow: boolean;
   box: string | null; activeColor: boolean; activeScale: number;
+  /** the spoken word gets a rounded pill in the highlight colour (dark letters) */
+  activeBg?: boolean;
 }
 export const LOOKS: LookDef[] = [
   { id: 'classic', name: 'Classic', weight: 700, stroke: 0.14, strokeColor: '#000000', shadow: false, box: null, activeColor: false, activeScale: 1 },
@@ -138,35 +184,73 @@ export const LOOKS: LookDef[] = [
   { id: 'minimal', name: 'Minimal', weight: 500, stroke: 0, strokeColor: '#000000', shadow: true, box: null, activeColor: false, activeScale: 1 },
   { id: 'pop', name: 'Pop', weight: 900, stroke: 0.18, strokeColor: '#000000', shadow: false, box: null, activeColor: true, activeScale: 1.18 },
   // Blink: chunky neon pop — the word being spoken bounces 1.0 -> 1.25 -> 1.0 and lights up in the highlight colour.
+  { id: 'pill', name: 'Pill', weight: 800, stroke: 0, strokeColor: '#000000', shadow: true, box: null, activeColor: false, activeScale: 1, activeBg: true },
   { id: 'blink', name: 'Blink', weight: 900, stroke: 0.2, strokeColor: '#000000', shadow: true, box: null, activeColor: true, activeScale: 1.25 },
 ];
 /** How long the spoken word's pop-in bounce lasts (preview and export use the same number). */
 export const BOUNCE_MS = 220;
 export const lookOf = (id: CapLook) => LOOKS.find((l) => l.id === id) ?? LOOKS[0];
 
-export interface CapPage { s: number; e: number; from: number; to: number; words: { t: string; s: number; e: number; fx?: Fx }[] }
+export interface CapPage { s: number; e: number; from: number; to: number; words: { t: string; /** the other writing of this word (dual writing) */ t2?: string; s: number; e: number; fx?: Fx }[]; /** index into the caption zones: this page is one big kinetic word on a card boundary */ zone?: number }
+
+/**
+ * A caption zone: while a Kallaway / glass card with a speaker window is on screen, the words are shown ONE at a time,
+ * big, right on the line between the card and the window. x / y = centre as a fraction of the frame, size = text height as a fraction of the frame height.
+ */
+export interface CapZone { s: number; e: number; x: number; y: number; size: number }
+/** The small second line of dual writing: same place, a little under the main line, plain look. */
+export const dualStyle = (st: CaptionStyle): CaptionStyle => ({ ...st, look: 'minimal', size: st.size * 0.6, y: Math.min(0.97, st.y + st.size * 0.95), fx: undefined, pair: undefined, dual: false });
+/** The caption page as it is drawn on the second line of dual writing (undefined when no word has another writing). */
+export const dualPage = (pg: CapPage): CapPage | undefined => (pg.words.some((x) => x.t2) ? { ...pg, words: pg.words.map((x) => ({ ...x, t: x.t2 ?? x.t, fx: undefined })) } : undefined);
+/** The look of a zone word: pop bounce, capitals, one word per page. */
+export const zoneStyle = (st: CaptionStyle, z: CapZone): CaptionStyle => ({ ...st, look: 'pop', size: z.size, y: z.y, upper: true, wordsPerLine: 1 });
 
 /** Words -> pages of `wordsPerLine` words. A long pause or the end of a sentence also starts a new page. */
-export function buildPages(c: CaptionData | undefined, st: CaptionStyle): CapPage[] {
+export function buildPages(c: CaptionData | undefined, st: CaptionStyle, zones?: CapZone[]): CapPage[] {
   if (!c || !c.words.length) return [];
   const pages: CapPage[] = [];
   let cur: CapPage | null = null;
   for (let iw = 0; iw < c.words.length; iw++) {
     const w = c.words[iw];
-    let t = st.roman && needsRoman(w.orig) ? romanize(w.orig) : (st.roman ? w.w : w.orig || w.w);
-    if (st.upper) t = t.toUpperCase();
+    const script = needsRoman(w.orig);
+    let t = st.dual ? (w.orig || w.w) : st.roman && script ? romanize(w.orig) : (st.roman ? w.w : w.orig || w.w);
+    let t2 = st.dual && script ? romanize(w.orig) : undefined;
+    if (st.upper) { t = t.toUpperCase(); if (t2) t2 = t2.toUpperCase(); }
+    const zi = zones && zones.length ? zones.findIndex((z) => w.s >= z.s && w.s < z.e) : -1;
+    if (zi >= 0) {
+      pages.push({ s: w.s, e: w.e, from: iw, to: iw, words: [{ t: t.toUpperCase(), s: w.s, e: w.e, ...(w.fx ? { fx: w.fx } : {}) }], zone: zi });
+      cur = null;
+      continue;
+    }
     const gap = cur ? w.s - cur.words[cur.words.length - 1].e : 0;
     const prev = cur ? cur.words[cur.words.length - 1].t : '';
     if (!cur || cur.words.length >= st.wordsPerLine || gap > 800 || /[.!?।]$/.test(prev)) {
       cur = { s: w.s, e: w.e, from: iw, to: iw, words: [] };
       pages.push(cur);
     }
-    cur.words.push({ t, s: w.s, e: w.e, ...(w.fx ? { fx: w.fx } : {}) });
+    cur.words.push({ t, ...(t2 ? { t2 } : {}), s: w.s, e: w.e, ...(w.fx ? { fx: w.fx } : {}) });
     cur.e = w.e; cur.to = iw;
   }
   for (let i = 0; i < pages.length; i++) {
     const next = pages[i + 1];
     pages[i].e = Math.min(pages[i].e + 250, next ? next.s : Infinity);
+  }
+  // dual font: give some words of every caption the second font (a word's own font / colour always wins)
+  const pr = st.pair;
+  if (pr) for (const pg of pages) {
+    if (pg.zone !== undefined || pg.words.length < 2) continue;
+    const n = pg.words.length;
+    let key = 0;
+    if (pr.mode === 'key') for (let i = 1; i < n; i++) if (pg.words[i]!.t.length > pg.words[key]!.t.length) key = i;
+    pg.words.forEach((x, i) => {
+      const on = pr.mode === 'alt' ? i % 2 === 1 : pr.mode === 'first' ? i === 0 : pr.mode === 'last' ? i === n - 1 : i === key;
+      if (!on) return;
+      const f: Fx = { ...(x.fx ?? {}) };
+      if (!f.font) f.font = pr.font;
+      if (pr.italic !== undefined && f.italic === undefined) f.italic = pr.italic;
+      if (pr.color && !f.color) f.color = pr.color;
+      x.fx = f;
+    });
   }
   return pages;
 }
@@ -277,7 +361,12 @@ export function drawCaption(g: CanvasRenderingContext2D, w: number, h: number, p
         g.fill();
       }
       g.font = font(r, fs * r.scale * sc * k);
-      const col = look.activeColor && on && !wdd.fx?.color ? st.highlight : r.color;
+      if (look.activeBg && on) {
+        g.fillStyle = st.highlight;
+        roundRect(x - fs * 0.22, lineCy - fs * 0.62, tw + fs * 0.44, fs * 1.24, fs * 0.3);
+        g.fill();
+      }
+      const col = look.activeColor && on && !wdd.fx?.color ? st.highlight : look.activeBg && on && !wdd.fx?.color ? '#111111' : r.color;
       if (r.glow) {
         g.shadowColor = r.glow.c; g.shadowBlur = fs * r.glow.b; g.shadowOffsetX = 0; g.shadowOffsetY = 0;
         g.fillStyle = col;
@@ -305,21 +394,35 @@ export function drawCaption(g: CanvasRenderingContext2D, w: number, h: number, p
 }
 
 /** What the native export needs: pages with their words and the style numbers. */
-export function exportCaptions(c: CaptionData | undefined, st: CaptionStyle | undefined) {
+export function exportCaptions(c: CaptionData | undefined, st: CaptionStyle | undefined, zones?: CapZone[]) {
   if (!c || !st) return undefined;
-  const pages = buildPages(c, st);
-  if (!pages.length) return undefined;
-  const look = lookOf(st.look);
-  return {
-    pages: pages.map((p) => ({ s: Math.round(p.s), e: Math.round(p.e), words: p.words.map((x) => wordOut(look, st.color, st.fx, x)) })),
-    style: {
-      size: st.size, y: st.y, highlight: st.highlight,
-      weight: look.weight, box: st.fx?.bg !== undefined ? (st.fx.bg ? hexA(st.fx.bg.c, st.fx.bg.o) : '') : (look.box ?? ''), boxR: st.fx?.bg?.r ?? 0.3,
-      activeColor: look.activeColor, activeScale: look.activeScale,
+  const all = buildPages(c, st, zones);
+  if (!all.length) return undefined;
+  const pagesOut = (list: CapPage[], s: CaptionStyle) => { const look = lookOf(s.look); return list.map((p) => ({ s: Math.round(p.s), e: Math.round(p.e), words: p.words.map((x) => wordOut(look, s.color, s.fx, x)) })); };
+  const styleOut = (s: CaptionStyle) => {
+    const look = lookOf(s.look);
+    return {
+      size: s.size, y: s.y, highlight: s.highlight,
+      weight: look.weight, box: s.fx?.bg !== undefined ? (s.fx.bg ? hexA(s.fx.bg.c, s.fx.bg.o) : '') : (look.box ?? ''), boxR: s.fx?.bg?.r ?? 0.3,
+      activeColor: look.activeColor, activeScale: look.activeScale, activeBg: !!look.activeBg,
       bounceMs: look.activeScale > 1 ? BOUNCE_MS : 0,
-      ...baseOut(look, st.color, st.fx),
-    },
+      ...baseOut(look, s.color, s.fx),
+    };
   };
+  // words that sit on a card boundary are drawn by their own overlay (one big word at a time), the rest by the normal captions
+  const extra: { pages: ReturnType<typeof pagesOut>; style: Record<string, unknown> }[] = [];
+  (zones ?? []).forEach((z, zi) => {
+    const list = all.filter((p) => p.zone === zi);
+    if (list.length) extra.push({ pages: pagesOut(list, zoneStyle(st, z)), style: { ...styleOut(zoneStyle(st, z)), x: z.x } });
+  });
+  const main = all.filter((p) => p.zone === undefined);
+  // dual writing: the small second line (Banglish / Hinglish under the original script) is its own caption overlay
+  if (st.dual) {
+    const st2 = dualStyle(st);
+    const second = main.filter((p) => p.words.some((x) => x.t2)).map((p) => ({ ...p, words: p.words.map((x) => ({ ...x, t: x.t2 ?? x.t, fx: undefined })) }));
+    if (second.length) extra.push({ pages: pagesOut(second, st2), style: styleOut(st2) });
+  }
+  return { pages: pagesOut(main, st), style: styleOut(st), ...(extra.length ? { zones: extra } : {}) };
 }
 function baseOut(look: LookDef, color: string, fx: Fx | undefined) {
   const f = fxForExport(resolveFx(look, color, fx));

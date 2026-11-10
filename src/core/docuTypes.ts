@@ -44,7 +44,7 @@ export interface DocuBeat {
 }
 
 export type DocuFont = 'inter' | 'oswald' | 'playfair' | 'jetbrains';
-export type DocuTemplateId = 'glass' | 'vox' | 'noir' | 'swiss' | 'cyber' | 'keynote' | 'breaking';
+export type DocuTemplateId = 'glass' | 'hormozi' | 'vox' | 'noir' | 'swiss' | 'cyber' | 'keynote' | 'breaking';
 export interface DocuShadow { blur: number; dist: number; color: string }
 export interface DocuStyle {
   template?: DocuTemplateId;
@@ -86,6 +86,8 @@ export const GLASS_BG = '#060607', GLASS_CARD = '#141418';
 export const isGlass = (b: { style?: DocuStyle }): boolean => !b.style || (b.style.template === 'glass' && b.style.bg === GLASS_BG && b.style.card === GLASS_CARD);
 
 export const DOCU_TEMPLATES: DocuTemplate[] = [
+  { id: 'hormozi', label: 'Hormozi Bold', hint: 'Black, yellow card, heavy type', type: 'split_screen', accent: '#000000', radius: 14,
+    style: { template: 'hormozi', font: 'inter', caps: true, text: '#000000', bg: '#000000', card: '#FFE600', pad: 48, border: 0, shadow: { blur: 18, dist: 8, color: '#000000' } } },
   { id: 'glass', label: 'Kallaway Glass', hint: 'Onyx, dot grid, red accent', type: 'split_screen', accent: '#D1121B', radius: 28,
     style: { template: 'glass', font: 'inter', caps: true, text: '#FFFFFF', bg: GLASS_BG, card: GLASS_CARD, pad: 43, border: 0, shadow: { blur: 0, dist: 0, color: '#000000' } } },
   { id: 'vox', label: 'Vox Editorial', hint: 'Blue, yellow accent', type: 'split_screen', accent: '#FFD60A', radius: 20,

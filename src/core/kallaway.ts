@@ -19,7 +19,7 @@ import { motionAt, introPlan, springOvershoot, REST, type Motion } from './kalla
 import { sanitizeSvg, svgDataUrl } from './kallawaySvg';
 import { aspectValue, type Aspect } from './types';
 
-export type KallawayKind = 'steps' | 'script' | 'photo' | 'stat' | 'quote' | 'svg' | 'loop' | 'versus';
+export type KallawayKind = 'steps' | 'script' | 'photo' | 'stat' | 'quote' | 'svg' | 'loop' | 'versus' | 'tweet' | 'receipt';
 
 export interface KallawaySpec {
   kind: KallawayKind;
@@ -37,6 +37,10 @@ export interface KallawaySpec {
   stat?: { big: string; label?: string; trend?: 'up' | 'down' };
   /** quote card: the supporting line under the big two-font headline */
   sub?: string;
+  /** tweet card: a social post (author, handle, text, and optional numbers under it that count up) */
+  post?: { name: string; handle: string; text: string; likes?: string; reposts?: string };
+  /** receipt card: a paper receipt that prints line by line (shop, items with amounts, optional total) */
+  receipt?: { shop: string; lines: { label: string; amount: string }[]; total?: string };
   /** svg card: the graphic (cleaned before use, see kallawaySvg.ts) */
   svg?: string;
   /** Share of the frame the card / picture takes: 0.5 = 50-50, 0.58 = Kallaway, 0.65 = big picture. Missing = the default for the frame shape. */
@@ -374,6 +378,139 @@ function paintQuote(g: CanvasRenderingContext2D, spec: KallawaySpec, card: Area,
   g.fillStyle = KALLAWAY_RED; g.fillRect(card.x + card.w / 2 - 70 * k, bottom + 26 * k, 140 * k, 9 * k);
 }
 
+
+/** "Coffee | $4.50" per line (or "Coffee $4.50") -> receipt lines. */
+export function parseReceiptLines(text: string): { label: string; amount: string }[] {
+  const out: { label: string; amount: string }[] = [];
+  for (const raw of text.split('\n')) {
+    const ln = raw.trim();
+    if (!ln) continue;
+    const bar = ln.lastIndexOf('|');
+    if (bar > 0) { out.push({ label: ln.slice(0, bar).trim(), amount: ln.slice(bar + 1).trim() }); continue; }
+    const m = ln.match(/^(.*?)[\s:]+([$€£₹]?\s?\d[\d,.]*\s?[kKmMbB%]?)$/);
+    out.push(m ? { label: m[1]!.trim(), amount: m[2]!.trim() } : { label: ln, amount: '' });
+  }
+  return out.slice(0, 7);
+}
+export const receiptLinesText = (lines: { label: string; amount: string }[] | undefined) => (lines ?? []).map((l) => `${l.label} | ${l.amount}`).join('\n');
+
+/** Tweet / post card: avatar, name + handle, the text, and likes / reposts that count up. No verified badge: the author is never a real account unless the person typed one. */
+function paintTweet(g: CanvasRenderingContext2D, spec: KallawaySpec, area: Area, k: number, mo: Motion) {
+  const post = spec.post ?? { name: '', handle: '', text: '' };
+  const x = area.x + 6 * k, y = area.y + 6 * k, w = area.w - 12 * k, h = area.h - 12 * k;
+  glassCard(g, x, y, w, h, 24 * k, k);
+  const pad = 40 * k, ix = x + pad, maxW = w - pad * 2;
+  let cy = y + pad;
+  const av = 46 * k, name = post.name.trim() || 'Someone', handle = (post.handle.trim() || '@someone').replace(/^(?!@)/, '@');
+  const grad = g.createLinearGradient(ix, cy, ix + av * 2, cy + av * 2);
+  grad.addColorStop(0, '#46464f'); grad.addColorStop(1, '#17171b');
+  g.fillStyle = grad; g.beginPath(); g.arc(ix + av, cy + av, av, 0, Math.PI * 2); g.fill();
+  g.lineWidth = 2 * k; g.strokeStyle = 'rgba(255,255,255,0.25)'; g.stroke();
+  g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `800 ${Math.round(av * 0.95)}px ${SANS}`;
+  g.fillText((name[0] ?? '?').toUpperCase(), ix + av, cy + av + 2 * k);
+  const tx = ix + av * 2 + 20 * k;
+  g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  g.font = `800 ${Math.round(38 * k)}px ${SANS}`; g.fillStyle = '#fff';
+  g.fillText(wrapLines(g, name, maxW - av * 2 - 20 * k, 1)[0] ?? name, tx, cy + av * 0.82);
+  g.font = `500 ${Math.round(31 * k)}px ${SANS}`; g.fillStyle = 'rgba(255,255,255,0.55)';
+  g.fillText(handle, tx, cy + av * 1.5);
+  cy += av * 2 + 34 * k;
+  const hasStats = !!(post.likes?.trim() || post.reposts?.trim());
+  const room = y + h - cy - pad - (hasStats ? 96 * k : 0);
+  let fs = Math.round(60 * k);
+  let lines: string[] = [];
+  for (; fs > 26 * k; fs -= 3) { g.font = `500 ${fs}px ${SANS}`; lines = wrapLines(g, post.text, maxW, 9); if (lines.length * fs * 1.28 <= room) break; }
+  g.fillStyle = '#fff';
+  lines.forEach((ln, i) => g.fillText(ln, ix, cy + fs + i * fs * 1.28));
+  cy += lines.length * fs * 1.28 + 30 * k;
+  if (!hasStats) return;
+  g.fillStyle = 'rgba(255,255,255,0.12)'; g.fillRect(ix, cy, maxW, 2 * k);
+  cy += 52 * k;
+  const sz = Math.round(36 * k);
+  g.font = `700 ${sz}px ${SANS}`;
+  let px = ix;
+  if (post.likes?.trim()) {
+    // heart
+    const hx = px + 16 * k, hy = cy - 12 * k, s = 15 * k;
+    g.fillStyle = KALLAWAY_RED; g.beginPath(); g.moveTo(hx, hy + s * 0.9);
+    g.bezierCurveTo(hx - s * 1.6, hy - s * 0.2, hx - s * 0.7, hy - s * 1.3, hx, hy - s * 0.4);
+    g.bezierCurveTo(hx + s * 0.7, hy - s * 1.3, hx + s * 1.6, hy - s * 0.2, hx, hy + s * 0.9); g.fill();
+    g.fillStyle = '#fff'; g.textAlign = 'left';
+    const t = countText(post.likes.trim(), mo.count);
+    g.fillText(t, px + 44 * k, cy); px += 44 * k + g.measureText(post.likes.trim()).width + 48 * k;
+  }
+  if (post.reposts?.trim()) {
+    const rx = px + 16 * k, ry = cy - 12 * k, r = 14 * k, a1 = Math.PI * 1.45;
+    g.strokeStyle = 'rgba(255,255,255,0.8)'; g.lineWidth = 3.4 * k; g.lineCap = 'round';
+    g.beginPath(); g.arc(rx, ry, r, -Math.PI * 0.2, a1); g.stroke();
+    const ex = rx + r * Math.cos(a1), ey = ry + r * Math.sin(a1), tgx = -Math.sin(a1), tgy = Math.cos(a1), nx = Math.cos(a1), ny = Math.sin(a1);
+    g.fillStyle = 'rgba(255,255,255,0.8)'; g.beginPath();
+    g.moveTo(ex + tgx * r * 0.6, ey + tgy * r * 0.6); g.lineTo(ex + nx * r * 0.5, ey + ny * r * 0.5); g.lineTo(ex - nx * r * 0.5, ey - ny * r * 0.5); g.closePath(); g.fill();
+    g.fillStyle = '#fff'; g.textAlign = 'left';
+    g.fillText(countText(post.reposts.trim(), mo.count), px + 44 * k, cy);
+  }
+}
+
+/** Receipt card: a paper receipt (zig-zag edge, dashed lines, mono type) that prints line by line. */
+function paintReceipt(g: CanvasRenderingContext2D, spec: KallawaySpec, area: Area, k: number, mo: Motion) {
+  const rc = spec.receipt ?? { shop: '', lines: [] };
+  const lines = rc.lines.filter((l) => l.label.trim() || l.amount.trim()).slice(0, 7);
+  const x = area.x + 6 * k, y = area.y + 6 * k, w = area.w - 12 * k, h = area.h - 12 * k;
+  glassCard(g, x, y, w, h, 24 * k, k);
+  const MONO = '"JetBrains Mono","Roboto Mono","Courier New",monospace';
+  const pw = Math.min(w * 0.8, 760 * k);
+  const fs = Math.round(Math.min(42 * k, (h * 0.8) / (lines.length + 7) / 1.35)), pitch = fs * 1.5;
+  const body = pitch * (lines.length + (rc.total ? 2.6 : 1.2)) + fs * 4.4 + 70 * k;
+  const ph = Math.min(h - 24 * k, body), px = x + (w - pw) / 2, py = y + (h - ph) / 2;
+  g.save();
+  g.translate(x + w / 2, y + h / 2); g.rotate(-0.025); g.translate(-(x + w / 2), -(y + h / 2));
+  // paper with a zig-zag bottom edge and a soft shadow
+  const tooth = 16 * k, teeth = Math.max(4, Math.round(pw / tooth));
+  const paper = () => {
+    g.beginPath(); g.moveTo(px, py); g.lineTo(px + pw, py); g.lineTo(px + pw, py + ph - tooth * 0.6);
+    for (let i = 0; i < teeth; i++) { const tx = px + pw - ((i + 0.5) * pw) / teeth, tx2 = px + pw - ((i + 1) * pw) / teeth; g.lineTo(tx, py + ph); g.lineTo(tx2, py + ph - tooth * 0.6); }
+    g.closePath();
+  };
+  g.shadowColor = 'rgba(0,0,0,0.55)'; g.shadowBlur = 30 * k; g.shadowOffsetY = 14 * k;
+  g.fillStyle = '#F4F1EA'; paper(); g.fill();
+  g.shadowColor = 'transparent'; g.shadowBlur = 0; g.shadowOffsetY = 0;
+  g.save(); paper(); g.clip();
+  const sheen = g.createLinearGradient(px, py, px + pw, py + ph); sheen.addColorStop(0, 'rgba(255,255,255,0.5)'); sheen.addColorStop(0.5, 'rgba(255,255,255,0)'); sheen.addColorStop(1, 'rgba(0,0,0,0.06)');
+  g.fillStyle = sheen; g.fillRect(px, py, pw, ph);
+  const ink = '#1b1b1f', mid = pw / 2, left = px + 36 * k, right = px + pw - 36 * k;
+  let cy = py + 38 * k + fs;
+  g.textBaseline = 'alphabetic'; g.fillStyle = ink;
+  g.textAlign = 'center'; g.font = `900 ${Math.round(fs * 1.25)}px ${MONO}`;
+  g.fillText((rc.shop.trim() || 'RECEIPT').toUpperCase(), px + mid, cy); cy += pitch * 0.9;
+  const dash = () => { g.save(); g.setLineDash([9 * k, 7 * k]); g.strokeStyle = 'rgba(27,27,31,0.55)'; g.lineWidth = 2 * k; g.beginPath(); g.moveTo(left, cy - fs * 0.35); g.lineTo(right, cy - fs * 0.35); g.stroke(); g.restore(); cy += pitch * 0.6; };
+  dash();
+  g.font = `600 ${fs}px ${MONO}`;
+  lines.forEach((l, i) => {
+    // each line prints in turn while the card comes in
+    const shown = Math.max(0, Math.min(1, mo.count * (lines.length + 1) - i));
+    g.save(); g.globalAlpha *= shown;
+    g.textAlign = 'left'; g.fillStyle = ink; g.fillText(wrapLines(g, l.label.toUpperCase(), right - left - fs * 6, 1)[0] ?? '', left, cy + (1 - shown) * fs * 0.4);
+    g.textAlign = 'right'; g.fillText(l.amount, right, cy + (1 - shown) * fs * 0.4);
+    g.restore();
+    cy += pitch;
+  });
+  if (rc.total?.trim()) {
+    dash();
+    g.save(); g.globalAlpha *= Math.max(0, Math.min(1, mo.count * (lines.length + 2) - lines.length));
+    g.font = `900 ${Math.round(fs * 1.2)}px ${MONO}`;
+    g.textAlign = 'left'; g.fillStyle = ink; g.fillText('TOTAL', left, cy + fs * 0.2);
+    g.textAlign = 'right'; g.fillStyle = KALLAWAY_RED; g.fillText(rc.total.trim(), right, cy + fs * 0.2);
+    g.restore();
+    cy += pitch * 1.2;
+  }
+  // barcode strip
+  const bw = Math.min(pw * 0.6, 360 * k), bx = px + mid - bw / 2, by = Math.min(py + ph - tooth - 46 * k, cy + 6 * k);
+  g.fillStyle = ink;
+  for (let i = 0, bxp = bx; bxp < bx + bw; i++) { const bwid = (1 + ((i * 7 + 3) % 4)) * k * 1.6; g.fillRect(bxp, by, bwid, 30 * k); bxp += bwid + (1 + ((i * 5 + 1) % 3)) * k * 1.6; }
+  g.restore();
+  g.restore();
+}
+
 const shareFor = (spec: KallawaySpec, layout: 'side' | 'updown') => spec.share ?? (layout === 'updown' ? SHARE_TALL : SHARE_WIDE);
 export const isFullScreen = (spec: KallawaySpec) => spec.speaker === 'none';
 /** The speaker's side decides the split: top / bottom = stacked (even on a wide frame), left / right = side by side. */
@@ -402,12 +539,14 @@ export function paintKallaway(g: CanvasRenderingContext2D, spec: KallawaySpec, a
   // the card content pops (scales) around the middle of the card area
   g.translate(card.x + card.w / 2, card.y + card.h / 2); g.scale(mo.pop, mo.pop); g.translate(-(card.x + card.w / 2), -(card.y + card.h / 2));
   const cx = card.x + card.w / 2;
-  const hasTitle = !!(spec.a.trim() || spec.b.trim() || spec.c.trim()) && spec.kind !== 'quote';
+  const hasTitle = !!(spec.a.trim() || spec.b.trim() || spec.c.trim()) && spec.kind !== 'quote' && spec.kind !== 'tweet' && spec.kind !== 'receipt';
   const below = hasTitle ? drawTitle(g, spec, cx, card.y + 20 * k, card.w * 0.92, k, card.h * 0.34) : card.y + 6 * k;
   const pad = 18 * k;
   const handleRoom = (spec.handle.trim() && !full ? 44 : 6) * k;
   const area = { x: card.x, y: below + pad, w: card.w, h: card.y + card.h - below - pad - handleRoom };
   if (spec.kind === 'quote') paintQuote(g, spec, { x: card.x, y: card.y, w: card.w, h: card.h - handleRoom }, k);
+  else if (spec.kind === 'tweet') paintTweet(g, spec, { x: card.x, y: card.y, w: card.w, h: card.h - handleRoom }, k, mo);
+  else if (spec.kind === 'receipt') paintReceipt(g, spec, { x: card.x, y: card.y, w: card.w, h: card.h - handleRoom }, k, mo);
   else if (area.h > 80 * k) {
     if (spec.kind === 'steps') paintSteps(g, spec, active, area, k, mo);
     else if (spec.kind === 'loop') paintLoop(g, spec, active, area, k, mo);
@@ -542,7 +681,7 @@ export async function makeKallawayBeats(aspect: Aspect, spec: KallawaySpec, star
   const starts: number[] = [];
   const sync = (spec.kind === 'steps' || spec.kind === 'loop') && spec.stepStarts?.length === count ? spec.stepStarts : undefined;
   for (let i = 0; i < count; i++) starts.push(sync ? Math.round(sync[i]!) : Math.round(start + per * i));
-  const counting = spec.kind === 'stat';
+  const counting = spec.kind === 'stat' || spec.kind === 'tweet' || spec.kind === 'receipt';
   const draw = async (name: string, active: number, mo: Motion) => {
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
@@ -561,12 +700,12 @@ export async function makeKallawayBeats(aspect: Aspect, spec: KallawaySpec, star
     const frames: { url: string; path?: string }[] = [];
     for (let j = 0; j < n; j++) frames.push(await draw(`kw_${id}_f${j}`, i, motionAt((j * ms) / n, { entry: i === 0, prev: i - 1, counting })));
     const label = [spec.a, spec.b, spec.c].map((x) => x.trim()).filter(Boolean).join(' ');
-    const subtext = spec.kind === 'steps' || spec.kind === 'loop' ? steps[i] : spec.kind === 'stat' ? spec.stat?.big : spec.kind === 'script' ? ['Hook', 'Body', 'CTA'][i] : spec.kind === 'quote' ? spec.sub : 'Picture';
+    const subtext = spec.kind === 'steps' || spec.kind === 'loop' ? steps[i] : spec.kind === 'stat' ? spec.stat?.big : spec.kind === 'script' ? ['Hook', 'Body', 'CTA'][i] : spec.kind === 'quote' ? spec.sub : spec.kind === 'tweet' ? spec.post?.text : spec.kind === 'receipt' ? spec.receipt?.total || spec.receipt?.shop : 'Picture';
     out.push({
       id, type: 'split_screen', start: bs, end: be,
       layout: full ? 'one' : layout, video_position: pos, card_radius: RADIUS,
       kw: { spec: { ...spec, steps, photo: undefined }, gid, gStart: Math.round(start), gEnd: Math.round(end) },
-      headline: label || (spec.kind === 'stat' ? spec.stat?.big ?? 'Number' : spec.kind === 'photo' || spec.kind === 'svg' ? 'Picture' : 'Kallaway'),
+      headline: label || (spec.kind === 'tweet' ? spec.post?.name || 'Post' : spec.kind === 'receipt' ? spec.receipt?.shop || 'Receipt' : spec.kind === 'stat' ? spec.stat?.big ?? 'Number' : spec.kind === 'photo' || spec.kind === 'svg' ? 'Picture' : 'Kallaway'),
       subtext, accent_color: KALLAWAY_RED, theme: 'noir',
       share, image, frames, framesMs: ms,
     });

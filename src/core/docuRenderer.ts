@@ -8,6 +8,7 @@
 import { Capacitor } from '@capacitor/core';
 import { CARD_SHARE_SIDE, CARD_SHARE_UPDOWN, DOCU_FADE_MS, DEFAULT_CARD_RADIUS, DOCU_FONT_CSS, DOCU_FONT_WEIGHT, isGlass, type DocuBeat, type DocuLayout, type DocuPos } from './docuTypes';
 import { dotGrid, glassCard } from './glass';
+import type { CapZone } from './captions';
 
 export interface Rect { x: number; y: number; w: number; h: number }
 export interface DocuGeo { vertical: boolean; video: Rect; card: Rect }
@@ -271,4 +272,30 @@ function exportStyle(b: DocuBeat, outW: number, outH: number): Record<string, un
     o.lower = true; o.slab = L.slab; o.tag = { ...L.tag, text: L.text, size: L.fontPx };
   }
   return o;
+}
+
+/**
+ * Caption zones for the Kallaway look: for every Kallaway card and glass card that has a speaker window, the words spoken during it
+ * are shown one at a time on the line between the card and the window. `ratio` = frame width / height.
+ */
+export function captionZones(beats: DocuBeat[] | undefined, ratio: number): CapZone[] {
+  const out: CapZone[] = [];
+  const W = Math.max(0.1, ratio) * 1000, H = 1000;
+  for (const b of beats ?? []) {
+    if (b.type !== 'split_screen' || b.layout === 'one' || b.style?.lower) continue;
+    if (!b.kw && !isGlass(b)) continue;
+    const g = docuGeometry(b.layout, b.video_position, W, H, b.share);
+    let x = 0.5, y = 0.5, size: number;
+    if (g.vertical) {
+      const above = g.video.y < g.card.y;
+      y = (above ? g.video.y + g.video.h + g.card.y : g.card.y + g.card.h + g.video.y) / 2 / H;
+      size = 0.05;
+    } else {
+      const left = g.video.x < g.card.x;
+      x = (left ? g.video.x + g.video.w + g.card.x : g.card.x + g.card.w + g.video.x) / 2 / W;
+      size = 0.075;
+    }
+    out.push({ s: b.start, e: b.end, x, y, size });
+  }
+  return out.sort((a, b) => a.s - b.s);
 }

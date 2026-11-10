@@ -16,7 +16,7 @@ import { EditorrNative, isNative } from './native';
 export interface KallawayPick { spec: KallawaySpec; start: number; end: number }
 
 const KIND_MAP: Record<string, KallawayKind> = {
-  step_checklist: 'steps', script_blueprint: 'script', stat_counter: 'stat', quote_callout: 'quote', custom_svg: 'svg', loop_cycle: 'loop', versus: 'versus',
+  step_checklist: 'steps', script_blueprint: 'script', stat_counter: 'stat', quote_callout: 'quote', custom_svg: 'svg', loop_cycle: 'loop', versus: 'versus', tweet_card: 'tweet', receipt_card: 'receipt',
 };
 
 export function buildKallawayPrompt(words: CapWord[]): string {
@@ -39,12 +39,12 @@ Pick EVERY high-value teaching moment for a typography card: about one card per 
 - "versus": the speaker compares two things (this vs that, wrong vs right). items = exactly 2 short labels.
 - "stat_counter": the speaker talks about growth, percentages or money. stat.big = the number as spoken ("40%", "$1.2M", "300"), stat.label = a short line, stat.trend = "up" or "down" when it clearly rises or falls.
 - "quote_callout": one memorable line. subtitle = a supporting line.
-- "custom_svg": ONLY when a simple graphic explains the idea better. svg = ONE <svg> with a viewBox, plain shapes and text, no scripts, no images, no external links.
+- "tweet_card": ONLY when the speaker reads out or paraphrases a post, comment, review or message. post.text = that text (max 160 chars), post.name + post.handle = the author ONLY if the speaker names them, otherwise leave them empty (never invent a real person or account), post.likes / post.reposts = numbers only if spoken.\n- "receipt_card": the speaker adds up costs, prices or earnings (2 to 6 items). receipt.shop = short heading, receipt.lines = [{label, amount}] as spoken ("$4.50"), receipt.total = the sum only if spoken.\n- "custom_svg": ONLY when a simple graphic explains the idea better. svg = ONE <svg> with a viewBox, plain shapes and text, no scripts, no images, no external links.
 
 Title: titleSans = 1 to 2 bold words (e.g. "The"), titleSerif = 1 to 3 italic words (e.g. "Desire Hook"), titleLine2 = an optional bold second line (e.g. "Method").
 
 Reply with ONE valid JSON array only, no markdown, no other text:
-[{"kind":"step_checklist"|"loop_cycle"|"versus"|"stat_counter"|"quote_callout"|"custom_svg","start":<seconds>,"end":<seconds>,"titleSans":"","titleSerif":"","titleLine2":"","items":[],"stat":{"big":"","label":"","trend":"up"},"subtitle":"","svg":""}]`;
+[{"kind":"step_checklist"|"loop_cycle"|"versus"|"stat_counter"|"quote_callout"|"tweet_card"|"receipt_card"|"custom_svg","start":<seconds>,"end":<seconds>,"titleSans":"","titleSerif":"","titleLine2":"","items":[],"stat":{"big":"","label":"","trend":"up"},"subtitle":"","post":{"name":"","handle":"","text":"","likes":"","reposts":""},"receipt":{"shop":"","lines":[{"label":"","amount":""}],"total":""},"svg":""}]`;
 }
 
 const clampMs = (v: unknown) => { const n = Math.round(Number(v) * 1000); return isFinite(n) ? n : NaN; };
@@ -77,13 +77,25 @@ export function parseKallawayJson(text: string, words: CapWord[], durationMs: nu
       spec.stat = { big, label: str(st?.label, 90) || undefined, trend: st?.trend === 'down' ? 'down' : st?.trend === 'up' ? 'up' : undefined };
     }
     if (kind === 'quote') { spec.sub = str(o.subtitle, 120); if (!spec.a && !spec.b) continue; }
+    if (kind === 'tweet') {
+      const po = o.post as Record<string, unknown> | undefined;
+      const text = str(po?.text, 160);
+      if (!text) continue;
+      spec.post = { name: str(po?.name, 28), handle: str(po?.handle, 24), text, likes: str(po?.likes, 10) || undefined, reposts: str(po?.reposts, 10) || undefined };
+    }
+    if (kind === 'receipt') {
+      const ro = o.receipt as Record<string, unknown> | undefined;
+      const lines = (Array.isArray(ro?.lines) ? (ro!.lines as Record<string, unknown>[]) : []).map((l) => ({ label: str(l?.label, 28), amount: str(l?.amount, 12) })).filter((l) => l.label && l.amount).slice(0, 6);
+      if (lines.length < 2) continue;
+      spec.receipt = { shop: str(ro?.shop, 24), lines, total: str(ro?.total, 12) || undefined };
+    }
     if (kind === 'svg') {
       const clean = sanitizeSvg(String(o.svg ?? ''));
       if (!clean) continue;
       spec.svg = clean;
     }
     // length: long enough for every point, short enough to stay a moment
-    const min = kind === 'steps' || kind === 'loop' ? items.length * 2000 : kind === 'stat' ? 2500 : 3000;
+    const min = kind === 'steps' || kind === 'loop' ? items.length * 2000 : kind === 'stat' ? 2500 : kind === 'receipt' ? 3500 : 3000;
     end = Math.min(durationMs, Math.max(end, start + min), start + 14000);
     if (end - start < 1800) continue;
     if (kind === 'steps' || kind === 'loop') spec.stepStarts = syncStepStarts(items, words, start, end);
@@ -99,7 +111,7 @@ export function parseKallawayJson(text: string, words: CapWord[], durationMs: nu
 export function diversify(picks: KallawayPick[]): KallawayPick[] {
   const out: KallawayPick[] = [], titles = new Set<string>(), uses = new Map<string, number>();
   for (const p of picks) {
-    const key = [p.spec.a, p.spec.b, p.spec.c].join(' ').trim().toLowerCase() || p.spec.stat?.big || '';
+    const key = [p.spec.a, p.spec.b, p.spec.c].join(' ').trim().toLowerCase() || p.spec.stat?.big || p.spec.post?.text || p.spec.receipt?.shop || '';
     if (key && titles.has(key)) continue;
     if (out.length && out[out.length - 1]!.spec.kind === p.spec.kind) continue;
     if ((uses.get(p.spec.kind) ?? 0) >= 3) continue;
@@ -127,6 +139,8 @@ function spread(picks: KallawayPick[]): KallawayPick[] {
 
 const ORDINAL = /\b(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th|step\s*\d|number\s*(?:one|two|three|four|five|\d)|tip\s*\d|rule\s*\d)\b[\s,:-]*/i;
 const NUM = /(?:[$€£₹]\s?)?\d[\d,]*(?:\.\d+)?\s?(?:%|percent|million|billion|trillion|thousand|crore|lakh|k|x|times)?/i;
+const MONEY = /[$€£₹]\s?\d[\d,]*(?:\.\d+)?\s?[kKmMbB]?/g;
+const POSTY = /\b(tweet|tweeted|posted|a post|comment|comments|replied|review|reviews|dm|dmed|texted me)\b/i;
 const UP = /\b(up|rise|rose|grew|grow|growth|jump|jumped|surge|increase|gain|doubled|tripled)\b/i;
 const DOWN = /\b(down|fall|fell|drop|dropped|lost|lose|decline|crash|halved)\b/i;
 const CLAIM = /\b(never|always|nobody|everyone|biggest|worst|best|secret|truth|shocking|changed|mistake)\b/i;
@@ -166,6 +180,24 @@ export function localKallawayPicks(words: CapWord[], durationMs: number): Kallaw
   const free = (x: { s: number; e: number }) => out.every((o) => x.s > o.end + 300 || x.e < o.start - 300);
   for (const sn of sent) {
     if (sn.s < 800 || sn.e - sn.s < 1800 || !free(sn)) continue;
+    const win = { start: Math.max(0, sn.s - 200), end: Math.min(durationMs, Math.max(sn.e + 600, sn.s + 3200)) };
+    // two or more prices in one sentence -> a receipt that prints them
+    const money = [...sn.text.matchAll(MONEY)];
+    if (money.length >= 2) {
+      let prev = 0;
+      const lines = money.slice(0, 6).map((mm) => {
+        const label = sn.text.slice(prev, mm.index).replace(/[^\p{L}\p{N} ]+/gu, ' ').replace(/\b(and|plus|then|is|are|was|for|the|a|an|of)\b/gi, ' ').replace(/\s+/g, ' ').trim().split(' ').slice(-3).join(' ');
+        prev = (mm.index ?? 0) + mm[0].length;
+        return { label: label || 'Item', amount: mm[0].trim() };
+      });
+      out.push({ spec: { kind: 'receipt', a: '', b: '', c: '', steps: [], handle: '', receipt: { shop: 'The Math', lines } }, ...win });
+      continue;
+    }
+    // somebody's post / comment / review: shown as a post card with a neutral author (never a real account)
+    if (POSTY.test(sn.text) && sn.text.length > 24) {
+      out.push({ spec: { kind: 'tweet', a: '', b: '', c: '', steps: [], handle: '', post: { name: 'Someone online', handle: '@someone', text: sn.text.length > 150 ? sn.text.slice(0, 147) + '...' : sn.text } }, ...win });
+      continue;
+    }
     const m = sn.text.match(NUM);
     const isNum = !!m && m[0].trim().length >= 2 && /\d/.test(m[0]);
     if (isNum) {
