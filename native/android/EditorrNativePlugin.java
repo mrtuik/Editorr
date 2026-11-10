@@ -2024,6 +2024,79 @@ public class EditorrNativePlugin extends Plugin {
                     Color.argb(alpha, Color.red(col), Color.green(col), Color.blue(col)));
         }
 
+        private static int sa(int argb, int alpha) {
+            return Color.argb(Math.round(Color.alpha(argb) * alpha / 255f), Color.red(argb), Color.green(argb), Color.blue(argb));
+        }
+
+        /** Glass look, same numbers as glass.ts: onyx #060607, 1.5 px round dots every 30 px, soft vignette. */
+        private void paintGlassBackdrop(Canvas c, int alpha) {
+            float k = Math.min(w, h) / 1080f;
+            Paint bg = new Paint();
+            bg.setColor(Color.rgb(6, 6, 7)); bg.setAlpha(alpha);
+            c.drawRect(0, 0, w, h, bg);
+            float step = Math.max(8f, Math.round(30f * k)), r = Math.max(0.7f, 0.75f * k);
+            Paint dp = new Paint(Paint.ANTI_ALIAS_FLAG);
+            dp.setColor(Color.WHITE); dp.setAlpha(Math.round(0.22f * alpha));
+            for (float yy = step / 2f; yy < h; yy += step) for (float xx = step / 2f; xx < w; xx += step) c.drawCircle(xx, yy, r, dp);
+            float rad = (float) (Math.hypot(w, h) * 0.62);
+            float inner = Math.min(0.99f, Math.min(w, h) * 0.3f / rad);
+            Paint vp = new Paint();
+            vp.setShader(new android.graphics.RadialGradient(w / 2f, h * 0.4f, rad,
+                    new int[] { Color.argb(Math.round(0.4f * alpha), 18, 18, 24), Color.argb(Math.round(0.95f * alpha), 6, 6, 7) },
+                    new float[] { inner, 1f }, android.graphics.Shader.TileMode.CLAMP));
+            c.drawRect(0, 0, w, h, vp);
+        }
+
+        /** Thin light edge around the cut-out speaker window. */
+        private static void paintWindowEdge(Canvas c, JSONObject video, float radius, int alpha, float k) {
+            float x = (float) video.optDouble("x", 0), y = (float) video.optDouble("y", 0);
+            float vw = (float) video.optDouble("w", 0), vh = (float) video.optDouble("h", 0);
+            float rad = Math.max(0f, Math.min(radius, Math.min(vw / 2f, vh / 2f)));
+            Paint wp = new Paint(Paint.ANTI_ALIAS_FLAG);
+            wp.setStyle(Paint.Style.STROKE); wp.setStrokeWidth(2f * k);
+            wp.setColor(Color.argb(Math.round(0.16f * alpha), 255, 255, 255));
+            c.drawRoundRect(new RectF(x, y, x + vw, y + vh), rad, rad, wp);
+        }
+
+        /** Glass card, same numbers as glassCard() in glass.ts: #141418 at 92 %, inner sheen, double shadow, specular top + right edge. */
+        private static void paintGlassCard(Canvas c, JSONObject card, float radius, int alpha, float k) {
+            float x = (float) card.optDouble("x", 0), y = (float) card.optDouble("y", 0);
+            float cw = (float) card.optDouble("w", 0), ch = (float) card.optDouble("h", 0);
+            float rad = Math.max(0f, Math.min(radius, Math.min(cw / 2f, ch / 2f)));
+            RectF rc = new RectF(x, y, x + cw, y + ch);
+            Paint fp = new Paint(Paint.ANTI_ALIAS_FLAG);
+            fp.setColor(Color.argb(Math.round(0.92f * alpha), 20, 20, 24));
+            fp.setShadowLayer(16f * k, 0f, 16f * k, sa(Color.argb(102, 0, 0, 0), alpha));
+            c.drawRoundRect(rc, rad, rad, fp);
+            fp.setShadowLayer(6f * k, 0f, 4f * k, sa(Color.argb(153, 0, 0, 0), alpha));
+            c.drawRoundRect(rc, rad, rad, fp);
+            fp.clearShadowLayer();
+            android.graphics.Path clip = new android.graphics.Path();
+            clip.addRoundRect(rc, rad, rad, android.graphics.Path.Direction.CW);
+            c.save();
+            c.clipPath(clip);
+            Paint gp = new Paint();
+            gp.setShader(new android.graphics.LinearGradient(x, y, x + cw * 0.4f, y + ch,
+                    new int[] { sa(Color.argb(18, 255, 255, 255), alpha), sa(Color.argb(0, 255, 255, 255), alpha), sa(Color.argb(31, 0, 0, 0), alpha) },
+                    new float[] { 0f, 0.5f, 1f }, android.graphics.Shader.TileMode.CLAMP));
+            c.drawRect(rc, gp);
+            Paint tp = new Paint();
+            tp.setShader(new android.graphics.LinearGradient(x, y, x + cw, y,
+                    sa(Color.argb(0, 255, 255, 255), alpha), sa(Color.argb(179, 255, 255, 255), alpha), android.graphics.Shader.TileMode.CLAMP));
+            c.drawRect(x, y, x + cw, y + 2f * k, tp);
+            Paint rp = new Paint();
+            rp.setShader(new android.graphics.LinearGradient(0f, y, 0f, y + ch,
+                    new int[] { sa(Color.argb(179, 255, 255, 255), alpha), sa(Color.argb(0, 255, 255, 255), alpha) },
+                    new float[] { 0f, 0.6f }, android.graphics.Shader.TileMode.CLAMP));
+            c.drawRect(x + cw - 2f * k, y, x + cw, y + ch, rp);
+            c.restore();
+            Paint hp = new Paint(Paint.ANTI_ALIAS_FLAG);
+            hp.setStyle(Paint.Style.STROKE); hp.setStrokeWidth(k);
+            hp.setColor(sa(Color.argb(31, 255, 255, 255), alpha));
+            float hr = Math.max(0f, rad - k / 2f);
+            c.drawRoundRect(new RectF(x + k / 2f, y + k / 2f, x + cw - k / 2f, y + ch - k / 2f), hr, hr, hp);
+        }
+
         /** Kallaway motion: which baked picture shows `into` ms after the beat starts (-1 = none, the final picture shows). */
         private static int frameIndex(JSONObject b, long into) {
             org.json.JSONArray fr = b.optJSONArray("frames");
@@ -2091,16 +2164,23 @@ public class EditorrNativePlugin extends Plugin {
                 p.setColor(bgCol); p.setAlpha(alpha);
                 c.drawRect(0, 0, w, h, p);
             } else if (video != null && card != null) {
-                p.setColor(bgCol); p.setAlpha(alpha);
-                c.drawRect(0, 0, w, h, p);
+                boolean glass = b.optBoolean("glass", false);
+                float gk = Math.min(w, h) / 1080f;
+                if (glass) paintGlassBackdrop(c, alpha);
+                else { p.setColor(bgCol); p.setAlpha(alpha); c.drawRect(0, 0, w, h, p); }
                 // window for the talking head
                 p.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR));
                 rrect(c, p, video, radius);
                 p.setXfermode(null);
-                Paint cp = new Paint(Paint.ANTI_ALIAS_FLAG);
-                cp.setColor(cardCol); cp.setAlpha(alpha);
-                shadowOn(cp, sh, alpha);
-                rrect(c, cp, card, radius);
+                if (glass) {
+                    paintWindowEdge(c, video, radius, alpha, gk);
+                    paintGlassCard(c, card, radius, alpha, gk);
+                } else {
+                    Paint cp = new Paint(Paint.ANTI_ALIAS_FLAG);
+                    cp.setColor(cardCol); cp.setAlpha(alpha);
+                    shadowOn(cp, sh, alpha);
+                    rrect(c, cp, card, radius);
+                }
                 float bw = (float) b.optDouble("border", 0);
                 if (bw > 0f) {
                     Paint bp2 = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -2219,16 +2299,19 @@ public class EditorrNativePlugin extends Plugin {
             long os = times.get(bi)[0], oe = times.get(bi)[1];
             double p = Math.max(0, Math.min(1, (tc - os) / (double) Math.max(1, oe - os)));
             double e = p * p * (3 - 2 * p);
-            float s, tx = 0f;
+            float s, tx = 0f, ty = 0f;
             String m = b.optString("motion", "zoom_in");
-            if ("zoom_out".equals(m)) s = (float) (1.12 - 0.12 * e);
+            if ("punch_in".equals(m)) s = (float) (1.0 + Math.pow(p, 0.7) * 0.12);
+            else if ("slow_pan".equals(m)) { s = 1.08f; tx = (float) ((p - 0.5) * 40.0 / 1080.0); }
+            else if ("drift".equals(m)) { s = (float) (1.02 + p * 0.08); ty = (float) ((0.5 - p) * 20.0 / 1080.0); }
+            else if ("zoom_out".equals(m)) s = (float) (1.12 - 0.12 * e);
             else if ("pan_left".equals(m)) { s = 1.06f; tx = (float) (0.02 - 0.04 * e); }
             else if ("pan_right".equals(m)) { s = 1.06f; tx = (float) (-0.02 + 0.04 * e); }
             else if ("slow_zoom".equals(m)) s = (float) (1 + 0.04 * p);
             else s = (float) (1 + 0.12 * e);
             float fin = (float) Math.max(0, Math.min(1, (tc - os) / 160.0));
             float fout = (float) Math.max(0, Math.min(1, (oe - tc) / 120.0));
-            return ob.setScale(s, s).setBackgroundFrameAnchor(2f * tx, 0f).setAlphaScale(Math.min(fin, fout)).build();
+            return ob.setScale(s, s).setBackgroundFrameAnchor(2f * tx, -2f * ty).setAlphaScale(Math.min(fin, fout)).build();
         }
 
         private static Bitmap decode(String path, int maxDim) {

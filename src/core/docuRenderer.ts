@@ -6,7 +6,8 @@
  * shows through. The video underneath is shifted by `docuShift()` so the window shows the middle of the picture.
  */
 import { Capacitor } from '@capacitor/core';
-import { CARD_SHARE_SIDE, CARD_SHARE_UPDOWN, DOCU_FADE_MS, DEFAULT_CARD_RADIUS, DOCU_FONT_CSS, DOCU_FONT_WEIGHT, type DocuBeat, type DocuLayout, type DocuPos } from './docuTypes';
+import { CARD_SHARE_SIDE, CARD_SHARE_UPDOWN, DOCU_FADE_MS, DEFAULT_CARD_RADIUS, DOCU_FONT_CSS, DOCU_FONT_WEIGHT, isGlass, type DocuBeat, type DocuLayout, type DocuPos } from './docuTypes';
+import { dotGrid, glassCard } from './glass';
 
 export interface Rect { x: number; y: number; w: number; h: number }
 export interface DocuGeo { vertical: boolean; video: Rect; card: Rect }
@@ -206,19 +207,27 @@ export function drawDocuFrame(g: CanvasRenderingContext2D, beat: DocuBeat, ms: n
   const geo = docuGeometry(beat.layout === 'one' ? 'side' : beat.layout, beat.video_position, w, h, beat.share);
   const r = radiusPx(beat, w, h);
   const st = beat.style ?? {}, sc = Math.min(w, h) / 1080;
+  const glass = isGlass(beat);
   g.globalAlpha = a;
-  g.fillStyle = st.bg ?? THEME_BG[beat.theme] ?? '#0A0A0C';
-  g.fillRect(0, 0, w, h);
+  if (glass) dotGrid(g, w, h, sc);
+  else { g.fillStyle = st.bg ?? THEME_BG[beat.theme] ?? '#0A0A0C'; g.fillRect(0, 0, w, h); }
   g.globalCompositeOperation = 'destination-out';
   rr(g, geo.video.x, geo.video.y, geo.video.w, geo.video.h, r);
   g.fillStyle = '#000'; g.fill();
   g.globalCompositeOperation = 'source-over';
-  g.save();
-  if (st.shadow && (st.shadow.blur || st.shadow.dist)) { g.shadowColor = st.shadow.color; g.shadowBlur = st.shadow.blur * sc * 2; g.shadowOffsetY = st.shadow.dist * sc; }
-  g.fillStyle = st.card ?? THEME_CARD[beat.theme] ?? 'rgba(18,18,22,0.98)';
-  rr(g, geo.card.x, geo.card.y, geo.card.w, geo.card.h, r);
-  g.fill();
-  g.restore();
+  if (glass) {
+    // the speaker window gets a thin light edge, the card is lit glass
+    g.lineWidth = 2 * sc; g.strokeStyle = 'rgba(255,255,255,0.16)';
+    rr(g, geo.video.x, geo.video.y, geo.video.w, geo.video.h, r); g.stroke();
+    glassCard(g, geo.card.x, geo.card.y, geo.card.w, geo.card.h, r, sc);
+  } else {
+    g.save();
+    if (st.shadow && (st.shadow.blur || st.shadow.dist)) { g.shadowColor = st.shadow.color; g.shadowBlur = st.shadow.blur * sc * 2; g.shadowOffsetY = st.shadow.dist * sc; }
+    g.fillStyle = st.card ?? THEME_CARD[beat.theme] ?? 'rgba(18,18,22,0.98)';
+    rr(g, geo.card.x, geo.card.y, geo.card.w, geo.card.h, r);
+    g.fill();
+    g.restore();
+  }
   if (st.border) { g.lineWidth = st.border * sc; g.strokeStyle = beat.accent_color; rr(g, geo.card.x + g.lineWidth / 2, geo.card.y + g.lineWidth / 2, geo.card.w - g.lineWidth, geo.card.h - g.lineWidth, Math.max(0, r - g.lineWidth / 2)); g.stroke(); }
   g.globalAlpha = 1;
   drawText(g, beat, geo.card, w, h, false, a);
@@ -238,6 +247,7 @@ export function exportDocu(beats: DocuBeat[] | undefined, outW: number, outH: nu
       ...(b.image?.path ? { image: b.image.path } : {}),
       ...(b.image?.path && b.frames?.length && b.framesMs && b.frames.every((f) => f.path) ? { frames: b.frames.map((f) => f.path), framesMs: Math.round(b.framesMs) } : {}),
       ...(geo ? { video: geo.video, card: geo.card } : {}),
+      ...(geo && isGlass(b) ? { glass: true } : {}),
       ...exportStyle(b, outW, outH),
     });
   }

@@ -44,7 +44,7 @@ export interface DocuBeat {
 }
 
 export type DocuFont = 'inter' | 'oswald' | 'playfair' | 'jetbrains';
-export type DocuTemplateId = 'vox' | 'noir' | 'swiss' | 'cyber' | 'keynote' | 'breaking';
+export type DocuTemplateId = 'glass' | 'vox' | 'noir' | 'swiss' | 'cyber' | 'keynote' | 'breaking';
 export interface DocuShadow { blur: number; dist: number; color: string }
 export interface DocuStyle {
   template?: DocuTemplateId;
@@ -81,7 +81,13 @@ export const DOCU_FONT_WEIGHT: Record<DocuFont, number> = { inter: 900, oswald: 
 export interface DocuTemplate {
   id: DocuTemplateId; label: string; hint: string; type: DocuType; accent: string; style: DocuStyle; radius: number;
 }
+/** The agency "glass on onyx" look: dot grid, vignette, glass card with a specular edge (see glass.ts). Used by Kallaway Glass and by beats with no style. */
+export const GLASS_BG = '#060607', GLASS_CARD = '#141418';
+export const isGlass = (b: { style?: DocuStyle }): boolean => !b.style || (b.style.template === 'glass' && b.style.bg === GLASS_BG && b.style.card === GLASS_CARD);
+
 export const DOCU_TEMPLATES: DocuTemplate[] = [
+  { id: 'glass', label: 'Kallaway Glass', hint: 'Onyx, dot grid, red accent', type: 'split_screen', accent: '#D1121B', radius: 28,
+    style: { template: 'glass', font: 'inter', caps: true, text: '#FFFFFF', bg: GLASS_BG, card: GLASS_CARD, pad: 43, border: 0, shadow: { blur: 0, dist: 0, color: '#000000' } } },
   { id: 'vox', label: 'Vox Editorial', hint: 'Blue, yellow accent', type: 'split_screen', accent: '#FFD60A', radius: 20,
     style: { template: 'vox', font: 'inter', caps: true, text: '#FFFFFF', bg: '#0A2A8A', card: '#1239B8', pad: 43, border: 0, shadow: { blur: 12, dist: 4, color: '#000000' } } },
   { id: 'noir', label: 'Noir Files', hint: 'Black, red accent', type: 'split_screen', accent: '#E5192B', radius: 4,
@@ -100,7 +106,7 @@ export const DOCU_TEMPLATES: DocuTemplate[] = [
 export const DOCU_ACCENTS = ['#C6F277', '#38BDF8', '#FFD60A', '#F43F5E'] as const;
 export const DOCU_THEMES: DocuTheme[] = ['noir', 'investigative', 'modern'];
 export const DOCU_TYPE_LABEL: Record<DocuType, string> = { black_screen: 'Black screen', split_screen: 'Split card', kinetic_quote: 'Quote' };
-export const DEFAULT_CARD_RADIUS = 20;
+export const DEFAULT_CARD_RADIUS = 28;
 export const MAX_CARD_RADIUS = 48;
 /** The card eases in over this long (preview and export use the same number). */
 export const DOCU_FADE_MS = 250;

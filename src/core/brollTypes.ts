@@ -5,7 +5,9 @@
  * so every number that decides how it looks lives here (box, motion, fade).
  */
 
-export type BrollMotion = 'zoom_in' | 'zoom_out' | 'pan_left' | 'pan_right' | 'slow_zoom';
+import { computeImageKenBurns } from './kallawayMotion';
+
+export type BrollMotion = 'zoom_in' | 'zoom_out' | 'pan_left' | 'pan_right' | 'slow_zoom' | 'punch_in' | 'slow_pan' | 'drift';
 /** card = rounded photo over a dimmed video, full = fills the frame, blur = photo (or article card) whole in front of a blurred copy of itself */
 export type BrollFrame = 'card' | 'full' | 'blur';
 export type BrollSource = 'wikimedia' | 'wikipedia' | 'openverse' | 'commons_video' | 'archive' | 'youtube' | 'card';
@@ -43,10 +45,10 @@ export interface BrollBeat {
   radius: number;
 }
 
-export const BROLL_MOTIONS: BrollMotion[] = ['zoom_in', 'zoom_out', 'pan_left', 'pan_right', 'slow_zoom'];
-/** The motions Auto B-roll rotates through (slow_zoom is kept for article cards). */
-export const BROLL_AUTO_MOTIONS: BrollMotion[] = ['zoom_in', 'zoom_out', 'pan_left', 'pan_right'];
-export const BROLL_MOTION_LABEL: Record<BrollMotion, string> = { zoom_in: 'Zoom in', zoom_out: 'Zoom out', pan_left: 'Pan left', pan_right: 'Pan right', slow_zoom: 'Slow zoom' };
+export const BROLL_MOTIONS: BrollMotion[] = ['zoom_in', 'zoom_out', 'pan_left', 'pan_right', 'slow_zoom', 'punch_in', 'slow_pan', 'drift'];
+/** The motions Auto B-roll rotates through (slow_zoom is kept for article cards). Kallaway camera drift: punch in, slow pan, drift. */
+export const BROLL_AUTO_MOTIONS: BrollMotion[] = ['punch_in', 'slow_pan', 'drift', 'zoom_out', 'pan_right', 'zoom_in', 'pan_left'];
+export const BROLL_MOTION_LABEL: Record<BrollMotion, string> = { zoom_in: 'Zoom in', zoom_out: 'Zoom out', pan_left: 'Pan left', pan_right: 'Pan right', slow_zoom: 'Slow zoom', punch_in: 'Punch in', slow_pan: 'Slow pan', drift: 'Drift' };
 export const BROLL_FRAME_LABEL: Record<BrollFrame, string> = { card: 'Card', full: 'Full frame', blur: 'Blur fill' };
 export const BROLL_SOURCE_LABEL: Record<BrollSource, string> = {
   wikimedia: 'Commons', wikipedia: 'Wiki', openverse: 'Openverse', commons_video: 'Commons video', archive: 'Archive', youtube: 'YouTube', card: 'Card',
@@ -96,17 +98,22 @@ export const brollRadiusPx = (b: BrollBeat, w: number, h: number) =>
 
 /**
  * The move over the beat, p = 0..1. The whole layer (photo + card + dimming) is scaled around the middle of the frame
- * and shifted sideways by `tx` (a share of the frame width). The scale never goes below 1, so the dimming always covers the frame.
+ * and shifted by `tx` (a share of the frame width) and `ty` (a share of the frame height, + = down). The scale never goes below 1, so the dimming always covers the frame.
+ * punch_in / slow_pan / drift are the Kallaway camera moves from kallawayMotion.ts; the Android export repeats the same formulas.
  */
-export function brollMotionAt(motion: BrollMotion, p: number): { s: number; tx: number } {
+export function brollMotionAt(motion: BrollMotion, p: number): { s: number; tx: number; ty: number } {
   const q = Math.max(0, Math.min(1, p));
   const e = q * q * (3 - 2 * q);
+  if (motion === 'punch_in' || motion === 'slow_pan' || motion === 'drift') {
+    const k = computeImageKenBurns(q, motion);
+    return { s: k.scale, tx: k.translateX / 1080, ty: k.translateY / 1080 };
+  }
   switch (motion) {
-    case 'zoom_out': return { s: 1.12 - 0.12 * e, tx: 0 };
-    case 'slow_zoom': return { s: 1 + 0.04 * q, tx: 0 };
-    case 'pan_left': return { s: 1.06, tx: 0.02 - 0.04 * e };
-    case 'pan_right': return { s: 1.06, tx: -0.02 + 0.04 * e };
-    default: return { s: 1 + 0.12 * e, tx: 0 };
+    case 'zoom_out': return { s: 1.12 - 0.12 * e, tx: 0, ty: 0 };
+    case 'slow_zoom': return { s: 1 + 0.04 * q, tx: 0, ty: 0 };
+    case 'pan_left': return { s: 1.06, tx: 0.02 - 0.04 * e, ty: 0 };
+    case 'pan_right': return { s: 1.06, tx: -0.02 + 0.04 * e, ty: 0 };
+    default: return { s: 1 + 0.12 * e, tx: 0, ty: 0 };
   }
 }
 

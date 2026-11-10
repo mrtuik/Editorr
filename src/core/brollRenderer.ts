@@ -172,10 +172,10 @@ export function drawBrollFrame(g: CanvasRenderingContext2D, b: BrollBeat, ms: nu
   if (isBrollVideo(b)) { drawVideoBeat(g, b, ms, w, h, onLoad, playing); return; }
   const layer = layerFor(b, w, h, onLoad);
   if (!layer) return;
-  const { s, tx } = brollMotionAt(b.motion, (ms - b.start) / Math.max(1, b.end - b.start));
+  const { s, tx, ty } = brollMotionAt(b.motion, (ms - b.start) / Math.max(1, b.end - b.start));
   g.save();
   g.globalAlpha = brollAlpha(b, ms);
-  g.translate(w / 2 + tx * w, h / 2);
+  g.translate(w / 2 + tx * w, h / 2 + ty * h);
   g.scale(s, s);
   g.translate(-w / 2, -h / 2);
   g.drawImage(layer, 0, 0);

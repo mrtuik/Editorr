@@ -36,7 +36,7 @@ ${wide
 - "kinetic_quote" = a big quote over the video, for a memorable line.
 
 Reply with ONE valid JSON array only, no markdown, no other text:
-[{"type":"black_screen"|"split_screen"|"kinetic_quote","start":<seconds>,"end":<seconds>,"layout":"${wide ? 'side' : 'updown'}","video_position":"${wide ? 'left' : 'top'}","card_radius":24,"headline":"<PUNCHY BOLD TEXT, max 5 words>","subtext":"<supporting context or statistic>","accent_color":"#C6F277"|"#38BDF8"|"#FFD60A"|"#F43F5E","theme":"noir"|"investigative"|"modern"}]`;
+[{"type":"black_screen"|"split_screen"|"kinetic_quote","start":<seconds>,"end":<seconds>,"layout":"${wide ? 'side' : 'updown'}","video_position":"${wide ? 'left' : 'top'}","card_radius":28,"headline":"<PUNCHY BOLD TEXT, max 5 words>","subtext":"<supporting context or statistic>","accent_color":"#C6F277"|"#38BDF8"|"#FFD60A"|"#F43F5E","theme":"noir"|"investigative"|"modern"}]`;
 }
 
 const clamp = (v: unknown, lo: number, hi: number, def: number) => (typeof v === 'number' && isFinite(v) ? Math.max(lo, Math.min(hi, v)) : def);

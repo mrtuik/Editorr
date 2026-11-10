@@ -12,6 +12,7 @@
 import { Capacitor } from '@capacitor/core';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { docuGeometry } from './docuRenderer';
+import { dotGrid, glassCard } from './glass';
 import { docuLayoutFor, type DocuBeat } from './docuTypes';
 import { uid } from './speaker';
 import { motionAt, introPlan, springOvershoot, REST, type Motion } from './kallawayMotion';
@@ -69,30 +70,6 @@ function rr(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: num
 }
 
 
-/** Glass card: #141418 at 92 %, inner sheen, layered contact + ambient shadow, and a specular edge along the top and right side. */
-function glassCard(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, k: number) {
-  g.save();
-  g.shadowColor = 'rgba(0,0,0,0.4)'; g.shadowBlur = 32 * k; g.shadowOffsetY = 16 * k;
-  g.fillStyle = 'rgba(20,20,24,0.92)'; rr(g, x, y, w, h, r); g.fill();
-  g.shadowColor = 'rgba(0,0,0,0.6)'; g.shadowBlur = 12 * k; g.shadowOffsetY = 4 * k;
-  g.fill();
-  g.restore();
-  g.save(); rr(g, x, y, w, h, r); g.clip();
-  const inner = g.createLinearGradient(x, y, x + w * 0.4, y + h);
-  inner.addColorStop(0, 'rgba(255,255,255,0.07)'); inner.addColorStop(0.5, 'rgba(255,255,255,0)'); inner.addColorStop(1, 'rgba(0,0,0,0.12)');
-  g.fillStyle = inner; g.fillRect(x, y, w, h);
-  // specular: 2 px edge, bright near the top-right corner and fading away along both sides
-  const top = g.createLinearGradient(x, y, x + w, y);
-  top.addColorStop(0, 'rgba(255,255,255,0)'); top.addColorStop(1, 'rgba(255,255,255,0.7)');
-  g.fillStyle = top; g.fillRect(x, y, w, 2 * k);
-  const right = g.createLinearGradient(0, y, 0, y + h);
-  right.addColorStop(0, 'rgba(255,255,255,0.7)'); right.addColorStop(0.6, 'rgba(255,255,255,0)');
-  g.fillStyle = right; g.fillRect(x + w - 2 * k, y, 2 * k, h);
-  g.restore();
-  g.lineWidth = 1 * k; g.strokeStyle = 'rgba(255,255,255,0.12)';
-  rr(g, x + k / 2, y + k / 2, w - k, h - k, Math.max(0, r - k / 2)); g.stroke();
-}
-
 function wrapLines(g: CanvasRenderingContext2D, text: string, maxW: number, maxLines: number): string[] {
   const words = text.trim().split(/\s+/).filter(Boolean);
   const lines: string[] = [];
@@ -114,17 +91,6 @@ function wrapLines(g: CanvasRenderingContext2D, text: string, maxW: number, maxL
 export function kallawaySize(aspect: Aspect): { w: number; h: number } {
   const a = aspectValue(aspect);
   return a >= 1 ? { w: Math.round(1080 * a), h: 1080 } : { w: 1080, h: Math.round(1080 / a) };
-}
-
-function dotGrid(g: CanvasRenderingContext2D, w: number, h: number, k: number) {
-  g.fillStyle = '#060607'; g.fillRect(0, 0, w, h);
-  const step = Math.round(30 * k), r = Math.max(1.2, 1.6 * k);
-  g.fillStyle = 'rgba(255,255,255,0.22)';
-  for (let y = step / 2; y < h; y += step) for (let x = step / 2; x < w; x += step) g.fillRect(x - r / 2, y - r / 2, r, r);
-  // soft darkening towards the edges so the card stands out
-  const v = g.createRadialGradient(w / 2, h * 0.4, Math.min(w, h) * 0.3, w / 2, h * 0.4, Math.hypot(w, h) * 0.62);
-  v.addColorStop(0, 'rgba(18,18,24,0.4)'); v.addColorStop(1, 'rgba(6,6,7,0.95)');
-  g.fillStyle = v; g.fillRect(0, 0, w, h);
 }
 
 /** Title: "The *Desire Hook*" (bold sans + italic serif on one line) and "Method" under it. Returns the y below the title. */
