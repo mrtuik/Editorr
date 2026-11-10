@@ -11,7 +11,7 @@ import { captionZones } from './docuRenderer';
 import type { BrollFrame, BrollMotion } from './brollTypes';
 import type { VideoMode } from './brollRouter';
 import { aspectValue, type Project } from './types';
-import type { CardTheme } from './kallaway';
+import { KALLAWAY_THEME, type CardTheme, type KallawayKind } from './kallaway';
 
 export type CreatorId = 'kallaway' | 'hormozi' | 'vox' | 'noir' | 'keynote' | 'swiss' | 'cyber' | 'breaking'
   | 'cinema' | 'neonhook' | 'cinedocu' | 'studio' | 'purpletech' | 'monodocu';
@@ -46,6 +46,8 @@ export interface CreatorTemplate {
   recipe: EditRecipe;
   /** look of the cards this template draws (Kallaway look when missing) */
   card?: CardTheme;
+  /** card kinds this creator prefers (used when the director found enough of them) */
+  cardKinds?: KallawayKind[];
 }
 
 export const CREATORS: CreatorTemplate[] = [
@@ -105,6 +107,30 @@ export const CREATORS: CreatorTemplate[] = [
     docu: 'mono', zones: false, motions: ['slow_zoom', 'drift', 'zoom_out', 'slow_pan'],
     recipe: { cards: false, docuBeats: true, lenMs: 2500, frame: 'blur', coverage: 'every', videoMode: 'photos', fillGaps: true, grade: { contrast: 0.16, sat: -100, bright: 0 } } },
 ];
+
+// ---- card looks for every creator (Studio and Purple have theirs inline); a card drawn under any template follows that template
+const mk = (o: Partial<CardTheme>): CardTheme => ({ ...KALLAWAY_THEME, ...o });
+const SANS_UI = '"Inter","Noto Sans Bengali","Noto Sans Devanagari",system-ui,sans-serif';
+const SANS_OSW = 'Oswald,"Arial Narrow",Impact,"Noto Sans Bengali","Noto Sans Devanagari",sans-serif';
+const SANS_MONO = '"JetBrains Mono","Roboto Mono","Courier New","Noto Sans Bengali",monospace';
+const CARD_THEMES: Partial<Record<CreatorId, CardTheme>> = {
+  hormozi: mk({ bg: '#000000', dot: 'rgba(255,230,0,0.12)', vig: 'rgba(0,0,0,0.96)', accent: '#FFE600', muted: '#B8B8B8', surface: '#1A1A1A', surfaceOn: '#2B2A00', line: '#6B6200', cardFill: 'rgba(18,18,0,0.95)', cardStroke: 'rgba(255,230,0,0.55)', edge: '255,230,0', sans: SANS_UI, titleW: 900, radius: 14 }),
+  vox: mk({ bg: '#0A2A8A', dot: 'rgba(255,255,255,0.14)', vig: 'rgba(5,20,80,0.9)', accent: '#FFD60A', muted: '#B9C6F5', surface: '#1239B8', surfaceOn: '#1C4DE0', line: '#4F73E8', cardFill: 'rgba(18,57,184,0.95)', cardStroke: 'rgba(255,214,10,0.45)', sans: SANS_UI, titleW: 900, radius: 20 }),
+  noir: mk({ bg: '#000000', dot: 'rgba(255,255,255,0.1)', vig: 'rgba(0,0,0,0.98)', accent: '#E5192B', text: '#F5F5F0', muted: '#9B9B9B', surface: '#0E0E0E', surfaceOn: '#1A1A1A', line: '#3A3A3A', cardFill: 'rgba(5,5,5,0.96)', cardStroke: 'rgba(255,255,255,0.1)', sans: SANS_OSW, titleW: 700, radius: 4 }),
+  keynote: mk({ bg: '#161618', dot: 'rgba(255,255,255,0.08)', vig: 'rgba(10,10,12,0.9)', accent: '#0A84FF', text: '#F5F5F7', muted: '#98989D', surface: '#2A2A2D', surfaceOn: '#3A3A3E', line: '#58585D', cardFill: 'rgba(42,42,45,0.94)', cardStroke: 'rgba(255,255,255,0.1)', sans: SANS_UI, titleW: 700, radius: 40 }),
+  swiss: mk({ bg: '#E9E9E9', dot: 'rgba(0,0,0,0.1)', vig: 'rgba(120,120,120,0.2)', accent: '#000000', text: '#0A0A0A', muted: '#6A6A6A', surface: '#FFFFFF', surfaceOn: '#EFEFEF', line: '#BDBDBD', cardFill: 'rgba(255,255,255,1)', cardStroke: 'rgba(0,0,0,0.6)', sans: SANS_UI, titleW: 800, radius: 0 }),
+  cyber: mk({ bg: '#020C08', dot: 'rgba(44,255,143,0.18)', vig: 'rgba(2,12,8,0.96)', accent: '#2CFF8F', text: '#B6FFD6', muted: '#5FA27F', surface: '#04180F', surfaceOn: '#07301F', line: '#1E7A4B', cardFill: 'rgba(4,24,15,0.94)', cardStroke: 'rgba(44,255,143,0.5)', edge: '44,255,143', sans: SANS_MONO, titleW: 800, radius: 8 }),
+  breaking: mk({ bg: '#000000', dot: 'rgba(229,25,43,0.12)', vig: 'rgba(0,0,0,0.96)', accent: '#E5192B', surface: '#14141A', surfaceOn: '#22222C', line: '#3C3C48', cardFill: 'rgba(14,14,18,0.95)', cardStroke: 'rgba(229,25,43,0.5)', sans: SANS_OSW, titleW: 700, radius: 6 }),
+  cinema: mk({ bg: '#04121A', dot: 'rgba(120,200,220,0.12)', vig: 'rgba(2,10,14,0.95)', accent: '#E5192B', surface: '#0B2A36', surfaceOn: '#123A4A', line: '#2C5E72', cardFill: 'rgba(11,42,54,0.9)', sans: SANS_UI, titleW: 800, radius: 24 }),
+  neonhook: mk({ bg: '#000000', dot: 'rgba(215,255,0,0.14)', vig: 'rgba(0,0,0,0.96)', accent: '#D7FF00', muted: '#9AA05A', surface: '#121212', surfaceOn: '#1E2200', line: '#4A5200', cardFill: 'rgba(14,14,14,0.95)', cardStroke: 'rgba(215,255,0,0.5)', edge: '215,255,0', sans: SANS_UI, titleW: 900, radius: 10 }),
+  cinedocu: mk({ bg: '#0C1116', dot: 'rgba(255,255,255,0.08)', vig: 'rgba(4,7,10,0.95)', accent: '#FFFFFF', muted: '#8FA0B0', surface: '#1B2530', surfaceOn: '#26333F', line: '#4A5B6B', cardFill: 'rgba(27,37,48,0.9)', sans: SANS_UI, titleW: 600, radius: 18 }),
+  monodocu: mk({ bg: '#0A0A0A', dot: 'rgba(255,255,255,0.1)', vig: 'rgba(0,0,0,0.97)', accent: '#FFFFFF', text: '#F2F2EE', muted: '#9A9A96', surface: '#1A1A1A', surfaceOn: '#2A2A2A', line: '#555555', cardFill: 'rgba(24,24,24,0.95)', cardStroke: 'rgba(255,255,255,0.3)', sans: SANS_UI, titleW: 800, radius: 10 }),
+};
+const CARD_KINDS: Partial<Record<CreatorId, KallawayKind[]>> = {
+  studio: ['steps', 'quote', 'photo', 'tweet', 'script'],
+  purpletech: ['steps', 'loop', 'stat', 'versus'],
+};
+for (const cr of CREATORS) { cr.card ??= CARD_THEMES[cr.id]; cr.cardKinds ??= CARD_KINDS[cr.id]; }
 export const creatorOf = (id: CreatorId | undefined): CreatorTemplate => CREATORS.find((c) => c.id === id) ?? CREATORS[0]!;
 
 /** The caption zones of this project (none for creators that keep their captions in one place). */

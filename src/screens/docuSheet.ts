@@ -146,7 +146,8 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       const start = Math.max(0, Math.min(ctx.playMs(), Math.max(0, dur - 3000)));
       const end = Math.min(dur || start + kwSeconds * 1000, start + Math.round(kwSeconds * 1000));
       // steps follow the speech when captions exist (or the agent's words) and the switch is on
-      const spec: KallawaySpec = { ...kw, stepStarts: undefined };
+      const look = ctx.p.creator ? creatorOf(ctx.p.creator) : undefined;
+      const spec: KallawaySpec = { ...kw, stepStarts: undefined, ...(look?.card ? { theme: look.card, share: kw.share ?? look.card.share } : {}) };
       let synced = false;
       if ((kw.kind === 'steps' || kw.kind === 'loop') && kwSync) {
         const words = ctx.p.captions?.words.length ? ctx.p.captions.words : ctx.p.agentWords?.words;
@@ -172,7 +173,12 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     const c = creatorOf(id), rc = c.recipe;
     const before = { docu: ctx.p.docu, broll: ctx.p.broll, creator: ctx.p.creator, grade: ctx.p.grade };
     let cancelled = false;
-    const signal = { cancelled: false };
+    let signal = { cancelled: false };
+    /** A slow AI answer must never freeze the edit: after `ms` the built-in rules take over. */
+    const withTimeout = <V,>(pr: Promise<V>, ms: number): Promise<V> => new Promise<V>((res, rej) => {
+      const t = window.setTimeout(() => rej(new Error('timeout')), ms);
+      pr.then((v) => { window.clearTimeout(t); res(v); }, (e) => { window.clearTimeout(t); rej(e); });
+    });
     busy = true; loadingTile = id; render();
     startTask('autoedit', `Auto edit: ${c.name}`, 3, { modal: true, cancel: () => { cancelled = true; signal.cancelled = true; } });
     const restore = () => {
@@ -184,7 +190,13 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       updateTask('autoedit', 'Planning the moments...', 8);
       let made: DocuBeat[] = [];
       if (rc.cards) {
-        const r = await planKallaway(words, ctx.durationMs(), true);
+        let r = await withTimeout(planKallaway(words, ctx.durationMs(), true), 45000).catch(async () => {
+          updateTask('autoedit', 'AI is slow, using the built-in rules...', 10);
+          return planKallaway(words, ctx.durationMs(), false);
+        });
+        // this creator's favourite card kinds first (only when enough of them were found)
+        const want = c.cardKinds;
+        if (want) { const fav = r.picks.filter((pk) => want.includes(pk.spec.kind)); if (fav.length >= 2) r = { ...r, picks: fav }; }
         for (let idx = 0; idx < r.picks.length; idx++) {
           if (cancelled) break;
           const pk = r.picks[idx]!;
@@ -194,7 +206,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
           updateTask('autoedit', `Drawing cards ${idx + 1}/${r.picks.length}...`, 8 + 22 * (idx + 1) / Math.max(1, r.picks.length));
         }
       } else if (rc.docuBeats) {
-        const r = await planDocuBeats(words, ctx.p.aspect, ctx.durationMs(), true);
+        const r = await withTimeout(planDocuBeats(words, ctx.p.aspect, ctx.durationMs(), true), 45000).catch(() => planDocuBeats(words, ctx.p.aspect, ctx.durationMs(), false));
         made = r.beats;
       }
       if (cancelled) { restore(); toast('Auto edit cancelled. Your old edit is back.', 3000); return; }
@@ -205,10 +217,16 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       let filled = 0, note = '';
       try {
         const asp = aspectValue(ctx.p.aspect);
-        const gap = await autoBroll({
+        const brollOpts = (ai: boolean) => ({
           words, durationMs: ctx.durationMs(), lenMs: rc.lenMs, frame: rc.frame, coverage: rc.coverage, fillGaps: rc.fillGaps, maxBeats: rc.fillGaps ? 200 : 80,
-          busy: beats().map((d) => ({ start: d.start, end: d.end })), videoMode: rc.videoMode, aspect: asp > 0 ? asp : 9 / 16, useAntigravity: true,
-          signal, onProgress: (d, t) => updateTask('autoedit', `Visuals ${d}/${t}...`, 32 + 58 * d / Math.max(1, t)),
+          busy: beats().map((d) => ({ start: d.start, end: d.end })), videoMode: rc.videoMode, aspect: asp > 0 ? asp : 9 / 16, useAntigravity: ai,
+          signal, onProgress: (dn: number, t: number) => updateTask('autoedit', `Visuals ${dn}/${t}...`, 32 + 58 * dn / Math.max(1, t)),
+        });
+        const gap = await withTimeout(autoBroll(brollOpts(true)), 150000).catch(async () => {
+          if (cancelled) throw new Error('cancelled');
+          signal.cancelled = true; signal = { cancelled: false };
+          updateTask('autoedit', 'AI is slow, finding visuals with the built-in rules...', 40);
+          return autoBroll(brollOpts(false));
         });
         if (cancelled) { restore(); toast('Auto edit cancelled. Your old edit is back.', 3000); return; }
         let next = ctx.p.broll ?? [];
