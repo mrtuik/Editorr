@@ -5,7 +5,7 @@ import { planKallaway } from '../core/kallawayDirector';
 import { autoBroll } from '../core/brollPlanner';
 import { placeBroll } from '../core/brollTypes';
 import { aspectValue } from '../core/types';
-import { applyCreator, CREATORS, creatorOf, type CreatorId } from '../core/creators';
+import { applyCreator, CREATORS, creatorOf, REFERENCE_STYLES, traitsOf, type CreatorId } from '../core/creators';
 import { endTask, startTask, updateTask } from '../core/tasks';
 import {
   DEFAULT_CARD_RADIUS, DOCU_ACCENTS, DOCU_FONT_CSS, DOCU_FONT_LABEL, DOCU_FONT_SUB, DOCU_FONT_WEIGHT, DOCU_TEMPLATES, DOCU_TYPE_LABEL, MAX_CARD_RADIUS,
@@ -230,10 +230,16 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
         });
         if (cancelled) { restore(); toast('Auto edit cancelled. Your old edit is back.', 3000); return; }
         let next = ctx.p.broll ?? [];
-        for (const b of gap.beats) next = placeBroll(next, b);
+        const fr = rc.frames?.length ? rc.frames : undefined;
+        gap.beats.forEach((b, i) => { if (fr) b.frame = fr[i % fr.length]!; next = placeBroll(next, b); });
         ctx.p.broll = next; filled = gap.beats.length;
       } catch (e) { note = ` Visuals failed: ${(e as Error).message || 'error'}.`; }
       if (cancelled) { restore(); toast('Auto edit cancelled. Your old edit is back.', 3000); return; }
+      if (!made.length && !filled) {
+        restore();
+        toast(`${c.name}: nothing could be generated${note ? note : ' (no usable moments or visuals found)'}. Your old edit is back. Try again with internet on.`, 7000);
+        return;
+      }
       updateTask('autoedit', 'Styling visuals and colour...', 95);
       applyCreator(ctx.p, id);
       ctx.changed();
@@ -610,18 +616,25 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
   }
   /** One-tap creator looks (captions, cards, B-roll moves). */
   function creatorBlock(): Node {
-    const none = h('button', { class: 'dt-tile' + (!ctx.p.creator ? ' on' : ''), 'aria-label': 'None', disabled: loadingTile ? 'true' : undefined, onclick: () => applyLook(null) },
-      h('div', { class: 'dt-prev' }, noneIcon(30)), h('span', { class: 'dt-name' }, 'None'), h('span', { class: 'dt-sub' }, 'Remove the look'));
+    const none = h('button', { class: 'dt-tile lib none' + (!ctx.p.creator ? ' on' : ''), 'aria-label': 'None', disabled: loadingTile || busy ? 'true' : undefined, onclick: () => applyLook(null) },
+      h('div', { class: 'dt-prev', style: 'aspect-ratio:auto;min-height:54px' }, noneIcon(26)), h('span', { class: 'dt-name' }, 'None'), h('span', { class: 'dt-sub' }, 'Remove the look'));
+    const tile = (cid: CreatorId) => {
+      const c = creatorOf(cid);
+      const face = h('div', { class: 'dt-prev lib-prev', style: `background:linear-gradient(135deg,${c.swatch[0]},${c.swatch[1]});` },
+        h('div', { class: 'dt-card', style: `background:${c.swatch[1]};border:1px solid rgba(255,255,255,.18);border-radius:6px` },
+          h('b', { style: `color:${isLightHex(c.swatch[1]) ? '#000' : '#fff'}` }, 'AA'), h('i', { style: `background:${c.swatch[2]}` })),
+        loadingTile === c.id ? h('div', { class: 'dt-load' }, spinner(26)) : (null as unknown as Node));
+      return h('button', { class: 'dt-tile lib' + (ctx.p.creator === c.id ? ' on' : ''), 'aria-label': c.name, disabled: loadingTile || busy ? 'true' : undefined, onclick: () => void runTemplate(c.id) },
+        face, h('span', { class: 'dt-name' }, c.name), h('span', { class: 'dt-sub' }, c.hint),
+        h('div', { class: 'dt-traits' }, ...traitsOf(c).map((t) => h('span', {}, t))));
+    };
+    const ref = REFERENCE_STYLES, rest = CREATORS.filter((c) => !ref.includes(c.id)).map((c) => c.id);
     return h('div', { class: 'at-sec', style: 'margin-top:6px' },
-      h('div', { class: 'at-hint', style: 'margin-bottom:8px' }, 'Tap a template: the whole video is edited in that creator\'s style (visuals, motion, colour; captions stay as they are).'),
-      tileGrid(none, ...CREATORS.map((c) => {
-        const face = h('div', { class: 'dt-prev', style: `background:${c.swatch[0]};` },
-          h('div', { class: 'dt-card', style: `background:${c.swatch[1]};border:1px solid rgba(255,255,255,.18);border-radius:6px` },
-            h('b', { style: `color:${isLightHex(c.swatch[1]) ? '#000' : '#fff'}` }, 'AA'), h('i', { style: `background:${c.swatch[2]}` })),
-          loadingTile === c.id ? h('div', { class: 'dt-load' }, spinner(26)) : (null as unknown as Node));
-        return h('button', { class: 'dt-tile' + (ctx.p.creator === c.id ? ' on' : ''), 'aria-label': c.name, disabled: loadingTile || busy ? 'true' : undefined, onclick: () => void runTemplate(c.id) },
-          face, h('span', { class: 'dt-name' }, c.name), h('span', { class: 'dt-sub' }, c.hint));
-      })));
+      h('div', { class: 'at-hint', style: 'margin-bottom:8px' }, 'Tap a template: the edit starts at once (visuals, B-roll, motion, colour). Captions stay as they are.'),
+      h('div', { class: 'at-label' }, 'Reference styles'),
+      h('div', { class: 'dt-grid lib' }, ...ref.map(tile)),
+      h('div', { class: 'at-label', style: 'margin-top:14px' }, 'Classic styles'),
+      h('div', { class: 'dt-grid lib' }, none, ...rest.map(tile)));
   }
   /** Tap a look: the card shows a loading ring, then the look is on. None takes the whole look off (cards, B-roll, caption look). */
   let loadingTile: string | null = null;

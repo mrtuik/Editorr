@@ -1914,3 +1914,12 @@ html body input[type=range]:disabled { opacity: .4; }
 .td-ring2, .td-ring2.indet { border-radius: 50%; background: none; animation: none; }
 .td-ring2::before { inset: 0; border-radius: 50%; background: conic-gradient(var(--accent, #C6F277) calc(var(--p, 0) * 1%), rgba(255,255,255,.16) 0); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px)); mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3.5px)); }
 .td-ring2.indet::before { background: conic-gradient(var(--accent, #C6F277) 0 25%, rgba(255,255,255,.16) 0); animation: tdspin 1s linear infinite; }
+
+/* template library: two big tiles per row with a description and what each style does */
+.dt-grid.lib { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.dt-tile.lib { padding: 8px; border-radius: 16px; gap: 5px; }
+.dt-prev.lib-prev { aspect-ratio: 16 / 10; }
+.dt-tile.lib .dt-name { font-size: 13px; white-space: normal; }
+.dt-tile.lib .dt-sub { font-size: 11px; line-height: 1.25; color: #9a9aa0; white-space: normal; }
+.dt-traits { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.dt-traits span { font-size: 9.5px; padding: 2px 6px; border-radius: 8px; background: rgba(255,255,255,.08); color: #cfcfd4; }
