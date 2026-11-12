@@ -23,7 +23,7 @@ export interface RunOpts {
   ctrl: RunCtrl;
   onProgress?: (done: number, total: number) => void;
 }
-export interface RunResult { made: number; failed: number; planned: number; source: 'AI' | 'built-in rules'; note?: string }
+export interface RunResult { made: number; failed: number; planned: number; source: 'AI' | 'built-in rules'; note?: string; aiMade: number; aiFailed: number; aiError?: string }
 
 export const toTWords = (ws: CapWord[]): TWord[] => ws.map(w => ({ text: w.orig || w.w, startMs: w.s, endMs: w.e }));
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -39,18 +39,18 @@ export async function runVisuals(o: RunOpts): Promise<RunResult> {
     slots = [];
     if (o.useAi) {
       try { slots = await withTimeout(planAi(o.words, o.durationMs, theme.name, o.mix), 45000); source = 'AI'; }
-      catch (e) { note = `Antigravity: ${(e as Error).message || 'no answer'}. Built-in rules used.`; }
+      catch (e) { note = `ERROR: Antigravity NOT working (${(e as Error).message || 'no answer'}). No AI was used, built-in rules made these.`; }
     }
     if (!slots.length) slots = planLocal(toTWords(o.words), o.durationMs);
     if (o.fromMs && o.fromMs > 0) slots = slots.filter(s => s.startMs >= o.fromMs! - 200);
   }
-  if (!slots.length) return { made: 0, failed: 0, planned: 0, source, note: note ?? 'Nothing to plan: no speech found.' };
+  if (!slots.length) return { made: 0, failed: 0, planned: 0, source, note: note ?? 'Nothing to plan: no speech found.', aiMade: 0, aiFailed: 0 };
 
   // Step A done: grey placeholders show the whole rhythm at once
   host.setBeats(byStart([...host.getBeats().filter(b => !slots.some(s => s.id === b.id)), ...slots.map((s, i) => pendingBeat(s.id, s.startMs, s.endMs, i + 1))]));
   host.changed();
 
-  let made = 0, failed = 0, aiOk = source === 'AI', prevIn: string | undefined, prev: { type: string; title: string } | undefined;
+  let made = 0, failed = 0, aiMade = 0, aiFailed = 0, aiError: string | undefined, aiOk = source === 'AI', prevIn: string | undefined, prev: { type: string; title: string } | undefined;
   for (let i = 0; i < slots.length; i++) {
     while (ctrl.paused && !ctrl.stopped) await sleep(200);
     if (ctrl.stopped) break;
@@ -66,7 +66,8 @@ export async function runVisuals(o: RunOpts): Promise<RunResult> {
           const r = await withTimeout(makeAi(slot, theme.name, sentence, prev), 30000);
           data = r.data; const base = pickMotion(theme, i, prevIn); motion = { in: r.motion?.in ?? base.in, hold: r.motion?.hold ?? base.hold, out: r.motion?.out ?? base.out };
           if (motion.in === prevIn) motion.in = base.in;
-        } catch { data = local.data; motion = local.motion; type = local.type; }
+          aiMade++;
+        } catch (e) { aiFailed++; aiError ??= (e as Error).message || 'no answer'; data = local.data; motion = local.motion; type = local.type; }
       } else { data = local.data; motion = local.motion; type = local.type; }
       const v: Visual = { id: slot.id, type, data, themeId: o.themeId, motion, startMs: slot.startMs, endMs: slot.endMs };
       const beat = await makeVisualBeat(v, host.aspect);
@@ -81,7 +82,7 @@ export async function runVisuals(o: RunOpts): Promise<RunResult> {
   // Stop or finish: remaining placeholders go away; nothing that was made is touched
   host.setBeats(host.getBeats().filter(b => !(b.pending && slots.some(s => s.id === b.id))));
   host.changed();
-  return { made, failed, planned: slots.length, source, note };
+  return { made, failed, planned: slots.length, source, note, aiMade, aiFailed, aiError };
 }
 
 /** One visual at the playhead: the sentence being said there (or the next 3 s), type chosen or auto. */

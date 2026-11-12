@@ -16,7 +16,7 @@ import {
 import { uid } from '../core/speaker';
 import { buildBrollPane, type BrollPane } from './brollSheet';
 import {
-  VISUAL_LABEL, VISUAL_THEMES, VISUAL_TYPES, classify, getTheme, makeLocal, motionIds, pickMotion, previewUrl, redrawVisualBeat, runVisuals, showChip, slotAtPlayhead,
+  VISUAL_LABEL, VISUAL_THEMES, VISUAL_TYPES, classify, getTheme, makeLocal, motionIds, pickMotion, previewUrl, redrawVisualBeat, runVisuals, showChip, slotAtPlayhead, agyProblem,
   visualLookFor, type RunCtrl, type VisualType,
 } from '../core/visuals';
 import type { Project } from '../core/types';
@@ -189,6 +189,8 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
     const from = ctx.playMs() > 1000 ? ctx.playMs() : 0;
     running = true; busy = true; loadingTile = id; render();
     const chip = showChip(ctrl);
+    const agyBad = await agyProblem();
+    if (agyBad) toast(`ERROR: ${agyBad}. Visuals will use the built-in rules, not AI.`, 6000);
     try {
       ctx.p.docu = beats().filter((b) => b.end <= from); ctx.p.broll = (ctx.p.broll ?? []).filter((b) => b.end <= from); selBroll = undefined;
       ctx.changed();
@@ -206,8 +208,11 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
       const first = beats().find((b) => b.vis);
       sel = first?.id ?? null;
       if (first && !ctrl.stopped) ctx.seek(first.start + 300);
-      if (!r.made) toast(`${c.name}: no visual could be made${r.note ? ` (${r.note})` : ''}.`, 6000);
-      else toast(`${c.name}: ${r.made} visual${r.made > 1 ? 's' : ''} made (${r.source})${r.failed ? `, ${r.failed} skipped` : ''}${ctrl.stopped ? ', stopped' : ''}.${extra}${r.note ? ` ${r.note}` : ''}`, 7000);
+      const agyLine = r.source === 'AI'
+        ? (r.aiFailed ? ` ERROR: Antigravity failed on ${r.aiFailed} visual${r.aiFailed > 1 ? 's' : ''} (${r.aiError}); built-in rules filled them.` : ` Antigravity OK (${r.aiMade} by AI).`)
+        : '';
+      if (!r.made) toast(`${c.name}: no visual could be made${r.note ? ` (${r.note})` : ''}.`, 9000);
+      else toast(`${c.name}: ${r.made} visual${r.made > 1 ? 's' : ''} made (${r.source})${r.failed ? `, ${r.failed} skipped` : ''}${ctrl.stopped ? ', stopped' : ''}.${agyLine}${extra}${r.note ? ` ${r.note}` : ''}`, 10000);
     } catch (e) { toast(`Visuals failed: ${(e as Error).message || 'error'}. What was made stays.`, 6000); ctx.changed(); }
     finally { chip.dispose(); running = false; busy = false; loadingTile = null; if (!closed) render(); }
   }
@@ -308,6 +313,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
       ctx.p.docu = []; ctx.p.broll = []; selBroll = undefined;
       updateTask('autoedit', 'Planning the moments...', 8);
       let made: DocuBeat[] = [];
+      const agyNotes: string[] = [];
       if (rc.motion) {
         // motion director: code cards, number counters, step cards and quotes, each with a punch-in at its start
         const r = await withTimeout(planMotionGraphics(words, ctx.durationMs(), true), 60000).catch(async () => {
@@ -323,7 +329,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
           try { made.push(...await makeKallawayBeats(ctx.p.aspect, spec, pk.start, pk.end)); } catch { /* one bad card never stops the edit */ }
           updateTask('autoedit', `Drawing graphics ${idx + 1}/${r.picks.length}...`, 8 + 22 * (idx + 1) / Math.max(1, r.picks.length));
         }
-        if (r.note) toast(r.note, 5000);
+        if (r.note) agyNotes.push(r.note);
       } else if (rc.cards) {
         let r = await withTimeout(planKallaway(words, ctx.durationMs(), true), 45000).catch(async () => {
           updateTask('autoedit', 'AI is slow, using the built-in rules...', 10);
@@ -343,6 +349,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
       } else if (rc.docuBeats) {
         const r = await withTimeout(planDocuBeats(words, ctx.p.aspect, ctx.durationMs(), true), 45000).catch(() => planDocuBeats(words, ctx.p.aspect, ctx.durationMs(), false));
         made = r.beats;
+        if (r.note) agyNotes.push(r.note);
       }
       if (cancelled) { restore(); toast('Auto edit cancelled. Your old edit is back.', 3000); return; }
       ctx.p.docu = made.sort((a, b) => a.start - b.start);
@@ -368,7 +375,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
         const fr = rc.frames?.length ? rc.frames : undefined;
         const tl = rc.trans?.length ? rc.trans : undefined;
         gap.beats.forEach((b, i) => { if (fr) b.frame = fr[i % fr.length]!; if (tl) b.trans = tl[i % tl.length]!; next = placeBroll(next, b); });
-        ctx.p.broll = next; filled = gap.beats.length;
+        ctx.p.broll = next; filled = gap.beats.length; if (gap.note) agyNotes.push(gap.note);
       } catch (e) { note = ` Visuals failed: ${(e as Error).message || 'error'}.`; }
       if (cancelled) { restore(); toast('Auto edit cancelled. Your old edit is back.', 3000); return; }
       if (!made.length && !filled) {
@@ -390,7 +397,9 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
       }
       const first = made[0]?.start ?? ctx.p.broll?.[0]?.start ?? 0;
       ctx.seek(Math.max(0, first) + 200);
-      toast(`${c.name} done: ${made.length} beats + ${filled} visual cuts.${extra}${note}`, 7000);
+      const modeWarn = ' NOTE: Visuals is set to Photos & Video, so these are stock pictures. Choose HTML at the top for motion graphics.';
+      const agyWarn = agyNotes.length ? ` ERROR: ${agyNotes.join(' ')}` : '';
+      toast(`${c.name} done: ${made.length} beats + ${filled} visual cuts.${extra}${note}${agyWarn}${modeWarn}`, 11000);
     } catch (e) {
       restore();
       toast(`Auto edit failed, old edit restored: ${(e as Error).message || 'error'}`, 6000);

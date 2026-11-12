@@ -12,4 +12,4 @@ export type { RunCtrl, RunHost, RunOpts, RunResult } from './runner';
 export { visualLookFor } from './creatorLook';
 export { previewUrl, SAMPLE } from './preview';
 export { showChip } from './chip';
-export { planAi, makeAi } from './ai';
+export { planAi, makeAi, agyProblem } from './ai';

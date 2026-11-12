@@ -51,6 +51,17 @@ RULES
 (for line_chart use "values" as the points; terminal and receipt_card use "lines"; receipt line = "name | price")`;
 }
 
+/** null = Antigravity is ready. Otherwise the plain reason it will not work (shown to the user as an error). */
+export async function agyProblem(): Promise<string | null> {
+  try {
+    if (!isNative()) return 'Antigravity works in the Android app only';
+    const st = await EditorrNative.antigravityStatus();
+    if (!st.installed) return 'Antigravity is not set up yet';
+    if (!st.signedIn) return 'Antigravity is not signed in';
+    return null;
+  } catch (e) { return `Antigravity check failed: ${(e as Error).message || 'error'}`; }
+}
+
 async function ask(prompt: string): Promise<string> {
   if (!isNative()) throw new Error('Antigravity works in the Android app only');
   const st = await EditorrNative.antigravityStatus();
