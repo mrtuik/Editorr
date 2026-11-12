@@ -43,7 +43,12 @@ export interface BrollBeat {
   srcMs?: number;
   /** corner radius in px of a 1080-short-side frame (card only) */
   radius: number;
+  /** how a PHOTO beat comes in and goes out (video beats keep the plain cut). Missing = fade. */
+  trans?: BrollTrans;
 }
+
+export type BrollTrans = 'fade' | 'whip' | 'zoom' | 'slide';
+export const BROLL_TRANS_MS = 280;
 
 export const BROLL_MOTIONS: BrollMotion[] = ['zoom_in', 'zoom_out', 'pan_left', 'pan_right', 'slow_zoom', 'punch_in', 'slow_pan', 'drift'];
 /** The motions Auto B-roll rotates through (slow_zoom is kept for article cards). Kallaway camera drift: punch in, slow pan, drift. */
@@ -115,6 +120,20 @@ export function brollMotionAt(motion: BrollMotion, p: number): { s: number; tx: 
     case 'pan_right': return { s: 1.06, tx: -0.02 + 0.04 * e, ty: 0 };
     default: return { s: 1 + 0.12 * e, tx: 0, ty: 0 };
   }
+}
+
+/**
+ * Transition of a photo beat at `ms`: extra scale / shift on top of the motion, and the fade. The Android export repeats the same formulas.
+ * whip = slides in from the right and leaves to the left, zoom = pushes in from a bigger picture, slide = rises from below.
+ */
+export function brollTransAt(b: BrollBeat, ms: number): { a: number; s: number; tx: number; ty: number } {
+  const t = b.trans ?? 'fade';
+  if (t === 'fade') return { a: brollAlpha(b, ms), s: 1, tx: 0, ty: 0 };
+  const u = Math.max(0, Math.min(1, (ms - b.start) / BROLL_TRANS_MS)), v = Math.max(0, Math.min(1, (b.end - ms) / BROLL_TRANS_MS));
+  const eu = u * u * (3 - 2 * u), ev = v * v * (3 - 2 * v);
+  if (t === 'whip') return { a: Math.min(1, u * 3, v * 3), s: 1.04, tx: (1 - eu) * 0.35 - (1 - ev) * 0.35, ty: 0 };
+  if (t === 'zoom') return { a: Math.min(u, v), s: (1 + (1 - eu) * 0.35) * (1 + (1 - ev) * 0.25), tx: 0, ty: 0 };
+  return { a: Math.min(1, u * 2, v * 2), s: 1, tx: 0, ty: (1 - eu) * 0.25 - (1 - ev) * 0.2 };
 }
 
 /** 0..1 fade at `ms`: in at the start, out at the end. */

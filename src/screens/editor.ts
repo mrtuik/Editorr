@@ -26,7 +26,7 @@ import { synthLoop, synthSfx } from '../core/synth';
 import { AUTO_INFO, planSfx, type AutoKind } from '../core/sfxPlan';
 import { buildPages, DEFAULT_CAPTION_STYLE, drawCaption, dualPage, dualStyle, loadCaptionFonts, pageAt, zoneStyle, type CapPage, type CapZone, type HitRect, textDrawOpts, textPage, textStyleOf } from '../core/captions';
 import { transcribe } from '../core/transcribe';
-import { addAlternateZooms, addCutZooms, addPunchZooms, addReactions, findPeaks, removeAllReactions, removeReaction } from '../core/autocut';
+import { addAlternateZooms, addCutZooms, addPunchZooms, addReactions, clearZoomSteps, findPeaks, removeAllReactions, removeReaction, type ZoomShape } from '../core/autocut';
 import { History, runtime, saveProject, saveSettings, type DenoiseCache, type Snapshot } from '../core/store';
 import { detectSilence } from '../core/silence';
 import { EditorrNative, fileSrc, isNative, tick, youtubeAvailable } from '../core/native';
@@ -47,6 +47,7 @@ import { Aspect, ASPECTS, aspectValue, Corner, CropRatio, CropState, LayoutStyle
 import { confirmDialog, fmtClock, h, ICON, icon, iconButton, segDots, spinner, toast, toggle } from '../ui';
 import { pickVideosCapcut } from './mediaPicker';
 import type { OverlayClip } from '../core/types';
+import { assignLanes, fileTimeAt, maxLenMs, MIN_CLIP_MS, snapTargets as clipSnapTargets, speedOf, splitClip, srcOf, trimEdge, moveClip } from '../core/clipmap';
 
 type Panel = 'none' | 'overlay' | 'ratio' | 'crop' | 'mask' | 'silence' | 'retake' | 'sync' | 'layout' | 'main' | 'audio' | 'denoise';
 
@@ -98,7 +99,7 @@ export function editorScreen() {
   /** Text (Add text) and caption word being edited: the preview draws a dashed frame around them. */
   let textSel: string | null = null;
   /** the text / docu beat / B-roll beat picked on the timeline (white outline) */
-  let laySel: { kind: 'text' | 'docu' | 'broll'; id: string } | null = null;
+  let laySel: { kind: 'text' | 'docu' | 'broll' | 'overlay'; id: string } | null = null;
   let capSel = -1;
   let textHandle: TextSheetHandle | null = null;
   let docuHandle: DocuSheetHandle | null = null;
@@ -1051,20 +1052,23 @@ export function editorScreen() {
     v.src = fileSrc(ovPath(o));
     const box = h('div', { class: 'ov-box', style: 'display:none' }, v);
     let drag: { x: number; y: number; cx: number; cy: number } | null = null;
+    // undo / redo swap the clip objects, so always read the current one by id
+    const cur = (): OverlayClip => ovList().find((x) => x.id === o.id) ?? o;
     box.addEventListener('pointerdown', (ev: PointerEvent) => {
       if (panel !== 'overlay') return;
       ev.preventDefault();
-      if (ovSel !== o.id) { ovSel = o.id; ovList().forEach(updateOvEl); renderPanel(); }
-      drag = { x: ev.clientX, y: ev.clientY, cx: o.cx, cy: o.cy };
+      if (ovSel !== o.id) { ovSel = o.id; laySel = { kind: 'overlay', id: o.id }; ovList().forEach(updateOvEl); renderPanel(); requestDraw(); }
+      drag = { x: ev.clientX, y: ev.clientY, cx: cur().cx, cy: cur().cy };
       try { box.setPointerCapture(ev.pointerId); } catch { /* ignore */ }
     });
     box.addEventListener('pointermove', (ev: PointerEvent) => {
       if (!drag) return;
       const r = stage.getBoundingClientRect();
       if (!r.width || !r.height) return;
-      o.cx = clamp01(drag.cx + (ev.clientX - drag.x) / r.width);
-      o.cy = clamp01(drag.cy + (ev.clientY - drag.y) / r.height);
-      updateOvEl(o);
+      const c = cur();
+      c.cx = clamp01(drag.cx + (ev.clientX - drag.x) / r.width);
+      c.cy = clamp01(drag.cy + (ev.clientY - drag.y) / r.height);
+      updateOvEl(c);
     });
     const end = () => { if (drag) { drag = null; scheduleSave(); } };
     box.addEventListener('pointerup', end);
@@ -1076,15 +1080,31 @@ export function editorScreen() {
 
   function pauseOverlays() { ovEls.forEach((e) => { try { e.v.pause(); } catch { /* ignore */ } }); }
 
-  /** Show each overlay only inside its time window and keep its video on the playhead. */
+  /**
+   * Show each overlay only inside its time window and keep its video on the playhead.
+   * CapCraft time map: file time = in-point + (timeline time - start) * speed (see core/clipmap.ts).
+   * A clip about to start gets its first frame ready (pre-roll), so it appears without a stuck or black frame.
+   */
   function syncOverlays(force: boolean) {
+    const base = rateAt();
     for (const o of ovList()) {
       const e = ovEls.get(o.id);
       if (!e) continue;
-      const inWin = playMs >= o.startMs && playMs < o.startMs + o.lenMs;
-      e.box.style.display = inWin ? '' : 'none';
-      if (!inWin) { if (!e.v.paused) e.v.pause(); continue; }
-      const t = (playMs - o.startMs) / 1000;
+      const f = fileTimeAt(o, playMs);
+      if (f === null) {
+        e.box.style.display = 'none';
+        if (!e.v.paused) e.v.pause();
+        const ahead = o.startMs - playMs;
+        if (ahead > 0 && ahead < 800 && e.v.readyState >= 1) {
+          const t0 = srcOf(o) / 1000;
+          if (Math.abs(e.v.currentTime - t0) > 0.04) { try { e.v.currentTime = t0; } catch { /* not ready yet */ } }
+        }
+        continue;
+      }
+      e.box.style.display = '';
+      const rate = Math.max(0.0625, Math.min(16, speedOf(o) * base));
+      if (e.v.playbackRate !== rate) e.v.playbackRate = rate;
+      const t = f / 1000;
       const drift = e.v.currentTime - t;
       if (force || (!playing && Math.abs(drift) > 0.05) || (playing && Math.abs(drift) > 0.4)) {
         try { e.v.currentTime = t; } catch { /* not ready yet */ }
@@ -1094,11 +1114,40 @@ export function editorScreen() {
     }
   }
 
-  function removeOv(id: string) {
-    p.overlays = ovList().filter((x) => x.id !== id);
+  function disposeOv(id: string) {
     const e = ovEls.get(id);
     if (e) { try { e.v.pause(); e.v.removeAttribute('src'); e.v.load(); } catch { /* ignore */ } e.box.remove(); ovEls.delete(id); }
+  }
+  /** Undo / redo: put back a list of overlays, building and dropping their video elements as needed. */
+  function applyOverlays(list: OverlayClip[]) {
+    const keep = new Set(list.map((x) => x.id));
+    for (const id of [...ovEls.keys()]) if (!keep.has(id)) disposeOv(id);
+    p.overlays = list.length ? list.map((x) => ({ ...x })) : undefined;
+    for (const o of ovList()) { buildOv(o); updateOvEl(o); }
+    if (ovSel && !keep.has(ovSel)) ovSel = null;
+    syncOverlays(true);
+  }
+  /** Cut the overlay under the playhead in two (the tail continues the file exactly where the head stops). */
+  function splitOverlayAt(id: string | null) {
+    const o = ovList().find((x) => x.id === id) ?? ovList().find((x) => playMs > x.startMs + MIN_CLIP_MS && playMs < x.startMs + x.lenMs - MIN_CLIP_MS);
+    const res = o ? splitClip(o, playMs) : null;
+    if (!o || !res) { toast('Move the playhead inside the overlay clip first.'); return; }
+    hist.push(snap());
+    const [head, tail] = res;
+    tail.id = uid();
+    p.overlays = ovList().flatMap((x) => (x.id === o.id ? [head, tail] : [x]));
+    buildOv(tail); updateOvEl(head);
+    ovSel = tail.id; laySel = { kind: 'overlay', id: tail.id };
+    updateBtns(); scheduleSave(); syncOverlays(true); renderPanel(); requestDraw();
+  }
+
+  function removeOv(id: string) {
+    hist.push(snap());
+    p.overlays = ovList().filter((x) => x.id !== id);
+    disposeOv(id);
     if (ovSel === id) ovSel = null;
+    if (laySel?.kind === 'overlay' && laySel.id === id) laySel = null;
+    updateBtns(); requestDraw();
     if (!p.overlays.length) p.overlays = undefined;
     scheduleSave();
   }
@@ -1390,6 +1439,8 @@ export function editorScreen() {
     const mus = items.filter((i) => i.kind !== 'sfx'), sfx = items.filter((i) => i.kind === 'sfx'), txt = p.texts ?? [], dcu = p.docu ?? [], brl = p.broll ?? [];
     // packed in the timeline you SEE (cut parts squeezed out), so clips that now touch each other never draw on top of each other
     const vs = (a: number, b: number): [number, number] => (view ? [cOf(a), cOf(b)] : [a, b]);
+    const ovs = p.overlays ?? [];
+    const pov = pack(ovs.map((o) => vs(o.startMs, o.startMs + o.lenMs)));
     const pm = pack(mus.map((i) => vs(i.startMs, i.endMs))), ps = pack(sfx.map((i) => vs(i.startMs, i.endMs))), pt = pack(txt.map((t) => vs(t.s, t.e))), pd = pack(dcu.map((d) => vs(d.start, d.end))), pb = pack(brl.map((b) => vs(b.start, b.end)));
     let y = AUD_Y + AUD + GAP;
     const hasCap = !!p.captions?.words.length;
@@ -1397,9 +1448,10 @@ export function editorScreen() {
     const text = txt.length ? { y, h: pt.n * SUB_T + (pt.n - 1) * 3 } : null; if (text) y += text.h + GAP;
     const docu = dcu.length ? { y, h: pd.n * SUB_T + (pd.n - 1) * 3 } : null; if (docu) y += docu.h + GAP;
     const broll = brl.length ? { y, h: pb.n * SUB_T + (pb.n - 1) * 3 } : null; if (broll) y += broll.h + GAP;
+    const overlay = ovs.length ? { y, h: pov.n * SUB_T + (pov.n - 1) * 3 } : null; if (overlay) y += overlay.h + GAP;
     const music = mus.length ? { y, h: pm.n * SUB_M + (pm.n - 1) * 3 } : null; if (music) y += music.h + GAP;
     const fx = sfx.length ? { y, h: ps.n * SUB_S + (ps.n - 1) * 3 } : null; if (fx) y += fx.h + GAP;
-    return { mus, sfx, txt, dcu, brl, pm, ps, pt, pd, pb, music, fx, text, docu, broll, cap, tlH: y + 10 };
+    return { mus, sfx, txt, dcu, brl, ovs, pm, ps, pt, pd, pb, pov, music, fx, text, docu, broll, overlay, cap, tlH: y + 10 };
   }
   let rowsNow = tlRows(false);   // first pass before the view map exists; draw() refreshes it
   let minTlH = TL_H;
@@ -1543,6 +1595,27 @@ export function editorScreen() {
       g.fillText(dead ? '' : d.headline || 'Beat', Math.max(a + 8, G + 6), y + SUB_T / 2 + 0.5);
       g.restore();
       if (laySel?.kind === 'docu' && laySel.id === d.id) layOutline(g, a, y, w, SUB_T);
+    });
+    g.restore();
+  }
+  /** Overlay videos get their own row, like CapCut's picture-in-picture track: name, a play mark, drag edges to trim, middle to move. */
+  function drawOverlayRow(g: CanvasRenderingContext2D) {
+    const R = rowsNow; if (!R.overlay) return;
+    g.save();
+    g.beginPath(); g.rect(G, R.overlay.y - 1, W - G, R.overlay.h + 2); g.clip();
+    R.ovs.forEach((o, n) => {
+      const a = xOf(o.startMs), b = xOf(o.startMs + o.lenMs);
+      if (b < G || a > W) return;
+      const dead = fullyCut(o.startMs, o.startMs + o.lenMs);
+      const y = R.overlay!.y + R.pov.line[n]! * (SUB_T + 3), w = Math.max(dead ? 22 : 16, b - a);
+      clipBody(g, a, y, w, SUB_T, undefined, dead);
+      g.save();
+      g.beginPath(); g.rect(Math.max(a, G), y, Math.max(0, Math.min(a + w, W) - Math.max(a, G)), SUB_T); g.clip();
+      g.fillStyle = '#ffffff'; g.font = '600 11px Roboto, sans-serif'; g.textAlign = 'left'; g.textBaseline = 'middle';
+      const sp = speedOf(o);
+      g.fillText(dead ? '' : `\u25B6 ${o.name}${sp !== 1 ? `  ${sp}x` : ''}`, Math.max(a + 8, G + 6), y + SUB_T / 2 + 0.5);
+      g.restore();
+      if (laySel?.kind === 'overlay' && laySel.id === o.id) layOutline(g, a, y, w, SUB_T);
     });
     g.restore();
   }
@@ -1738,6 +1811,7 @@ export function editorScreen() {
     drawTextRow(g);
     drawDocuRow(g);
     drawBrollRow(g);
+    drawOverlayRow(g);
 
     // silence found but not cut yet
     if (pendingCuts.length) {
@@ -1842,7 +1916,7 @@ export function editorScreen() {
   type Ptr = { x: number; y: number };
   const ptrs = new Map<number, Ptr>();
   let mode: 'none' | 'scrub' | 'boundary' | 'pinch' | 'clip' | 'layer' = 'none';
-  type LayDrag = { kind: 'text' | 'docu' | 'broll'; id: string; zone: 'l' | 'r' | 'm'; s0: number; e0: number; pushed: boolean };
+  type LayDrag = { kind: 'text' | 'docu' | 'broll' | 'overlay'; id: string; zone: 'l' | 'r' | 'm'; s0: number; e0: number; pushed: boolean; o0?: OverlayClip };
   let layDrag: LayDrag | null = null;
   let startX = 0, startY = 0, startT = 0, moved = false, boundaryIdx = -1, pinchDist = 0, pinchZoom = 0, lpTimer = 0;
   let clipStartMs0 = 0, clipPushed = false, clipBefore: Snapshot | null = null;
@@ -1871,7 +1945,7 @@ export function editorScreen() {
   let lastClientY = 0;
   const localX = (e: PointerEvent) => e.clientX - canvas.getBoundingClientRect().left;
   const localY = (e: PointerEvent) => e.clientY - canvas.getBoundingClientRect().top;
-  type Lane = 'ruler' | 'main' | 'audio' | 'music' | 'sfx' | 'text' | 'docu' | 'broll' | 'caption' | 'none';
+  type Lane = 'ruler' | 'main' | 'audio' | 'music' | 'sfx' | 'text' | 'docu' | 'broll' | 'overlay' | 'caption' | 'none';
   function laneAt(y: number): Lane {
     if (y < RULER) return 'ruler';
     if (y < MAIN_Y + LANE + GAP / 2) return 'main';
@@ -1881,6 +1955,7 @@ export function editorScreen() {
     if (R.text && y < R.text.y + R.text.h + GAP / 2) return 'text';
     if (R.docu && y < R.docu.y + R.docu.h + GAP / 2) return 'docu';
     if (R.broll && y < R.broll.y + R.broll.h + GAP / 2) return 'broll';
+    if (R.overlay && y < R.overlay.y + R.overlay.h + GAP / 2) return 'overlay';
     if (R.music && y < R.music.y + R.music.h + GAP / 2) return 'music';
     if (R.fx && y < R.fx.y + R.fx.h + GAP / 2) return 'sfx';
     return 'none';
@@ -1987,7 +2062,9 @@ export function editorScreen() {
       const ld = layDrag; layDrag = null;
       if (ld?.pushed) {
         updateBtns(); scheduleSave();
-        if (ld.kind === 'text') textHandle?.select(ld.id); else docuHandle?.select(ld.kind === 'docu' ? 'beats' : 'broll', ld.id);
+        if (ld.kind === 'text') textHandle?.select(ld.id);
+        else if (ld.kind === 'overlay') { ovSel = ld.id; syncOverlays(true); if (panel === 'overlay') renderPanel(); }
+        else docuHandle?.select(ld.kind === 'docu' ? 'beats' : 'broll', ld.id);
       } else if (ld && !moved && Date.now() - startT < 400) {
         const hit = layerAt(ld.kind, startX, startY);
         if (hit) selectLayer(ld.kind, hit.id, hit.s, hit.e);
@@ -2005,12 +2082,12 @@ export function editorScreen() {
 
   /** Pressing on the layer that is already selected grabs it: its left or right edge trims it, the middle moves it (like CapCut). */
   function layerHandleAt(lane: Lane, x: number, y: number): LayDrag | null {
-    if (lane !== 'text' && lane !== 'docu' && lane !== 'broll') return null;
+    if (lane !== 'text' && lane !== 'docu' && lane !== 'broll' && lane !== 'overlay') return null;
     if (!laySel || laySel.kind !== lane) return null;
     const hit = layerAt(lane, x, y);
     if (!hit || hit.id !== laySel.id) return null;
     const a = xOf(hit.s), b = Math.max(xOf(hit.e), a + 22), edge = Math.min(22, (b - a) / 3);
-    return { kind: lane, id: hit.id, zone: x < a + edge ? 'l' : x > b - edge ? 'r' : 'm', s0: hit.s, e0: hit.e, pushed: false };
+    return { kind: lane, id: hit.id, zone: x < a + edge ? 'l' : x > b - edge ? 'r' : 'm', s0: hit.s, e0: hit.e, pushed: false, o0: lane === 'overlay' ? { ...ovList().find((o) => o.id === hit.id)! } : undefined };
   }
   const MIN_LAYER_MS = 200;
   function dragLayer(x: number) {
@@ -2019,7 +2096,8 @@ export function editorScreen() {
     const dur = p.durationMs;
     const dMs = ((x - startX) / pxPerSec) * 1000;
     const thr = (8 / pxPerSec) * 1000;
-    const snapTo = (v: number) => { for (const c of [0, playMs, dur]) if (Math.abs(c - v) <= thr) return c; return v; };
+    const marks = ld.kind === 'overlay' ? [0, playMs, dur, ...clipSnapTargets(ovList().map((o) => ({ id: o.id, startMs: o.startMs, lenMs: o.lenMs })), ld.id, playMs)] : [0, playMs, dur];
+    const snapTo = (v: number) => { for (const c of marks) if (Math.abs(c - v) <= thr) return c; return v; };
     let s = ld.s0, e = ld.e0;
     if (ld.zone === 'l') s = Math.max(0, Math.min(ld.e0 - MIN_LAYER_MS, snapTo(uOf(cOf(ld.s0) + dMs))));
     else if (ld.zone === 'r') e = Math.min(dur, Math.max(ld.s0 + MIN_LAYER_MS, snapTo(uOf(cOf(ld.e0) + dMs))));
@@ -2033,8 +2111,17 @@ export function editorScreen() {
     setLayerRange(ld.kind, ld.id, s, e, ld.zone);
     drawCaptionsPreview(); requestDraw();
   }
-  function setLayerRange(kind: 'text' | 'docu' | 'broll', id: string, s: number, e: number, zone: 'l' | 'r' | 'm') {
+  function setLayerRange(kind: 'text' | 'docu' | 'broll' | 'overlay', id: string, s: number, e: number, zone: 'l' | 'r' | 'm') {
     s = Math.round(s); e = Math.round(e);
+    if (kind === 'overlay') {
+      // CapCraft rules: head trim moves the in-point, tail trim changes length, both stop at the file ends and 100 ms
+      const o = ovList().find((x) => x.id === id), base = layDrag?.o0;
+      if (!o || !base) return;
+      const n = zone === 'l' ? trimEdge(base, 'head', s) : zone === 'r' ? trimEdge(base, 'tail', e) : moveClip(base, s);
+      o.startMs = n.startMs; o.lenMs = n.lenMs; o.srcMs = n.srcMs;
+      syncOverlays(true);
+      return;
+    }
     if (kind === 'text') { const t = p.texts?.find((x) => x.id === id); if (t) { t.s = s; t.e = e; } return; }
     if (kind === 'broll') { const b = p.broll?.find((x) => x.id === id); if (b) { b.start = s; b.end = e; } return; }
     const d = p.docu?.find((x) => x.id === id); if (!d) return;
@@ -2052,14 +2139,15 @@ export function editorScreen() {
     }
   }
   /** The text / docu beat / B-roll beat under a tap on its timeline row. */
-  function layerAt(lane: 'text' | 'docu' | 'broll', x: number, y: number): { id: string; s: number; e: number } | null {
+  function layerAt(lane: 'text' | 'docu' | 'broll' | 'overlay', x: number, y: number): { id: string; s: number; e: number } | null {
     const R = rowsNow;
-    const row = lane === 'text' ? R.text : lane === 'docu' ? R.docu : R.broll;
+    const row = lane === 'text' ? R.text : lane === 'docu' ? R.docu : lane === 'overlay' ? R.overlay : R.broll;
     if (!row || x < G) return null;
     const line = Math.max(0, Math.floor((y - row.y) / (SUB_T + 3)));
     const items: { id: string; s: number; e: number; line: number }[] = lane === 'text'
       ? R.txt.map((t, n) => ({ id: t.id, s: t.s, e: t.e, line: R.pt.line[n]! }))
       : lane === 'docu' ? R.dcu.map((d, n) => ({ id: d.id, s: d.start, e: d.end, line: R.pd.line[n]! }))
+      : lane === 'overlay' ? R.ovs.map((o, n) => ({ id: o.id, s: o.startMs, e: o.startMs + o.lenMs, line: R.pov.line[n]! }))
       : R.brl.map((b, n) => ({ id: b.id, s: b.start, e: b.end, line: R.pb.line[n]! }));
     let best: { id: string; s: number; e: number } | null = null;
     for (const it of items) {
@@ -2070,9 +2158,10 @@ export function editorScreen() {
     return best;
   }
   /** Tap on a layer: it gets an outline, the playhead goes into it, and its sheet opens on it (every sheet has Delete). */
-  function selectLayer(kind: 'text' | 'docu' | 'broll', id: string, s0: number, e0: number) {
+  function selectLayer(kind: 'text' | 'docu' | 'broll' | 'overlay', id: string, s0: number, e0: number) {
     setPlaying(false);
     if (playMs < s0 || playMs >= e0) seek(Math.min(e0 - 1, s0 + 120));
+    if (kind === 'overlay') { ovSel = id; laySel = { kind, id }; openPanel('overlay'); requestDraw(); return; }
     if (kind === 'text') { if (textHandle) textHandle.select(id); else openTexts(id); textSel = id; }
     else if (kind === 'docu' && p.docu?.find((x) => x.id === id)?.kw) openDocu('kallaway', id, 'kallaway');
     else openDocu(kind === 'docu' ? 'beats' : 'broll', id);
@@ -2087,6 +2176,11 @@ export function editorScreen() {
     if (lane === 'caption') {
       const pg = x >= G ? capPages.find((q) => { const a = xOf(q.s), b = Math.max(xOf(q.e) - 1, a + 10); return x >= a - 2 && x <= b + 2; }) : undefined;
       if (pg) { setPlaying(false); openCaptions(pg.from, true); } else openCaptions();
+      return;
+    }
+    if (lane === 'overlay') {
+      const hit = layerAt('overlay', x, y);
+      if (hit) selectLayer('overlay', hit.id, hit.s, hit.e);
       return;
     }
     if (lane === 'text' || lane === 'docu' || lane === 'broll') {
@@ -2169,10 +2263,10 @@ export function editorScreen() {
     segments: p.segments, offsetMs: p.offsetMs, durationMs: p.durationMs,
     cropHost: p.cropHost, cropConst: p.cropConst, mirrorHost: p.mirrorHost, mirrorConst: p.mirrorConst,
     noiseHost: p.noiseHost, noiseConst: p.noiseConst,
-    layers: { texts: (p.texts ?? []).map((x) => ({ ...x })), docu: (p.docu ?? []).map((x) => ({ ...x })), broll: (p.broll ?? []).map((x) => ({ ...x })) },
+    layers: { texts: (p.texts ?? []).map((x) => ({ ...x })), docu: (p.docu ?? []).map((x) => ({ ...x })), broll: (p.broll ?? []).map((x) => ({ ...x })), overlays: (p.overlays ?? []).map((x) => ({ ...x })) },
   });
   function restore(s: Snapshot) {
-    if (s.layers) { p.texts = s.layers.texts.map((x) => ({ ...x })); p.docu = s.layers.docu.map((x) => ({ ...x })); p.broll = s.layers.broll.map((x) => ({ ...x })); laySel = null; textSel = null; drawCaptionsPreview(); requestDraw(); }
+    if (s.layers) { p.texts = s.layers.texts.map((x) => ({ ...x })); p.docu = s.layers.docu.map((x) => ({ ...x })); p.broll = s.layers.broll.map((x) => ({ ...x })); if (s.layers.overlays) applyOverlays(s.layers.overlays); laySel = null; textSel = null; drawCaptionsPreview(); requestDraw(); }
     p.segments = s.segments; p.offsetMs = s.offsetMs; p.durationMs = s.durationMs;
     p.cropHost = s.cropHost; p.cropConst = s.cropConst;
     p.mirrorHost = s.mirrorHost; p.mirrorConst = s.mirrorConst;
@@ -2679,7 +2773,7 @@ export function editorScreen() {
     }, startWord, single);
   }
 
-  function openDocu(startTab: DocuTab = 'beats', startId?: string, only?: 'docu' | 'broll' | 'kallaway') {
+  function openDocu(startTab: DocuTab = 'templates', startId?: string, only?: 'docu' | 'broll' | 'kallaway') {
     capHandle?.close();
     textHandle?.close();
     docuHandle?.close();
@@ -2690,6 +2784,8 @@ export function editorScreen() {
       aspect: () => aspectValue(p.aspect),
       words: () => p.captions?.words?.length ? p.captions.words : p.agentWords?.words ?? [],
       openKallaway: (id) => openDocu('kallaway', id, 'kallaway'),
+      punch: templatePunch,
+      sound: templateSound,
       onClosed: () => { docuHandle = null; laySel = null; requestDraw(); },
     }, startTab, startId, only);
   }
@@ -2779,6 +2875,49 @@ export function editorScreen() {
         return n;
       },
     });
+  }
+
+  /** A template's punch-in style: the old zoom steps go, new ones land on the loud moments (null = no punch-ins). Returns how many moments were zoomed. */
+  /** `at` = exact timeline moments (the start of every motion card); without it the loud moments of the speech are used. */
+  function templatePunch(shape: ZoomShape | null, at?: number[]): number {
+    const had = p.segments.some((s) => s.zs);
+    let segs = had ? clearZoomSteps(p.segments, (role) => p[CK(role)]) : p.segments;
+    let n = 0;
+    if (shape && at?.length) {
+      const peaks = at.filter((t) => t >= 0 && t < p.durationMs).sort((a, b) => a - b);
+      const before = segs.length;
+      segs = addPunchZooms(segs, peaks, shape, (sg, role) => sg[CK(role)] ?? p[CK(role)]);
+      n = Math.max(0, segs.length - before) > 0 ? peaks.length : 0;
+    } else if (shape && (runtime.hostPcm || runtime.constPcm)) {
+      const host = p.mainAudio === 'host';
+      const pcm = (host ? runtime.hostPcm : runtime.constPcm) ?? runtime.hostPcm ?? runtime.constPcm!;
+      const peaks = findPeaks(pcm, host ? 0 : Math.round(p.offsetMs / 100), p.durationMs, 5000, 5);
+      const before = segs.length;
+      segs = addPunchZooms(segs, peaks, shape, (sg, role) => sg[CK(role)] ?? p[CK(role)]);
+      n = Math.max(0, segs.length - before) > 0 ? peaks.length : 0;
+    }
+    if (segs !== p.segments) edit(segs);
+    return n;
+  }
+
+  /** A template's sound design: music under the whole video and only the effect kinds it likes. Music that is already there is kept, only re-mixed. */
+  async function templateSound(sd: { bgm: boolean; sfx: AutoKind[] | false; musicDb: number }, status: (s: string) => void): Promise<string> {
+    if (destroyed || p.durationMs < 3000) return '';
+    const mixOpts = { levelDb: sd.musicDb, duckDb: app.settings.musicDuckDb ?? 14, fadeMs: app.settings.musicFadeMs ?? 1500, clipDb: app.settings.musicClipDb ?? -18, clipDuck: app.settings.musicClipDuck ?? true };
+    try {
+      p.autoSoundDone = true;
+      if (p.bgm && (clipFiles.length || songFiles.length)) {
+        status('Re-mixing the music...');
+        if (sd.sfx === false) for (let i = sfxFiles.length - 1; i >= 0; i--) if (sfxFiles[i]!.auto) sfxFiles.splice(i, 1);
+        return (await makeMusic(mixOpts, true)) ? 'music re-mixed' : 'music kept';
+      }
+      if (p.bgm) return 'music kept';
+      if (sd.bgm) await autoBgm({ lang: app.settings.musicLang ?? 'en', status });
+      if (sd.sfx && sd.sfx.length) await autoSfx({ status, kinds: sd.sfx });
+      if (!clipFiles.length && !sfxFiles.length) return 'no sound found';
+      status('Mixing sound...');
+      return (await makeMusic(mixOpts, true)) ? 'music + sound added' : 'sound failed';
+    } catch { return 'sound failed'; }
   }
 
   async function doAutoZoom() {
@@ -3015,12 +3154,12 @@ export function editorScreen() {
 
   /** Auto SFX: a whoosh where the layout changes, a soft pop where the camera moves to the other person.
    *  The sounds come from YouTube; a sound made on the phone is used only when YouTube does not work. */
-  async function autoSfx(o: { status: (s: string) => void }): Promise<{ count: number; fromYoutube: number; note?: string }> {
+  async function autoSfx(o: { status: (s: string) => void; kinds?: AutoKind[] }): Promise<{ count: number; fromYoutube: number; note?: string }> {
     for (let i = sfxFiles.length - 1; i >= 0; i--) if (sfxFiles[i]!.auto) sfxFiles.splice(i, 1);
     o.status('Looking for funny and important moments...');
     await new Promise<void>((r) => setTimeout(r, 30));
     const role = p.mainAudio;
-    const cuts = planSfx({ segments: p.segments, texts: p.texts ?? [], words: p.captions?.words, voice: sourcePcm(role), voiceShiftMs: role === 'host' ? 0 : p.offsetMs, durationMs: p.durationMs });
+    const cuts = planSfx({ segments: p.segments, texts: p.texts ?? [], words: p.captions?.words, voice: sourcePcm(role), voiceShiftMs: role === 'host' ? 0 : p.offsetMs, durationMs: p.durationMs }).filter((m) => !o.kinds || o.kinds.includes(m.kind));
     if (!cuts.length) return { count: 0, fromYoutube: 0 };
 
     let ytOk = await youtubeAvailable();
@@ -3140,7 +3279,7 @@ export function editorScreen() {
   }
 
   function doSwap() { edit(p.segments.map((s) => ({ ...s, main: (s.main === 'host' ? 'constant' : 'host') as Role }))); }
-  function doSplit() { edit(splitAt(p.segments, playMs)); selectedId = segmentAt(p.segments, playMs)?.id ?? null; tick(); }
+  function doSplit() { if (ovList().some((o) => playMs > o.startMs + MIN_CLIP_MS && playMs < o.startMs + o.lenMs - MIN_CLIP_MS) && panel === 'overlay') { splitOverlayAt(ovSel); return; } edit(splitAt(p.segments, playMs)); selectedId = segmentAt(p.segments, playMs)?.id ?? null; tick(); }
   function doMerge() { const s = selected(); if (s) { edit(mergeWithPrev(p.segments, s.id)); selectedId = null; afterEdit(); } else toast('Tap a segment in the bottom row first.'); }
   /** Delete on the timeline, like CapCut: the part is taken out of the video AND its sound, the clips after it move up,
    *  and text / Docu / B-roll clips that lay only inside it go too. Undo brings everything back. */
@@ -3160,7 +3299,9 @@ export function editorScreen() {
     p.texts = (p.texts ?? []).filter((t) => !inside(t.s, t.e));
     p.docu = (p.docu ?? []).filter((d) => !gone.has(d.id) && !(d.kw && goneGid.has(d.kw.gid)));
     p.broll = (p.broll ?? []).filter((b) => !inside(b.start, b.end));
-    const removedLayers = nText - p.texts.length + nDocu - p.docu.length + nBroll - p.broll.length;
+    const nOv = ovList().length;
+    applyOverlays(ovList().filter((o) => !inside(o.startMs, o.startMs + o.lenMs)));
+    const removedLayers = nText - p.texts.length + nDocu - p.docu.length + nBroll - p.broll.length + nOv - ovList().length;
     p.segments = dropSlivers(subtractRanges(p.segments, [r]), 1);
     selectedId = null; laySel = null; textSel = null;
     afterEdit();
@@ -3285,6 +3426,7 @@ export function editorScreen() {
     silenceStudio?.dispose(); silenceStudio = undefined;
     panel = 'none'; pendingCuts = []; silenceItems = []; snapMs = null;
     ovLayer.classList.remove('editing'); ovList().forEach(updateOvEl);
+    if (laySel?.kind === 'overlay') { laySel = null; requestDraw(); }
     if (selClip === 'constant') selClip = null;
     cropView.classList.remove('on'); guideV.classList.remove('on'); guideH.classList.remove('on');
     panelEl.style.display = 'none';
@@ -3577,10 +3719,12 @@ export function editorScreen() {
         const sSize = slider('Size', 10, 100, 1, Math.round(o.scale * 100), (v) => `${Math.round(v)}%`, (v) => { o.scale = v / 100; upd(); });
         const sVol = slider('Volume', 0, 100, 1, Math.round(o.volume), (v) => `${Math.round(v)}%`, (v) => { o.volume = v; upd(); });
         const sStart = slider('Start', 0, maxStart, 0.1, Math.min(maxStart, o.startMs / 1000), (v) => `${v.toFixed(1)} s`, (v) => { o.startMs = Math.round(v * 1000); upd(); });
-        const sLen = slider('Length', 0.5, Math.max(0.5, o.durationMs / 1000), 0.1, Math.min(o.durationMs / 1000, o.lenMs / 1000), (v) => `${v.toFixed(1)} s`, (v) => { o.lenMs = Math.round(v * 1000); upd(); });
+        const sLen = slider('Length', 0.5, Math.max(0.5, maxLenMs(o) / 1000), 0.1, Math.min(maxLenMs(o) / 1000, o.lenMs / 1000), (v) => `${v.toFixed(1)} s`, (v) => { o.lenMs = Math.round(v * 1000); upd(); });
+        const sSpeed = slider('Speed', 0.25, 4, 0.05, speedOf(o), (v) => `${v.toFixed(2)}x`, (v) => { const k = speedOf(o); o.speed = Math.round(v * 100) / 100; o.lenMs = Math.max(MIN_CLIP_MS, Math.min(Math.round((o.lenMs * k) / o.speed), Math.round(maxLenMs(o)))); upd(); requestDraw(); });
         const tiles: Node[] = [
           ptile(icon('plus', 26), 'Add video', () => void addOverlay(false)),
           ptile(icon('play', 26), 'Go to start', () => seek(o.startMs)),
+          ptile(icon('scissors', 26), 'Split', () => splitOverlayAt(o.id)),
           ptile(icon('one', 26), 'Full frame', () => { o.scale = 1; o.cx = 0.5; o.cy = 0.5; upd(); renderPanel(); }),
           ptile(icon('cTL', 26), 'Top left', () => place('l', 't')),
           ptile(icon('cTR', 26), 'Top right', () => place('r', 't')),
@@ -3592,7 +3736,7 @@ export function editorScreen() {
           list.length > 1 ? chipRow<string>(list.map((x, i) => [x.id, `Video ${i + 1}`] as [string, string]), o.id, (id) => { ovSel = id; renderPanel(); }) : null as any,
           pstrip(...tiles),
           h('div', { class: 'pinfo' }, 'Drag the video on the preview to move it.'),
-          sSize.row, sVol.row, sStart.row, sLen.row);
+          sSize.row, sVol.row, sSpeed.row, sStart.row, sLen.row);
       }
     } else if (panel === 'ratio') {
       const tiles = (Object.keys(ASPECTS) as Aspect[]).map((a) => {

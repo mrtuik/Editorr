@@ -2,10 +2,11 @@ import type { CapWord } from '../core/captions';
 import { planDocuBeats } from '../core/docuPlanner';
 import { KALLAWAY_SHARES, isFullScreen, makeKallawayBeats, parseReceiptLines, receiptLinesText, syncStepStarts, type KallawaySpec } from '../core/kallaway';
 import { planKallaway } from '../core/kallawayDirector';
+import { planMotionGraphics } from '../core/motionDirector';
 import { autoBroll } from '../core/brollPlanner';
 import { placeBroll } from '../core/brollTypes';
 import { aspectValue } from '../core/types';
-import { applyCreator, CREATORS, creatorOf, REFERENCE_STYLES, traitsOf, type CreatorId } from '../core/creators';
+import { applyCreator, CAT_CREATORS, CREATORS, creatorOf, motionLookFor, TEMPLATE_CATS, traitsOf, type CreatorId, type TemplateCat } from '../core/creators';
 import { endTask, startTask, updateTask } from '../core/tasks';
 import {
   DEFAULT_CARD_RADIUS, DOCU_ACCENTS, DOCU_FONT_CSS, DOCU_FONT_LABEL, DOCU_FONT_SUB, DOCU_FONT_WEIGHT, DOCU_TEMPLATES, DOCU_TYPE_LABEL, MAX_CARD_RADIUS,
@@ -31,10 +32,16 @@ export interface DocuCtx {
   onClosed?: () => void;
   /** Opens the separate Kallaway bottom sheet (new card, or edit the card of beat `id`). */
   openKallaway?: (id?: string) => void;
+  /** Punch-in zooms on the talking head (null = none, old ones removed). `at` = exact moments (ms) instead of the loud ones. Returns the number of moments zoomed. */
+  punch?: (shape: import('../core/autocut').ZoomShape | null, at?: number[]) => number;
+  /** Sound design: music and effects for the template. Returns a short note. */
+  sound?: (sd: { bgm: boolean; sfx: import('../core/sfxPlan').AutoKind[] | false; musicDb: number }, status: (s: string) => void) => Promise<string>;
 }
 export interface DocuSheetHandle { close: () => void; select: (tab: DocuTab, id: string) => void }
 export type DocuTab = 'beats' | 'templates' | 'layout' | 'fonts' | 'colors' | 'broll' | 'kallaway';
-const TAB_LABEL: [DocuTab, string][] = [['beats', 'Beats'], ['templates', 'Templates'], ['layout', 'Layout'], ['fonts', 'Fonts'], ['colors', 'Colors']];
+// The old Beats tab is gone: Templates is the hub, a beat's headline and length are in Layout, B-roll clips open at the bottom of Templates.
+const TAB_LABEL: [DocuTab, string][] = [['templates', 'Templates'], ['layout', 'Layout'], ['fonts', 'Fonts'], ['colors', 'Colors']];
+let lastCat: TemplateCat = 'talking_head';
 const THEME_BG_HEX = { noir: '#0A0A0C', investigative: '#10141B', modern: '#14141A' } as const;
 const THEME_CARD_HEX = { noir: '#121216', investigative: '#161C26', modern: '#1C1C24' } as const;
 
@@ -57,13 +64,13 @@ function chipRow<T extends string>(label: string, opts: [T, string][], value: T,
  * Docu: documentary typography beats. AI picks the moments, you flip which side the video sits on, round the corners,
  * and edit the words. Shows on the video straight away; the export draws the same.
  */
-export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId?: string, only?: 'docu' | 'broll' | 'kallaway'): DocuSheetHandle {
-  // There is no separate B-roll tab any more: a tapped B-roll clip is edited at the bottom of the Beats tab.
-  let tab: DocuTab = only === 'kallaway' ? 'kallaway' : startTab === 'broll' ? 'beats' : startTab;
+export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', startId?: string, only?: 'docu' | 'broll' | 'kallaway'): DocuSheetHandle {
   let brollPane: BrollPane | null = null;
   let selBroll: string | undefined = startTab === 'broll' ? startId : undefined;
   let scopeAll = false;
   const beats = (): DocuBeat[] => (ctx.p.docu ??= []);
+  // A tapped B-roll clip is edited at the bottom of Templates; a tapped documentary beat opens in Layout (its headline, side and length).
+  let tab: DocuTab = only === 'kallaway' ? 'kallaway' : startTab === 'broll' ? 'templates' : startTab === 'beats' ? (startId && beats().some((x) => x.id === startId) ? 'layout' : 'templates') : startTab;
   // (the layout of a beat is only reset when the ratio changes, so a chosen top/bottom or left/right side stays)
   const layout = () => docuLayoutFor(ctx.p.aspect);
   let sel: string | null = (startId && beats().some((b) => b.id === startId) ? startId : (only === 'kallaway' ? beats().find((b) => b.kw) : beats().find((b) => !b.kw))?.id) ?? null;
@@ -173,6 +180,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     const c = creatorOf(id), rc = c.recipe;
     const before = { docu: ctx.p.docu, broll: ctx.p.broll, creator: ctx.p.creator, grade: ctx.p.grade };
     let cancelled = false;
+    let punchAt: number[] | undefined;
     let signal = { cancelled: false };
     /** A slow AI answer must never freeze the edit: after `ms` the built-in rules take over. */
     const withTimeout = <V,>(pr: Promise<V>, ms: number): Promise<V> => new Promise<V>((res, rej) => {
@@ -189,7 +197,23 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       ctx.p.docu = []; ctx.p.broll = []; selBroll = undefined;
       updateTask('autoedit', 'Planning the moments...', 8);
       let made: DocuBeat[] = [];
-      if (rc.cards) {
+      if (rc.motion) {
+        // motion director: code cards, number counters, step cards and quotes, each with a punch-in at its start
+        const r = await withTimeout(planMotionGraphics(words, ctx.durationMs(), true), 60000).catch(async () => {
+          updateTask('autoedit', 'AI is slow, using the built-in rules...', 10);
+          return planMotionGraphics(words, ctx.durationMs(), false);
+        });
+        punchAt = r.punchAt;
+        for (let idx = 0; idx < r.picks.length; idx++) {
+          if (cancelled) break;
+          const pk = r.picks[idx]!;
+          const fullOk = ['loop', 'versus', 'stat', 'quote', 'steps', 'svg'].includes(pk.spec.kind);
+          const spec: KallawaySpec = { ...pk.spec, handle: kw.handle, share: kw.share ?? c.card?.share, theme: c.card, speaker: fullOk && idx % 4 === 3 ? 'none' : (kw.speaker === 'none' ? undefined : kw.speaker) };
+          try { made.push(...await makeKallawayBeats(ctx.p.aspect, spec, pk.start, pk.end)); } catch { /* one bad card never stops the edit */ }
+          updateTask('autoedit', `Drawing graphics ${idx + 1}/${r.picks.length}...`, 8 + 22 * (idx + 1) / Math.max(1, r.picks.length));
+        }
+        if (r.note) toast(r.note, 5000);
+      } else if (rc.cards) {
         let r = await withTimeout(planKallaway(words, ctx.durationMs(), true), 45000).catch(async () => {
           updateTask('autoedit', 'AI is slow, using the built-in rules...', 10);
           return planKallaway(words, ctx.durationMs(), false);
@@ -231,7 +255,8 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
         if (cancelled) { restore(); toast('Auto edit cancelled. Your old edit is back.', 3000); return; }
         let next = ctx.p.broll ?? [];
         const fr = rc.frames?.length ? rc.frames : undefined;
-        gap.beats.forEach((b, i) => { if (fr) b.frame = fr[i % fr.length]!; next = placeBroll(next, b); });
+        const tl = rc.trans?.length ? rc.trans : undefined;
+        gap.beats.forEach((b, i) => { if (fr) b.frame = fr[i % fr.length]!; if (tl) b.trans = tl[i % tl.length]!; next = placeBroll(next, b); });
         ctx.p.broll = next; filled = gap.beats.length;
       } catch (e) { note = ` Visuals failed: ${(e as Error).message || 'error'}.`; }
       if (cancelled) { restore(); toast('Auto edit cancelled. Your old edit is back.', 3000); return; }
@@ -243,9 +268,18 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       updateTask('autoedit', 'Styling visuals and colour...', 95);
       applyCreator(ctx.p, id);
       ctx.changed();
+      let extra = '';
+      if (ctx.punch) {
+        updateTask('autoedit', 'Punch-ins on key moments...', 96);
+        try { const z = ctx.punch(rc.punch ?? null, punchAt?.length ? punchAt : undefined); if (z) extra += ` ${z} punch-ins.`; } catch { /* the edit stays without punch-ins */ }
+      }
+      if (ctx.sound && rc.sound && !cancelled) {
+        updateTask('autoedit', 'Sound design...', 97);
+        try { const sn = await withTimeout(ctx.sound(rc.sound, (st) => updateTask('autoedit', st, 97)), 180000); if (sn) extra += ` ${sn[0]!.toUpperCase()}${sn.slice(1)}.`; } catch { extra += ' Sound skipped (slow or offline).'; }
+      }
       const first = made[0]?.start ?? ctx.p.broll?.[0]?.start ?? 0;
       ctx.seek(Math.max(0, first) + 200);
-      toast(`${c.name} done: ${made.length} beats + ${filled} visual cuts.${note}`, 6000);
+      toast(`${c.name} done: ${made.length} beats + ${filled} visual cuts.${extra}${note}`, 7000);
     } catch (e) {
       restore();
       toast(`Auto edit failed, old edit restored: ${(e as Error).message || 'error'}`, 6000);
@@ -407,12 +441,13 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
     }
     out.push(h('div', { class: 'schips', style: 'margin-top:8px;flex-wrap:nowrap;overflow-x:auto' },
       ...list.map((x, i) => h('button', { class: 'chip' + (!scopeAll && x.id === sel ? ' on' : ''), onclick: () => { scopeAll = false; pick(x.id); } }, `${i + 1} · ${x.headline.slice(0, 12) || 'Beat'}`)),
-      list.length > 1 ? h('button', { class: 'chip' + (scopeAll ? ' on' : ''), onclick: () => { scopeAll = !scopeAll; render(); } }, 'All beats') : (null as unknown as Node)));
+      list.length > 1 ? h('button', { class: 'chip' + (scopeAll ? ' on' : ''), onclick: () => { scopeAll = !scopeAll; render(); } }, 'All beats') : (null as unknown as Node),
+      h('button', { class: 'chip', onclick: add }, '+ Add')));
     return out;
   }
 
   // ------------------------------------------------------------ Kallaway beats: the picture is redrawn when anything about it changes
-  const kwNote = () => h('div', { class: 'at-hint', style: 'margin-top:10px' }, 'This is a Kallaway scene (a finished picture). Its look is set in the Beats and Layout tabs; Templates, Fonts and Colors do not apply.');
+  const kwNote = () => h('div', { class: 'at-hint', style: 'margin-top:10px' }, 'This is a Kallaway scene (a finished picture). Its words and look are set in the Kallaway cards sheet and the Layout tab; Fonts and Colors do not apply.');
 
   /** Draws one card again with `mut` applied to its recipe; returns its new beats. Words are re-timed to the captions. */
   async function bakeGroup(b: DocuBeat, mut: (s: KallawaySpec) => void): Promise<DocuBeat[]> {
@@ -563,6 +598,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
       h('div', { class: 'dt-prev' }, h('div', { class: 'dt-look ' + k })), h('span', { class: 'dt-name' }, DOCU_TYPE_LABEL[k]));
     return [
       allScenesBlock(),
+      input('Headline', b.headline, (v) => { b.headline = v; ctx.changed(); }),
       sec('You sit (half screen)', tileGrid(posTile('left'), posTile('right'), posTile('top'), posTile('bottom'))),
       sec('Look', tileGrid(...(Object.keys(DOCU_TYPE_LABEL) as DocuType[]).map(lookTile))),
       slider('Corner radius', 0, MAX_CARD_RADIUS, 1, b.card_radius, (v) => `${v}px`, (v) => { patch((x) => { x.card_radius = v; }); }),
@@ -628,13 +664,19 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
         face, h('span', { class: 'dt-name' }, c.name), h('span', { class: 'dt-sub' }, c.hint),
         h('div', { class: 'dt-traits' }, ...traitsOf(c).map((t) => h('span', {}, t))));
     };
-    const ref = REFERENCE_STYLES, rest = CREATORS.filter((c) => !ref.includes(c.id)).map((c) => c.id);
+    const catPills = h('div', { class: 'dt-cats' },
+      ...TEMPLATE_CATS.map(([k, l]) => h('button', { class: 'dt-cat' + (lastCat === k ? ' on' : ''), onclick: () => { if (lastCat !== k) { lastCat = k; render(); } } }, l)));
+    const ids = CAT_CREATORS[lastCat].filter((id) => CREATORS.some((c) => c.id === id));
     return h('div', { class: 'at-sec', style: 'margin-top:6px' },
-      h('div', { class: 'at-hint', style: 'margin-bottom:8px' }, 'Tap a template: the edit starts at once (visuals, B-roll, motion, colour). Captions stay as they are.'),
-      h('div', { class: 'at-label' }, 'Reference styles'),
-      h('div', { class: 'dt-grid lib' }, ...ref.map(tile)),
-      h('div', { class: 'at-label', style: 'margin-top:14px' }, 'Classic styles'),
-      h('div', { class: 'dt-grid lib' }, none, ...rest.map(tile)));
+      catPills,
+      h('div', { class: 'at-hint', style: 'margin:8px 0' }, 'Tap a template: the edit starts at once (visuals, motion graphics, punch-ins, colour). Captions stay as they are.'),
+      h('div', { class: 'dt-grid lib' }, none, ...ids.map(tile)));
+  }
+  /** One-tap motion director (Antigravity, or the built-in rules offline): plans graphics from the transcript and puts them on the timeline. */
+  function aiBar(): Node {
+    return h('div', { class: 'dt-aibar' },
+      h('button', { class: 'btn primary', style: 'width:100%;min-height:48px', disabled: busy || loadingTile ? 'true' : undefined, onclick: () => void runTemplate(motionLookFor(ctx.p.creator)) },
+        busy ? 'Working...' : `✨ Generate with Antigravity AI (${creatorOf(motionLookFor(ctx.p.creator)).name})`));
   }
   /** Tap a look: the card shows a loading ring, then the look is on. None takes the whole look off (cards, B-roll, caption look). */
   let loadingTile: string | null = null;
@@ -675,41 +717,29 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'beats', startId
   function render() {
     renderTabs();
     if (tab === 'kallaway') { body.replaceChildren(...renderKallawayTab()); return; }
-    if (cur()?.kw && tab === 'beats') sel = beats().find((x) => !x.kw)?.id ?? null;
-    const b = cur();
     const list = sorted();
-    if (tab === 'templates') { body.replaceChildren(creatorBlock()); return; }
-    if (tab !== 'beats') {
-      const kids = [...styleHead(list)];
-      if (list.length) kids.push(...(tab === 'layout' ? renderLayout(b) : tab === 'fonts' ? renderFonts(b) : renderColors(b)));
+    if (tab === 'templates') {
+      const kids: Node[] = [creatorBlock()];
+      if (selBroll) {
+        brollPane ??= buildBrollPane({ p: ctx.p, playMs: ctx.playMs, durationMs: ctx.durationMs, changed: ctx.changed, seek: ctx.seek, words: ctx.words, aspect: ctx.aspect, startId: selBroll });
+        brollPane.select(selBroll);
+        kids.push(h('div', { class: 'at-sec', style: 'margin-top:14px' }, brollPane.el));
+      }
+      kids.push(aiBar());
       body.replaceChildren(...kids);
       return;
     }
-    // Beats tab: the two ways to add visuals by hand, then the plain beats (creator templates live in the Templates tab)
-    const plain = list.filter((x) => !x.kw);
-    const kids: Node[] = [
-    ];
-    if (plain.length) kids.push(h('div', { class: 'schips', style: 'margin-top:12px;flex-wrap:nowrap;overflow-x:auto' },
-      ...plain.map((x, i) => h('button', { class: 'chip' + (x.id === sel ? ' on' : ''), onclick: () => { selBroll = undefined; pick(x.id); } }, `${i + 1} · ${x.headline.slice(0, 14) || 'Beat'}`)),
-      h('button', { class: 'chip', onclick: add }, '+ Add')));
-    else kids.push(h('div', { class: 'at-hint', style: 'margin-top:12px' }, 'Pick a creator style in the Templates tab, or let AI beats pick documentary moments from your words. Cards with numbers, steps and quotes are in Kallaway cards.'));
-    if (b && !b.kw) kids.push(
-      input('Headline', b.headline, (v) => { b.headline = v; ctx.changed(); }),
-      slider('Length', 1, 10, 0.5, (b.end - b.start) / 1000, (v) => `${v}s`, (v) => { b.end = Math.min(ctx.durationMs() || b.start + v * 1000, b.start + Math.round(v * 1000)); ctx.changed(); }),
-      h('div', { class: 'at-hint' }, 'Look, video side and padding: Layout tab.'));
-    if (selBroll) {
-      brollPane ??= buildBrollPane({ p: ctx.p, playMs: ctx.playMs, durationMs: ctx.durationMs, changed: ctx.changed, seek: ctx.seek, words: ctx.words, aspect: ctx.aspect, startId: selBroll });
-      brollPane.select(selBroll);
-      kids.push(h('div', { class: 'at-sec', style: 'margin-top:14px' }, brollPane.el));
-    }
+    const kids = [...styleHead(list)];
+    const bb = cur();
+    if (list.length) kids.push(...(tab === 'layout' ? renderLayout(bb) : tab === 'fonts' ? renderFonts(bb) : renderColors(bb)));
     body.replaceChildren(...kids);
   }
   render();
   return {
     close,
     select: (t, id) => {
-      if (t === 'broll') { selBroll = id; tab = 'beats'; render(); return; }
-      if (beats().some((x) => x.id === id)) { sel = id; selBroll = undefined; if (only === 'kallaway') kwNew = false; render(); }
+      if (t === 'broll') { selBroll = id; tab = 'templates'; render(); return; }
+      if (beats().some((x) => x.id === id)) { sel = id; selBroll = undefined; if (only === 'kallaway') kwNew = false; if (tab === 'templates' && !beats().find((x) => x.id === id)?.kw) tab = 'layout'; render(); }
     },
   };
 }

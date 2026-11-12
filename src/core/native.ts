@@ -50,7 +50,7 @@ export interface ExportRequest {
   /** Baked background music / effects track (file uri), at timeline time. */
   bgmUri?: string;
   /** Overlay videos on top (see OverlayClip). */
-  overlays?: { uri: string; startMs: number; lenMs: number; durationMs: number; cx: number; cy: number; scale: number; volume: number }[];
+  overlays?: { uri: string; startMs: number; lenMs: number; durationMs: number; srcMs?: number; speed?: number; cx: number; cy: number; scale: number; volume: number }[];
   /** Enhanced Audio: `voice` runs on the audio-source mic, `master` on the final mix (see fx.ts FxChain). */
   fx?: unknown;
   segments: {
@@ -212,7 +212,7 @@ export function toExportRequest(p: Project, hostUri: string, constUri: string, h
     ...(exportBrollVideos(p.broll) ? { brollVideos: exportBrollVideos(p.broll) } : {}),
     ...(p.grade && (p.grade.contrast || p.grade.sat || p.grade.bright) ? { grade: p.grade } : {}),
     ...(p.bgm?.path ? { bgmUri: 'file://' + p.bgm.path } : {}),
-    ...(p.overlays?.length ? { overlays: p.overlays.map((o) => ({ uri: o.uri, startMs: Math.round(o.startMs), lenMs: Math.round(o.lenMs), durationMs: Math.round(o.durationMs), cx: o.cx, cy: o.cy, scale: o.scale, volume: Math.max(0, Math.min(1, o.volume / 100)) })) } : {}),
+    ...(p.overlays?.length ? { overlays: p.overlays.map((o) => ({ uri: o.uri, startMs: Math.round(o.startMs), lenMs: Math.round(o.lenMs), durationMs: Math.round(o.durationMs), srcMs: Math.round(o.srcMs ?? 0), speed: o.speed ?? 1, cx: o.cx, cy: o.cy, scale: o.scale, volume: Math.max(0, Math.min(1, o.volume / 100)) })) } : {}),
     ...(fxForExport(p) ? { fx: fxForExport(p) } : {}),
     normalize: p.normalize,
     gain: effectiveGain(p, p.mainAudio),

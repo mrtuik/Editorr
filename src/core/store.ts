@@ -252,7 +252,7 @@ export interface Snapshot {
   noiseHost: number;
   noiseConst: number;
   /** Text / Docu / B-roll clips (shallow copies: a card's picture is shared, never duplicated). */
-  layers?: { texts: import('./captions').TextItem[]; docu: import('./docuTypes').DocuBeat[]; broll: import('./brollTypes').BrollBeat[] };
+  layers?: { texts: import('./captions').TextItem[]; docu: import('./docuTypes').DocuBeat[]; broll: import('./brollTypes').BrollBeat[]; overlays?: import('./types').OverlayClip[] };
 }
 
 const cloneSnap = (s: Snapshot): Snapshot => { const { layers, ...rest } = s; return { ...structuredClone(rest), ...(layers ? { layers } : {}) } as Snapshot; };

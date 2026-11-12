@@ -287,3 +287,26 @@ export function addAlternateZooms(
   }
   return out;
 }
+
+
+/**
+ * Take the zoom steps (tiny pieces made by Auto zoom) out again: every step is joined back into the piece before it,
+ * and that piece goes back to the project crop when it was left zoomed. Used when a template replaces the zoom style.
+ */
+export function clearZoomSteps(segs: Segment[], projCrop: (role: Role) => CropState): Segment[] {
+  const out: Segment[] = [];
+  for (const sg of segs) {
+    const last = out[out.length - 1];
+    if (sg.zs && last && last.main === sg.main && Math.abs(last.endMs - sg.startMs) <= 2) {
+      const key = (last.main === 'host' ? 'cropHost' : 'cropConst') as 'cropHost' | 'cropConst';
+      const base = projCrop(last.main);
+      const merged: Segment = { ...last, endMs: sg.endMs };
+      const cur = merged[key];
+      if (cur && base && (cur as { zoom?: number }).zoom !== undefined && (base as { zoom?: number }).zoom !== undefined && (cur as { zoom: number }).zoom > (base as { zoom: number }).zoom * 1.002) merged[key] = { ...base };
+      out[out.length - 1] = merged;
+      continue;
+    }
+    out.push(sg);
+  }
+  return out;
+}

@@ -6,7 +6,7 @@
  * Each frame then only moves that layer (scale, sideways shift, fade): cheap, and the same thing the export does.
  */
 import { Capacitor } from '@capacitor/core';
-import { BROLL_BLUR_DIM, BROLL_BLUR_DIV, BROLL_SCRIM, BROLL_VIGNETTE, brollAlpha, brollBox, brollContain, brollMotionAt, brollRadiusPx, isBrollVideo, type BrollBeat } from './brollTypes';
+import { BROLL_BLUR_DIM, BROLL_BLUR_DIV, BROLL_SCRIM, BROLL_VIGNETTE, brollBox, brollContain, brollMotionAt, brollTransAt, brollRadiusPx, isBrollVideo, type BrollBeat } from './brollTypes';
 
 const srcOf = (b: BrollBeat) => (b.path ? Capacitor.convertFileSrc('file://' + b.path) : b.url);
 
@@ -172,9 +172,11 @@ export function drawBrollFrame(g: CanvasRenderingContext2D, b: BrollBeat, ms: nu
   if (isBrollVideo(b)) { drawVideoBeat(g, b, ms, w, h, onLoad, playing); return; }
   const layer = layerFor(b, w, h, onLoad);
   if (!layer) return;
-  const { s, tx, ty } = brollMotionAt(b.motion, (ms - b.start) / Math.max(1, b.end - b.start));
+  const m = brollMotionAt(b.motion, (ms - b.start) / Math.max(1, b.end - b.start));
+  const tr = brollTransAt(b, ms);
+  const s = m.s * tr.s, tx = m.tx + tr.tx, ty = m.ty + tr.ty;
   g.save();
-  g.globalAlpha = brollAlpha(b, ms);
+  g.globalAlpha = tr.a;
   g.translate(w / 2 + tx * w, h / 2 + ty * h);
   g.scale(s, s);
   g.translate(-w / 2, -h / 2);
@@ -189,7 +191,7 @@ export function exportBroll(beats: BrollBeat[] | undefined, outW: number, outH: 
     if (isBrollVideo(b) || !b.path || b.end - b.start < 300) continue;
     const box = brollBox(b.frame, outW, outH);
     out.push({
-      s: Math.round(b.start), e: Math.round(b.end), path: b.path, frame: b.frame, motion: b.motion,
+      s: Math.round(b.start), e: Math.round(b.end), path: b.path, frame: b.frame, motion: b.motion, trans: b.trans ?? 'fade',
       radius: brollRadiusPx(b, outW, outH), box, scrim: b.frame === 'card' ? BROLL_SCRIM : 0, vignette: b.frame === 'card' ? BROLL_VIGNETTE : 0,
       shadowBlur: 48 * Math.min(outW, outH) / 1080, shadowDy: 14 * Math.min(outW, outH) / 1080,
     });

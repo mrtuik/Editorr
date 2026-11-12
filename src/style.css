@@ -1923,3 +1923,33 @@ html body input[type=range]:disabled { opacity: .4; }
 .dt-tile.lib .dt-sub { font-size: 11px; line-height: 1.25; color: #9a9aa0; white-space: normal; }
 .dt-traits { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .dt-traits span { font-size: 9.5px; padding: 2px 6px; border-radius: 8px; background: rgba(255,255,255,.08); color: #cfcfd4; }
+
+/* ---- Projects tab (ported from CapCraft Home): Local / Trash, Select mode, list rows ---- */
+.psegs { display: flex; gap: 22px; padding: 4px 2px 10px; border-bottom: 1px solid var(--border); }
+.pseg { background: none; border: 0; color: var(--text3); font-size: 15px; padding: 6px 0; cursor: pointer; border-bottom: 2px solid transparent; }
+.pseg.on { color: var(--text); font-weight: 600; border-bottom-color: var(--text); }
+.phead { display: flex; align-items: center; justify-content: space-between; padding: 12px 2px 6px; }
+.pcount { font-size: 16px; font-weight: 500; }
+.plink { background: none; border: 0; color: var(--text); font-size: 15px; padding: 8px; cursor: pointer; }
+.plink:disabled { color: var(--disabled); }
+.plink.danger { color: var(--error); }
+.plist { display: flex; flex-direction: column; padding-bottom: 80px; }
+.prow { position: relative; display: flex; align-items: center; gap: 12px; padding: 8px 2px; cursor: pointer; }
+.prow.sel { background: var(--accent-tint); }
+.prthumb { position: relative; flex: none; width: 96px; aspect-ratio: 16/10; border-radius: 2px; background: var(--elevated) center/cover no-repeat; }
+.prthumb .tag-duration { position: absolute; right: 4px; bottom: 4px; }
+.prinfo { flex: 1; min-width: 0; }
+.prinfo .title { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prinfo .cap { font-size: 13px; color: var(--text2); margin-top: 3px; }
+.popt { flex: none; width: 36px; height: 36px; border: 0; background: none; color: var(--text2); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.ptick { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--text3); display: flex; align-items: center; justify-content: center; color: var(--on-accent); }
+.ptick.on { background: var(--accent); border-color: var(--accent); }
+.pselbar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 4px; padding: 8px 4px calc(8px + var(--safe-bottom)); background: var(--surface); border-top: 1px solid var(--border); }
+.pselbar .grow { flex: 1; }
+
+/* Templates tab: CapCut-style category pills and the one-tap AI bar */
+.dt-cats { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 2px 0 4px; }
+.dt-cats::-webkit-scrollbar { display: none; }
+.dt-cat { flex: none; border: 0; border-radius: 999px; padding: 8px 14px; font-size: 13px; font-weight: 600; background: rgba(255,255,255,.08); color: #cfcfd4; cursor: pointer; }
+.dt-cat.on { background: #fff; color: #000; }
+.dt-aibar { position: sticky; bottom: 0; padding: 10px 0 calc(6px + var(--safe-bottom, 0px)); margin-top: 12px; background: linear-gradient(to top, var(--surface, #1c1c1e) 70%, transparent); }

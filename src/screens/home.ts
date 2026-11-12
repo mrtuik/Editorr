@@ -19,13 +19,24 @@ import { actionSheet, confirmDialog, fmtTime, h, ICON, icon, projectActionSheet,
 export function homeScreen() {
   let query = '';
   let searching = false;
+  /** Projects tab, like CapCraft: Local / Trash, and Select mode with a ticked set. */
+  let showTrash = false;
+  let selecting = false;
+  const ticked = new Set<string>();
   const body = h('div', { class: 'home' });
 
   // projects come from IndexedDB (async), so Home keeps its own copy and reloads it when something changes
   let projects: Project[] = [];
   let loaded = false;
   async function reload() { projects = await listProjects(); loaded = true; render(); }
-  const all = () => projects.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
+  const all = () => projects.filter((p) => !p.trashedAt && p.name.toLowerCase().includes(query.toLowerCase()));
+  const trashed = () => projects.filter((p) => !!p.trashedAt && p.name.toLowerCase().includes(query.toLowerCase()));
+  /** A new draft is named by date and a count for the day, as phone editors do ("1112-02"). */
+  const draftName = () => {
+    const d = new Date(); const day = `${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    const n = projects.filter((x) => x.name.startsWith(`${day}-`)).length + 1;
+    return `${day}-${String(n).padStart(2, '0')}`;
+  };
   const shortDate = (t: number) => { const d = new Date(t); return `${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`; };
 
   let picking = false;
@@ -68,6 +79,7 @@ export function homeScreen() {
       startNewProject();
       app.intent = intent;
       const p = app.project;
+      p.name = draftName();
       const { url: _u, ...meta } = ref;
       p.host = { ...meta }; p.constant = { ...meta };
       p.single = true;
@@ -93,6 +105,7 @@ export function homeScreen() {
   /** Auto switch / Auto sync: two videos (Host + Constant) on the Import screen. */
   function newProject(intent?: Intent) {
     startNewProject();
+    app.project.name = draftName();
     app.intent = intent;
     runtime.projectId = undefined;
     runtime.hostUrl = runtime.constUrl = undefined;
@@ -134,11 +147,27 @@ export function homeScreen() {
     toast('Project duplicated');
   }
 
+  async function moveToTrash(list: Project[]) {
+    for (const p of list) { p.trashedAt = Date.now(); await saveProject(p); }
+    ticked.clear(); await reload();
+    toast(list.length > 1 ? `${list.length} projects moved to the Trash` : 'Moved to the Trash');
+  }
+  async function restore(list: Project[]) {
+    for (const p of list) { delete p.trashedAt; await saveProject(p); }
+    ticked.clear(); await reload();
+    toast('Restored');
+  }
+  async function eraseForever(list: Project[]) {
+    if (!list.length) return;
+    if (!(await confirmDialog(list.length > 1 ? `Delete ${list.length} projects forever?` : 'Delete forever?', 'The project and its saved video copies are removed for good. The originals in your gallery stay.'))) return;
+    for (const p of list) { await removeProjectMedia(p); await deleteProject(p.id); }
+    ticked.clear(); await reload();
+  }
   function options(p: Project) {
     projectActionSheet(p, [
       { label: 'Rename', iconName: 'edit', run: async () => { const n = await promptDialog('Rename project', p.name); if (n) { p.name = n; await saveProject(p); reload(); } } },
       { label: 'Duplicate', iconName: 'duplicate', run: () => duplicateProject(p) },
-      { label: 'Delete', iconName: 'trash', danger: true, run: async () => { if (await confirmDialog('Delete project?', 'The project and its saved video copies are removed. The originals in your gallery stay.')) { await removeProjectMedia(p); await deleteProject(p.id); reload(); } } },
+      { label: 'Move to Trash', iconName: 'trash', danger: true, run: async () => { await moveToTrash([p]); } },
     ]);
   }
 
@@ -166,7 +195,7 @@ export function homeScreen() {
 
   function editTab() {
     const list = all();
-    const last = projects[0];
+    const last = projects.find((x) => !x.trashedAt);
 
     const auto: [keyof typeof ICON, string, string, () => void][] = [
       ['switchSlider', 'Auto switch', 'Cuts between two mics', () => newProject()],
@@ -200,21 +229,44 @@ export function homeScreen() {
     ];
   }
 
+  const durText = (ms: number) => fmtTime(ms);
   function projectsTab() {
-    const list = all();
+    const list = showTrash ? trashed() : all();
+    const chosen = () => list.filter((p) => ticked.has(p.id));
+    const seg = h('div', { class: 'psegs' },
+      ...([['Local', false], ['Trash', true]] as [string, boolean][]).map(([label, isTrash]) =>
+        h('button', { class: 'pseg' + (showTrash === isTrash ? ' on' : ''), onclick: () => { showTrash = isTrash; selecting = false; ticked.clear(); renderContent(); } }, label)));
+    const head = h('div', { class: 'phead' },
+      h('div', { class: 'pcount' }, `${list.length} project${list.length === 1 ? '' : 's'}`),
+      list.length ? h('button', { class: 'plink', onclick: () => { selecting = !selecting; ticked.clear(); renderContent(); } }, selecting ? 'Done' : 'Select') : null);
+    const row = (p: Project) => {
+      const on = ticked.has(p.id);
+      return h('div', { class: 'prow' + (on ? ' sel' : ''), onclick: () => {
+        if (selecting) { if (on) ticked.delete(p.id); else ticked.add(p.id); renderContent(); }
+        else if (showTrash) options(p);
+        else openProject(p);
+      } },
+        selecting ? h('span', { class: 'ptick' + (on ? ' on' : '') }, on ? icon('check', 14) : '') : null,
+        h('div', { class: 'prthumb', style: thumbStyle(p) }, h('span', { class: 'tag-duration' }, durText(p.durationMs))),
+        h('div', { class: 'prinfo' },
+          h('div', { class: 'title' }, p.name),
+          h('div', { class: 'cap' }, `${new Date(p.updatedAt).toLocaleString(undefined, { month: '2-digit', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${p.aspect || '9:16'}`)),
+        !selecting ? h('button', { class: 'popt', 'aria-label': 'Project options', onclick: (e: Event) => { e.stopPropagation(); options(p); } }, icon('more', 20)) : null);
+    };
+    const bar = selecting
+      ? h('div', { class: 'pselbar' },
+          h('button', { class: 'plink', onclick: () => { if (chosen().length === list.length) ticked.clear(); else list.forEach((p) => ticked.add(p.id)); renderContent(); } }, chosen().length === list.length && list.length ? 'Deselect all' : 'Select all'),
+          h('div', { class: 'grow' }),
+          showTrash ? h('button', { class: 'plink', disabled: !ticked.size, onclick: () => restore(chosen()) }, 'Restore') : null,
+          h('button', { class: 'plink danger', disabled: !ticked.size, onclick: () => (showTrash ? eraseForever(chosen()) : moveToTrash(chosen())) }, showTrash ? 'Delete forever' : 'Move to Trash'))
+      : null;
     return [
       h('div', { class: 'hero', style: 'margin-top:12px' }, h('h1', { style: 'font-size:26px' }, 'Projects')),
+      seg, head,
       list.length
-        ? h('div', { class: 'pgrid' }, ...list.map((p) =>
-            h('div', { class: 'pcard', onclick: () => openProject(p) },
-              h('div', { class: 'pimg', style: thumbStyle(p) },
-                h('span', { class: 'tag-aspect' }, p.aspect || '9:16'),
-                h('span', { class: 'tag-duration' }, fmtTime(p.durationMs))),
-              h('button', { class: 'opt', 'aria-label': 'Project options', onclick: (e: Event) => { e.stopPropagation(); options(p); } }, icon('more', 20)),
-              h('div', { class: 'pmeta' },
-                h('div', { class: 'title' }, p.name),
-                h('div', { class: 'cap' }, `${new Date(p.updatedAt).toLocaleDateString()}`)))))
-        : loaded ? h('div', { class: 'empty' }, query ? 'No project matches your search.' : 'No projects yet. Go to Edit and tap New project.') : null,
+        ? h('div', { class: 'plist' }, ...list.map(row))
+        : loaded ? h('div', { class: 'empty' }, query ? 'No project matches your search.' : showTrash ? 'The Trash is empty.' : 'No projects yet. Go to Edit and tap New project.') : null,
+      bar,
     ];
   }
 

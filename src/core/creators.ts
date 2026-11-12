@@ -8,14 +8,17 @@
 import { DEFAULT_CAPTION_STYLE, type CapZone, type CaptionStyle } from './captions';
 import { DOCU_TEMPLATES, type DocuTemplateId } from './docuTypes';
 import { captionZones } from './docuRenderer';
-import type { BrollFrame, BrollMotion } from './brollTypes';
+import type { BrollFrame, BrollMotion, BrollTrans } from './brollTypes';
+import type { AutoKind } from './sfxPlan';
+import type { ZoomShape } from './autocut';
 import type { VideoMode } from './brollRouter';
 import { aspectValue, type Project } from './types';
 import { KALLAWAY_THEME, type CardTheme, type KallawayKind } from './kallaway';
 
 export type CreatorId = 'kallaway' | 'hormozi' | 'vox' | 'noir' | 'keynote' | 'swiss' | 'cyber' | 'breaking'
   | 'cinema' | 'neonhook' | 'cinedocu' | 'studio' | 'purpletech' | 'monodocu'
-  | 'purpleshowcase' | 'dynhead' | 'aifilm' | 'minimal' | 'screentut' | 'techcommercial';
+  | 'purpleshowcase' | 'dynhead' | 'aifilm' | 'minimal' | 'screentut' | 'techcommercial'
+  | 'code_revealer' | 'kallaway_pro' | 'vox_split' | 'tech_terminal';
 
 /** Colour look of the talking head: contrast and brightness -1..1, saturation -100..100 (0 = unchanged). Preview = CSS filter, export = Media3 effects. */
 export interface Grade { contrast: number; sat: number; bright: number }
@@ -28,6 +31,8 @@ export interface EditRecipe {
   cards: boolean;
   /** documentary typography beats picked from the words (big word / number / black line) */
   docuBeats: boolean;
+  /** motion director (motionDirector.ts): code cards, number counters, step cards and quotes, with a punch-in at the start of each */
+  motion?: boolean;
   /** B-roll between the beats: length of one cut, how it sits, how often, photo or clip */
   lenMs: number; frame: BrollFrame; coverage: 'every' | 'alternate'; videoMode: VideoMode;
   /** fill every gap (Kallaway pacing) instead of cutting along the words */
@@ -36,6 +41,12 @@ export interface EditRecipe {
   grade: Grade;
   /** frames the B-roll cuts rotate through (full screen, floating card, blurred backdrop): a template's own composition rhythm. Missing = `frame` for all. */
   frames?: BrollFrame[];
+  /** the transition language of the photo cuts: rotated cut by cut */
+  trans?: BrollTrans[];
+  /** punch-in zooms on the talking head at loud moments; missing = no punch-ins (old zoom steps are removed) */
+  punch?: ZoomShape;
+  /** sound design: music under the video and which effect kinds are allowed (false = music only) */
+  sound?: { bgm: boolean; sfx: AutoKind[] | false; musicDb: number };
 }
 export interface CreatorTemplate {
   id: CreatorId; name: string; hint: string;
@@ -134,6 +145,23 @@ export const CREATORS: CreatorTemplate[] = [
     caption: { look: 'bold', size: 0.055, y: 0.5, wordsPerLine: 2, upper: true, color: '#FFFFFF', highlight: '#A78BFA', fx: { font: 'heavy' } },
     docu: 'purple', zones: false, motions: ['zoom_in', 'punch_in', 'pan_right', 'slow_zoom'],
     recipe: { cards: false, docuBeats: true, lenMs: 1800, frame: 'full', frames: ['card', 'blur', 'full'], coverage: 'every', videoMode: 'mix', fillGaps: true, grade: { contrast: 0.14, sat: 6, bright: -0.02 } } },
+  // ---- talking-head motion graphics (planned by the motion director: code cards, counters, glass cards, punch-ins)
+  { id: 'code_revealer', name: 'Code Revealer', hint: 'HTML / CSS / JS code windows beside you, counters, punch-ins', swatch: ['#0D1117', '#161B22', '#58A6FF'],
+    caption: { look: 'pill', size: 0.05, y: 0.8, wordsPerLine: 3, upper: false, color: '#FFFFFF', highlight: '#58A6FF', fx: { font: 'typewriter' } },
+    docu: 'keynote', zones: false, motions: ['zoom_in', 'pan_right', 'slow_zoom', 'pan_left'],
+    recipe: { cards: false, docuBeats: false, motion: true, lenMs: 2600, frame: 'card', coverage: 'alternate', videoMode: 'photos', fillGaps: false, grade: { contrast: 0.08, sat: 4, bright: 0 } } },
+  { id: 'kallaway_pro', name: 'Kallaway Pro', hint: 'Glass cards, kinetic words, a punch-in on every card', swatch: ['#060607', '#141418', '#D1121B'],
+    caption: { look: 'pop', size: 0.056, y: 0.78, wordsPerLine: 3, upper: false, color: '#FFFFFF', highlight: '#E5192B' },
+    docu: 'glass', zones: true, motions: ['punch_in', 'slow_pan', 'drift', 'zoom_out', 'pan_right', 'zoom_in', 'pan_left'],
+    recipe: { cards: false, docuBeats: false, motion: true, lenMs: 2500, frame: 'card', coverage: 'every', videoMode: 'mix', fillGaps: true, grade: { contrast: 0.08, sat: 4, bright: 0 } } },
+  { id: 'vox_split', name: 'Vox Split', hint: 'Yellow highlight, paper-style split cards', swatch: ['#0A2A8A', '#F4EEDC', '#FFD60A'],
+    caption: { look: 'pop', size: 0.06, y: 0.74, wordsPerLine: 3, upper: true, color: '#FFFFFF', highlight: '#FFD60A', fx: { font: 'heavy' } },
+    docu: 'vox', zones: false, motions: ['slow_pan', 'zoom_in', 'pan_right', 'zoom_out', 'pan_left'],
+    recipe: { cards: false, docuBeats: true, lenMs: 2400, frame: 'blur', frames: ['blur', 'card'], coverage: 'alternate', videoMode: 'mix', fillGaps: false, grade: { contrast: 0.06, sat: 6, bright: 0 } } },
+  { id: 'tech_terminal', name: 'Tech Terminal', hint: 'Green terminal windows, typed commands, counters', swatch: ['#050807', '#0B120F', '#2CFF8F'],
+    caption: { look: 'box', size: 0.045, y: 0.8, wordsPerLine: 3, upper: false, color: '#B6FFD6', highlight: '#2CFF8F', fx: { font: 'typewriter' } },
+    docu: 'cyber', zones: false, motions: ['punch_in', 'slow_pan', 'zoom_in', 'drift'],
+    recipe: { cards: false, docuBeats: false, motion: true, lenMs: 2200, frame: 'card', coverage: 'alternate', videoMode: 'mix', fillGaps: false, grade: { contrast: 0.12, sat: -4, bright: -0.02 } } },
 ];
 
 // ---- card looks for every creator (Studio and Purple have theirs inline); a card drawn under any template follows that template
@@ -142,6 +170,9 @@ const SANS_UI = '"Inter","Noto Sans Bengali","Noto Sans Devanagari",system-ui,sa
 const SANS_OSW = 'Oswald,"Arial Narrow",Impact,"Noto Sans Bengali","Noto Sans Devanagari",sans-serif';
 const SANS_MONO = '"JetBrains Mono","Roboto Mono","Courier New","Noto Sans Bengali",monospace';
 const CARD_THEMES: Partial<Record<CreatorId, CardTheme>> = {
+  code_revealer: mk({ bg: '#0D1117', dot: 'rgba(88,166,255,0.14)', vig: 'rgba(5,8,12,0.96)', accent: '#58A6FF', text: '#E6EDF3', muted: '#8B949E', surface: '#161B22', surfaceOn: '#1F2A38', line: '#30363D', cardFill: 'rgba(22,27,34,0.94)', cardStroke: 'rgba(88,166,255,0.4)', edge: '88,166,255', sans: SANS_MONO, titleW: 700, radius: 22 }),
+  tech_terminal: mk({ bg: '#050807', dot: 'rgba(44,255,143,0.16)', vig: 'rgba(2,6,4,0.97)', accent: '#2CFF8F', text: '#E8FFF3', muted: '#5FA27F', surface: '#0B120F', surfaceOn: '#12382A', line: '#1E7A4B', cardFill: 'rgba(11,18,15,0.95)', cardStroke: 'rgba(44,255,143,0.5)', edge: '44,255,143', sans: SANS_MONO, titleW: 700, radius: 12 }),
+  vox_split: mk({ bg: '#0A2A8A', dot: 'rgba(255,255,255,0.14)', vig: 'rgba(5,20,80,0.9)', accent: '#FFD60A', muted: '#B9C6F5', surface: '#1239B8', surfaceOn: '#1C4DE0', line: '#4F73E8', cardFill: 'rgba(18,57,184,0.95)', cardStroke: 'rgba(255,214,10,0.45)', sans: SANS_UI, titleW: 900, radius: 20 }),
   purpleshowcase: mk({ bg: '#0B0720', dot: 'rgba(167,139,250,0.2)', vig: 'rgba(11,7,32,0.96)', accent: '#8B5CF6', text: '#F1ECFF', muted: '#9C93C4', surface: '#1B1240', surfaceOn: '#2A1B66', line: '#4B3B8F', cardFill: 'rgba(27,18,64,0.92)', cardStroke: 'rgba(167,139,250,0.35)', edge: '196,181,253', sans: SANS_OSW, titleW: 700, radius: 36 }),
   techcommercial: mk({ bg: '#050308', dot: 'rgba(167,139,250,0.14)', vig: 'rgba(5,3,8,0.97)', accent: '#A78BFA', text: '#FFFFFF', muted: '#8E86AE', surface: '#140C2A', surfaceOn: '#22164A', line: '#43358A', cardFill: 'rgba(20,12,42,0.94)', cardStroke: 'rgba(167,139,250,0.4)', edge: '196,181,253', sans: SANS_UI, titleW: 900, radius: 28 }),
   dynhead: mk({ bg: '#000000', dot: 'rgba(255,230,0,0.12)', vig: 'rgba(0,0,0,0.96)', accent: '#FFE600', surface: '#1A1A1A', surfaceOn: '#2B2A00', line: '#6B6200', cardFill: 'rgba(18,18,0,0.95)', cardStroke: 'rgba(255,230,0,0.55)', edge: '255,230,0', sans: SANS_UI, titleW: 900, radius: 14 }),
@@ -178,6 +209,30 @@ export function traitsOf(cr: CreatorTemplate): string[] {
   if (r.fillGaps) t.push('Non-stop visuals');
   return t;
 }
+const TRANS: Partial<Record<CreatorId, BrollTrans[]>> = {
+  code_revealer: ['zoom', 'slide'], kallaway_pro: ['fade', 'zoom'], vox_split: ['slide'], tech_terminal: ['whip', 'slide'],
+  kallaway: ['fade'], hormozi: ['whip'], vox: ['slide'], noir: ['fade'], keynote: ['zoom'], swiss: ['slide'], cyber: ['whip'], breaking: ['whip'],
+  cinema: ['zoom', 'fade'], neonhook: ['whip', 'zoom'], cinedocu: ['fade', 'zoom'], studio: ['slide'], purpletech: ['zoom'], monodocu: ['fade'],
+  purpleshowcase: ['zoom', 'slide'], dynhead: ['whip', 'zoom'], aifilm: ['fade'], minimal: ['fade', 'slide'], screentut: ['slide', 'whip'], techcommercial: ['whip', 'zoom', 'slide'],
+};
+const EASE = [0.25, 0.1, 0.25, 1];
+const zs = (amount: number, inMs: number, holdMs: number, outMs: number): ZoomShape => ({ amount, inMs, holdMs, outMs, ease: EASE });
+const PUNCH: Partial<Record<CreatorId, ZoomShape>> = {
+  code_revealer: zs(1.1, 240, 700, 260), kallaway_pro: zs(1.1, 240, 800, 280), tech_terminal: zs(1.1, 200, 700, 240), hormozi: zs(1.14, 200, 800, 240), neonhook: zs(1.15, 200, 900, 260), dynhead: zs(1.2, 180, 700, 220), techcommercial: zs(1.1, 260, 600, 260), breaking: zs(1.12, 220, 700, 240), kallaway: zs(1.08, 260, 900, 300),
+};
+const SOUND: Record<CreatorId, { bgm: boolean; sfx: AutoKind[] | false; musicDb: number }> = {
+  code_revealer: { bgm: true, sfx: ['pop', 'whoosh', 'ding'], musicDb: -22 }, kallaway_pro: { bgm: true, sfx: ['whoosh', 'pop', 'hit'], musicDb: -20 },
+  vox_split: { bgm: true, sfx: ['whoosh', 'ding'], musicDb: -20 }, tech_terminal: { bgm: true, sfx: ['pop', 'ding', 'whoosh'], musicDb: -21 },
+  kallaway: { bgm: true, sfx: ['whoosh', 'pop'], musicDb: -20 }, hormozi: { bgm: true, sfx: ['hit', 'pop', 'whoosh'], musicDb: -22 }, vox: { bgm: true, sfx: ['whoosh', 'ding'], musicDb: -20 },
+  noir: { bgm: true, sfx: false, musicDb: -17 }, keynote: { bgm: true, sfx: ['pop'], musicDb: -22 }, swiss: { bgm: true, sfx: ['pop'], musicDb: -24 },
+  cyber: { bgm: true, sfx: ['ding', 'whoosh'], musicDb: -20 }, breaking: { bgm: true, sfx: ['hit', 'whoosh'], musicDb: -18 }, cinema: { bgm: true, sfx: false, musicDb: -16 },
+  neonhook: { bgm: true, sfx: ['whoosh', 'pop', 'hit'], musicDb: -21 }, cinedocu: { bgm: true, sfx: false, musicDb: -17 }, studio: { bgm: true, sfx: ['pop'], musicDb: -22 },
+  purpletech: { bgm: true, sfx: ['whoosh', 'ding'], musicDb: -20 }, monodocu: { bgm: true, sfx: false, musicDb: -18 }, purpleshowcase: { bgm: true, sfx: ['whoosh', 'ding', 'pop'], musicDb: -19 },
+  dynhead: { bgm: true, sfx: ['whoosh', 'pop', 'hit'], musicDb: -22 }, aifilm: { bgm: true, sfx: false, musicDb: -15 }, minimal: { bgm: true, sfx: ['pop'], musicDb: -24 },
+  screentut: { bgm: true, sfx: ['pop', 'ding'], musicDb: -22 }, techcommercial: { bgm: true, sfx: ['whoosh', 'hit', 'ding'], musicDb: -18 },
+};
+for (const cr of CREATORS) { cr.recipe.punch ??= PUNCH[cr.id]; cr.recipe.sound ??= SOUND[cr.id]; }
+for (const cr of CREATORS) { cr.recipe.trans ??= TRANS[cr.id]; }
 for (const cr of CREATORS) { cr.card ??= CARD_THEMES[cr.id]; cr.cardKinds ??= CARD_KINDS[cr.id]; }
 export const creatorOf = (id: CreatorId | undefined): CreatorTemplate => CREATORS.find((c) => c.id === id) ?? CREATORS[0]!;
 
@@ -206,3 +261,16 @@ export function applyCreator(p: Project, id: CreatorId): { beats: number; broll:
   (p.broll ?? []).forEach((br, i) => { if (br.kind !== 'video') { br.motion = c.motions[i % c.motions.length]!; broll++; } });
   return { beats, broll };
 }
+
+/** Template library sub-categories (CapCut-style pills in the Templates tab). Every creator is in at least one. */
+export type TemplateCat = 'talking_head' | 'motion_code' | 'docu_split' | 'broll_cards' | 'viral_kinetic';
+export const TEMPLATE_CATS: [TemplateCat, string][] = [['talking_head', 'Talking Head'], ['motion_code', 'Motion & Code'], ['docu_split', 'Docu Split'], ['broll_cards', 'B-Roll'], ['viral_kinetic', 'Viral']];
+export const CAT_CREATORS: Record<TemplateCat, CreatorId[]> = {
+  talking_head: ['kallaway_pro', 'code_revealer', 'vox_split', 'hormozi', 'keynote', 'kallaway', 'dynhead'],
+  motion_code: ['code_revealer', 'tech_terminal', 'screentut', 'cyber', 'purpleshowcase', 'purpletech'],
+  docu_split: ['vox', 'noir', 'swiss', 'monodocu', 'cinedocu', 'studio'],
+  broll_cards: ['cinema', 'aifilm', 'minimal', 'techcommercial'],
+  viral_kinetic: ['hormozi', 'neonhook', 'dynhead', 'breaking'],
+};
+/** The look the one-tap "Generate with Antigravity AI" button uses: the chosen one when it is a motion-graphics look, else Kallaway Pro. */
+export const motionLookFor = (id: CreatorId | undefined): CreatorId => (id && creatorOf(id).recipe.motion ? id : 'kallaway_pro');

@@ -164,6 +164,10 @@ export interface OverlayClip {
   cy: number;
   scale: number;        // size of the clip frame compared with the output frame, 0.1..1
   volume: number;       // its own sound, 0..100 (percent)
+  /** In-point: how far into the file the clip starts (ms). Trimming the head moves this, so the kept frames do not slide. Default 0. */
+  srcMs?: number;
+  /** File seconds played per timeline second (CapCraft clip.speed). 1 = normal. Default 1. */
+  speed?: number;
 }
 
 export interface Project {
@@ -224,6 +228,8 @@ export interface Project {
   autoSoundDone?: boolean;
   /** small jpeg data URL for Home */
   thumb?: string;
+  /** Set when the project was moved to the Trash on Home (CapCraft-style soft delete). Missing = a normal project. */
+  trashedAt?: number;
 }
 
 export interface SyncResult {

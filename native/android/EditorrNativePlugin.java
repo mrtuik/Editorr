@@ -2354,7 +2354,17 @@ public class EditorrNativePlugin extends Plugin {
             else s = (float) (1 + 0.12 * e);
             float fin = (float) Math.max(0, Math.min(1, (tc - os) / 160.0));
             float fout = (float) Math.max(0, Math.min(1, (oe - tc) / 120.0));
-            return ob.setScale(s, s).setBackgroundFrameAnchor(2f * tx, -2f * ty).setAlphaScale(Math.min(fin, fout)).build();
+            float alpha = Math.min(fin, fout);
+            // transition (same numbers as brollTransAt in brollTypes.ts)
+            String tr = b.optString("trans", "fade");
+            if (!"fade".equals(tr)) {
+                double u = Math.max(0, Math.min(1, (tc - os) / 280.0)), v = Math.max(0, Math.min(1, (oe - tc) / 280.0));
+                double eu = u * u * (3 - 2 * u), ev = v * v * (3 - 2 * v);
+                if ("whip".equals(tr)) { alpha = (float) Math.min(1.0, Math.min(u * 3, v * 3)); s *= 1.04f; tx += (float) ((1 - eu) * 0.35 - (1 - ev) * 0.35); }
+                else if ("zoom".equals(tr)) { alpha = (float) Math.min(u, v); s *= (float) ((1 + (1 - eu) * 0.35) * (1 + (1 - ev) * 0.25)); }
+                else { alpha = (float) Math.min(1.0, Math.min(u * 2, v * 2)); ty += (float) ((1 - eu) * 0.25 - (1 - ev) * 0.2); }
+            }
+            return ob.setScale(s, s).setBackgroundFrameAnchor(2f * tx, -2f * ty).setAlphaScale(alpha).build();
         }
 
         private static Bitmap decode(String path, int maxDim) {
@@ -2768,7 +2778,10 @@ public class EditorrNativePlugin extends Plugin {
                 long os = Math.round(oj.optDouble("startMs", 0));
                 long olen = Math.round(oj.optDouble("lenMs", 0));
                 long odur = Math.round(oj.optDouble("durationMs", 0));
-                if (odur > 0) olen = Math.min(olen, odur);
+                // CapCraft time map: file time = srcMs + (timeline time - start) * speed
+                final long osrc = Math.max(0, Math.round(oj.optDouble("srcMs", 0)));
+                final float osp = (float) Math.max(0.25, Math.min(4.0, oj.optDouble("speed", 1.0)));
+                if (odur > 0) olen = Math.min(olen, Math.round(Math.max(100, odur - osrc) / (double) osp));
                 final long oe = os + olen;
                 float vol = (float) Math.max(0.0, Math.min(1.0, oj.optDouble("volume", 1.0)));
                 List<EditedMediaItem> oItems = new ArrayList<>();
@@ -2784,8 +2797,8 @@ public class EditorrNativePlugin extends Plugin {
                     long pa = ia;
                     if (ia - r.a < 100) pa = r.a;               // starts within 100 ms of the part: no tiny stand-in piece
                     if (pa > r.a) oItems.add(item(hostUri, r.a, pa - r.a, outW, outH, true, false, null, 1f, null, r.speed));
-                    long srcStart = Math.max(0, ia - os);
-                    oItems.add(item(ouri, srcStart, ib - pa, outW, outH, vol <= 0.01f, false, null, vol, null, r.speed));
+                    long srcStart = osrc + Math.round(Math.max(0, pa - os) * (double) osp);
+                    oItems.add(item(ouri, srcStart, Math.round((ib - pa) * (double) osp), outW, outH, vol <= 0.01f, false, null, vol, null, r.speed * osp));
                     long outA = cumStart[ri] + Math.round((pa - r.a) / (double) r.speed);
                     wins.add(new long[] { outA, outA + Math.round((ib - pa) / (double) r.speed) });
                     anyPiece = true;

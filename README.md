@@ -257,3 +257,14 @@ Docu tab > Kallaway frame. Cards: Step list, Script card, Number (counts up), Qu
   Preview (`docuRenderer.drawDocuFrame`) and export (`DocuOverlay.frameIndex` in EditorrNativePlugin.java) use the same pictures.
 - "Generate Kallaway cards (AI)" = `kallawayDirector.ts`: Antigravity picks 2-4 moments + template; built-in rules (spoken lists, numbers, big claims) when it is not signed in.
 - Step timing follows the captions (`syncStepStarts`).
+
+## v44 - CapCraft mechanics port
+- `src/core/clipmap.ts`: CapCraft's clip time map (file time = in-point + (timeline time - start) * speed), head/tail trim with file-end and 100 ms limits, source-continuous split, snapping, ruler steps, lane packing. Test: `node --experimental-strip-types scripts/clipmap.test.ts`.
+- Overlay videos now have a timeline row (drag edges to trim, middle to move, snaps to playhead and other clip ends), Split, Speed, pre-roll before they start, undo/redo, and the native export honours in-point + speed.
+- Home > Projects: Local / Trash, Select mode, list rows, date-based draft names.
+
+## v45: Motion Graphics & Talking-Head engine
+- Docu sheet: the **Beats** tab is gone. **Templates** is the default tab with CapCut-style category pills (Talking Head first, Motion & Code, Docu Split, B-Roll, Viral) and a one-tap **Generate with Antigravity AI** bar. A beat's headline and length are in **Layout**; a tapped B-roll clip opens at the bottom of Templates.
+- New looks (`src/core/creators.ts`): Code Revealer, Kallaway Pro, Vox Split, Tech Terminal.
+- `src/core/motionDirector.ts`: transcript -> Antigravity motion plan (code cards, counters, step cards, quotes) with a deterministic offline fallback; punch-ins land exactly on each card start.
+- `src/core/codeCard.ts`: syntax-highlighted HTML/CSS/JS/terminal window, drawn as an SVG card (same preview and Media3 export path as every other card).
