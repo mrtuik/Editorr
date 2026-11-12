@@ -1953,3 +1953,7 @@ html body input[type=range]:disabled { opacity: .4; }
 .dt-cat { flex: none; border: 0; border-radius: 999px; padding: 8px 14px; font-size: 13px; font-weight: 600; background: rgba(255,255,255,.08); color: #cfcfd4; cursor: pointer; }
 .dt-cat.on { background: #fff; color: #000; }
 .dt-aibar { position: sticky; bottom: 0; padding: 10px 0 calc(6px + var(--safe-bottom, 0px)); margin-top: 12px; background: linear-gradient(to top, var(--surface, #1c1c1e) 70%, transparent); }
+
+/* HTML visual editor (docuSheet) */
+.vis-f { display:flex; flex-direction:column; gap:4px; margin-top:10px; font-size:12px; color:#9a9aa2; }
+.vis-f input, .vis-f textarea, .vis-f select { background:rgba(255,255,255,.08); color:#fff; border:0; border-radius:10px; padding:10px 12px; font:500 15px Roboto,sans-serif; min-height:42px; }
