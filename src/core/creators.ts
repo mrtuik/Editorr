@@ -250,7 +250,7 @@ export function applyCreator(p: Project, id: CreatorId): { beats: number; broll:
   const t = DOCU_TEMPLATES.find((x) => x.id === c.docu);
   let beats = 0;
   if (t) for (const b of p.docu ?? []) {
-    if (b.kw) continue;
+    if (b.kw || b.vis || b.pending) continue;
     const wasLower = !!b.style?.lower;
     b.style = { ...t.style };
     b.accent_color = t.accent; b.card_radius = t.radius;

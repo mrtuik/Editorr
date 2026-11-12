@@ -12,7 +12,7 @@ export type BrollMotion = 'zoom_in' | 'zoom_out' | 'pan_left' | 'pan_right' | 's
 export type BrollFrame = 'card' | 'full' | 'blur';
 export type BrollSource = 'wikimedia' | 'wikipedia' | 'openverse' | 'commons_video' | 'archive' | 'youtube' | 'card';
 /** photo = a picture, video = a real moving clip (muted), card = a picture the app drew itself (concept card, article card) */
-export type BrollKind = 'photo' | 'video' | 'card';
+export type BrollKind = 'photo' | 'video' | 'card' | 'html';
 /** Which of the 4 routes picked this beat's material. */
 export type BrollRoute = 'entity' | 'receipt' | 'concept' | 'archival';
 

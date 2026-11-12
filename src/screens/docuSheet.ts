@@ -15,6 +15,10 @@ import {
 } from '../core/docuTypes';
 import { uid } from '../core/speaker';
 import { buildBrollPane, type BrollPane } from './brollSheet';
+import {
+  VISUAL_LABEL, VISUAL_THEMES, VISUAL_TYPES, classify, getTheme, makeLocal, motionIds, pickMotion, previewUrl, redrawVisualBeat, runVisuals, showChip, slotAtPlayhead,
+  visualLookFor, type RunCtrl, type VisualType,
+} from '../core/visuals';
 import type { Project } from '../core/types';
 import { h, icon, toast, spinner, slider as uiSlider, optionRow } from '../ui';
 
@@ -171,12 +175,119 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
     finally { busy = false; render(); }
   }
 
+  // ------------------------------------------------------------ HTML visuals: one at a time
+  let running = false;
+  let oneType: VisualType | 'auto' = 'auto';
+  const visSrc = () => ctx.p.visualSource ?? 'html';
+  const sentenceAt = (a: number, b: number) => ctx.words().filter((w) => w.e > a - 100 && w.s < b + 100).map((w) => w.orig || w.w).join(' ').trim();
+  const host = () => ({ aspect: ctx.p.aspect, getBeats: () => beats(), setBeats: (l: DocuBeat[]) => { ctx.p.docu = l; }, changed: ctx.changed, seek: ctx.seek });
+
+  /** Auto edit with drawn HTML/CSS visuals. Plan first (grey blocks), then each visual is made, shown and placed before the next. Stop keeps what is made. */
+  async function runHtmlTemplate(id: CreatorId) {
+    if (running) { toast('Visuals are being made. Press Stop first.', 3000); return; }
+    const c = creatorOf(id), rc = c.recipe, look = visualLookFor(id), ctrl: RunCtrl = { stopped: false, paused: false };
+    const from = ctx.playMs() > 1000 ? ctx.playMs() : 0;
+    running = true; busy = true; loadingTile = id; render();
+    const chip = showChip(ctrl);
+    try {
+      ctx.p.docu = beats().filter((b) => b.end <= from); ctx.p.broll = (ctx.p.broll ?? []).filter((b) => b.end <= from); selBroll = undefined;
+      ctx.changed();
+      const r = await runVisuals({
+        host: host(), words: ctx.words(), durationMs: ctx.durationMs(), themeId: look.theme, mix: look.mix, useAi: true, fromMs: from, ctrl,
+        onProgress: (n, t) => chip.update(n, t),
+      });
+      applyCreator(ctx.p, id);
+      let extra = '';
+      if (!ctrl.stopped) {
+        if (ctx.punch) { try { const z = ctx.punch(rc.punch ?? null, undefined); if (z) extra += ` ${z} punch-ins.`; } catch { /* stays without punch-ins */ } }
+        if (ctx.sound && rc.sound) { chip.text('Sound design...'); try { const sn = await ctx.sound(rc.sound, (st) => chip.text(st)); if (sn) extra += ` ${sn[0]!.toUpperCase()}${sn.slice(1)}.`; } catch { extra += ' Sound skipped (slow or offline).'; } }
+      }
+      ctx.changed();
+      const first = beats().find((b) => b.vis);
+      sel = first?.id ?? null;
+      if (first && !ctrl.stopped) ctx.seek(first.start + 300);
+      if (!r.made) toast(`${c.name}: no visual could be made${r.note ? ` (${r.note})` : ''}.`, 6000);
+      else toast(`${c.name}: ${r.made} visual${r.made > 1 ? 's' : ''} made (${r.source})${r.failed ? `, ${r.failed} skipped` : ''}${ctrl.stopped ? ', stopped' : ''}.${extra}${r.note ? ` ${r.note}` : ''}`, 7000);
+    } catch (e) { toast(`Visuals failed: ${(e as Error).message || 'error'}. What was made stays.`, 6000); ctx.changed(); }
+    finally { chip.dispose(); running = false; busy = false; loadingTile = null; if (!closed) render(); }
+  }
+
+  /** One visual at the playhead (type chosen, or Auto: from what is said there). Same pipeline with one slot. */
+  async function addOneVisual() {
+    if (running) { toast('Visuals are being made. Press Stop first.', 3000); return; }
+    const words = ctx.words();
+    if (!words.length) { toast('No transcript yet. Make Auto captions first.', 5000); return; }
+    const slot = slotAtPlayhead(words, ctx.playMs(), ctx.durationMs(), oneType, classify), ctrl: RunCtrl = { stopped: false, paused: false };
+    const look = visualLookFor(ctx.p.creator);
+    running = true; busy = true; render();
+    const chip = showChip(ctrl);
+    try {
+      ctx.p.docu = beats().filter((b) => b.end <= slot.startMs || b.start >= slot.endMs);
+      const r = await runVisuals({ host: host(), words, durationMs: ctx.durationMs(), themeId: look.theme, mix: look.mix, useAi: true, slots: [slot], ctrl, onProgress: (n, t) => chip.update(n, t) });
+      if (r.made) { sel = slot.id; tab = 'layout'; toast('Visual added at the playhead.', 2500); } else toast('Could not make that visual.', 4000);
+    } finally { chip.dispose(); running = false; busy = false; if (!closed) render(); }
+  }
+
+  /** Edit one finished visual: its words, type, theme and motion. Text redraws after a short pause; Change style needs no AI. */
+  function renderVisualEditor(b: DocuBeat): Node[] {
+    if (b.pending) return [h('div', { class: 'at-hint', style: 'margin-top:14px' }, 'This visual is being made. It appears here in a moment.')];
+    const v = b.vis!;
+    let timer = 0;
+    const redraw = (patch: Partial<typeof v>, rerender: boolean) => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(async () => {
+        try { await redrawVisualBeat(b, patch, ctx.p.aspect); ctx.changed(); if (rerender) render(); } catch (e) { toast(`Could not redraw: ${(e as Error).message || 'failed'}`, 4000); }
+      }, rerender ? 0 : 450);
+    };
+    const field = (k: string, val: unknown): Node | null => {
+      const set = (nv: unknown) => redraw({ data: { ...v.data, [k]: nv } }, false);
+      if (typeof val === 'string') return h('label', { class: 'vis-f' }, h('span', {}, k), h('input', { type: 'text', value: val, oninput: (e: Event) => set((e.target as HTMLInputElement).value) }));
+      if (typeof val === 'number') return h('label', { class: 'vis-f' }, h('span', {}, k), h('input', { type: 'number', value: String(val), oninput: (e: Event) => set(Number((e.target as HTMLInputElement).value) || 0) }));
+      if (Array.isArray(val) && val.every((x) => typeof x === 'number')) return h('label', { class: 'vis-f' }, h('span', {}, `${k} (comma)`), h('input', { type: 'text', value: val.join(', '), oninput: (e: Event) => set((e.target as HTMLInputElement).value.split(',').map((x) => Number(x.trim())).filter((n) => Number.isFinite(n))) }));
+      if (Array.isArray(val)) return h('label', { class: 'vis-f' }, h('span', {}, `${k} (one per line)`), h('textarea', { rows: 3, value: val.join('\n'), oninput: (e: Event) => set((e.target as HTMLTextAreaElement).value.split('\n').filter((x) => x.trim())) }));
+      return null;
+    };
+    const sel2 = (label: string, ids: string[], cur: string, on: (id: string) => void) =>
+      h('label', { class: 'vis-f' }, h('span', {}, label), h('select', { onchange: (e: Event) => on((e.target as HTMLSelectElement).value) }, ...ids.map((x) => h('option', { value: x, selected: x === cur }, x))));
+    const changeType = (t: VisualType) => {
+      const slot = { id: b.id, startMs: b.start, endMs: b.end, type: t, intent: '' };
+      const m = makeLocal(slot, sentenceAt(b.start, b.end) || b.headline, v.themeId, 0, v.motion.in);
+      redraw({ type: m.type, data: m.data }, true);
+    };
+    const redo = async () => {
+      if (running) return;
+      const order = VISUAL_TYPES.filter((t) => t !== v.type), t = order[(b.start / 1000 | 0) % order.length]!;
+      const slot = { id: b.id, startMs: b.start, endMs: b.end, type: t, intent: '' }, ctrl: RunCtrl = { stopped: false, paused: false };
+      running = true; busy = true; render();
+      const chip = showChip(ctrl);
+      try { await runVisuals({ host: host(), words: ctx.words(), durationMs: ctx.durationMs(), themeId: v.themeId, mix: [], useAi: true, slots: [slot], ctrl, onProgress: (n, tt) => chip.update(n, tt) }); }
+      finally { chip.dispose(); running = false; busy = false; if (!closed) render(); }
+    };
+    const restyle = () => {
+      const i = VISUAL_THEMES.findIndex((t) => t.id === v.themeId), nt = VISUAL_THEMES[(i + 1) % VISUAL_THEMES.length]!;
+      redraw({ themeId: nt.id, motion: pickMotion(nt, i + 1, v.motion.in) }, true);
+    };
+    return [
+      h('div', { class: 'at-sec', style: 'margin-top:10px' },
+        h('div', { class: 'schips', style: 'flex-wrap:nowrap;overflow-x:auto' }, ...VISUAL_TYPES.map((t) => h('button', { class: 'chip' + (v.type === t ? ' on' : ''), onclick: () => { if (v.type !== t) changeType(t); } }, VISUAL_LABEL[t]))),
+        ...Object.entries(v.data).map(([k, val]) => field(k, val)).filter(Boolean) as Node[],
+        h('div', { class: 'schips', style: 'flex-wrap:nowrap;overflow-x:auto;margin-top:8px' }, ...VISUAL_THEMES.map((t) => h('button', { class: 'chip' + (v.themeId === t.id ? ' on' : ''), onclick: () => { if (v.themeId !== t.id) redraw({ themeId: t.id, motion: pickMotion(t, 0, v.motion.in) }, true); } }, t.name))),
+        sel2('Motion in', motionIds('entrance'), v.motion.in, (id) => redraw({ motion: { ...v.motion, in: id } }, true)),
+        sel2('Motion out', motionIds('exit'), v.motion.out, (id) => redraw({ motion: { ...v.motion, out: id } }, true)),
+        h('div', { style: 'display:flex;gap:8px;margin-top:12px' },
+          h('button', { class: 'btn', style: 'flex:1;min-height:44px', disabled: running ? 'true' : undefined, onclick: () => void redo() }, 'Redo'),
+          h('button', { class: 'btn', style: 'flex:1;min-height:44px', onclick: restyle }, 'Change style'),
+          h('button', { class: 'btn', style: 'flex:1;min-height:44px;color:#ff6b6b', onclick: () => { ctx.p.docu = beats().filter((x) => x.id !== b.id); sel = beats()[0]?.id ?? null; ctx.changed(); render(); } }, 'Delete'))),
+    ];
+  }
+
   /** Auto edit in the way of one creator template: cards or typography beats, B-roll with its own pace and framing, captions, colour look.
    *  Runs as a background task (progress dialog, Minimize, Cancel); a cancel or a failure puts the old edit back. */
   async function runTemplate(id: CreatorId) {
     if (busy) return;
     const words = ctx.words();
     if (!words.length) { toast('No transcript yet. Make Auto captions first, then tap Auto edit.', 5000); return; }
+    if (visSrc() === 'html') { void runHtmlTemplate(id); return; }
     const c = creatorOf(id), rc = c.recipe;
     const before = { docu: ctx.p.docu, broll: ctx.p.broll, creator: ctx.p.creator, grade: ctx.p.grade };
     let cancelled = false;
@@ -656,10 +767,16 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
       h('div', { class: 'dt-prev', style: 'aspect-ratio:auto;min-height:54px' }, noneIcon(26)), h('span', { class: 'dt-name' }, 'None'), h('span', { class: 'dt-sub' }, 'Remove the look'));
     const tile = (cid: CreatorId) => {
       const c = creatorOf(cid);
-      const face = h('div', { class: 'dt-prev lib-prev', style: `background:linear-gradient(135deg,${c.swatch[0]},${c.swatch[1]});` },
-        h('div', { class: 'dt-card', style: `background:${c.swatch[1]};border:1px solid rgba(255,255,255,.18);border-radius:6px` },
+      const htmlMode = visSrc() === 'html';
+      const face = h('div', { class: 'dt-prev lib-prev', style: htmlMode ? 'position:relative;overflow:hidden;background:linear-gradient(160deg,#3a4150,#171a21);' : `background:linear-gradient(135deg,${c.swatch[0]},${c.swatch[1]});` },
+        htmlMode ? (null as unknown as Node) : h('div', { class: 'dt-card', style: `background:${c.swatch[1]};border:1px solid rgba(255,255,255,.18);border-radius:6px` },
           h('b', { style: `color:${isLightHex(c.swatch[1]) ? '#000' : '#fff'}` }, 'AA'), h('i', { style: `background:${c.swatch[2]}` })),
         loadingTile === c.id ? h('div', { class: 'dt-load' }, spinner(26)) : (null as unknown as Node));
+      if (htmlMode) {
+        const lk = visualLookFor(cid), img = h('img', { alt: '', style: 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover' });
+        face.prepend(img);
+        previewUrl(lk.theme, lk.mix[0]!).then((u) => { img.src = u; }).catch(() => img.remove());
+      }
       return h('button', { class: 'dt-tile lib' + (ctx.p.creator === c.id ? ' on' : ''), 'aria-label': c.name, disabled: loadingTile || busy ? 'true' : undefined, onclick: () => void runTemplate(c.id) },
         face, h('span', { class: 'dt-name' }, c.name), h('span', { class: 'dt-sub' }, c.hint),
         h('div', { class: 'dt-traits' }, ...traitsOf(c).map((t) => h('span', {}, t))));
@@ -667,16 +784,24 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
     const catPills = h('div', { class: 'dt-cats' },
       ...TEMPLATE_CATS.map(([k, l]) => h('button', { class: 'dt-cat' + (lastCat === k ? ' on' : ''), onclick: () => { if (lastCat !== k) { lastCat = k; render(); } } }, l)));
     const ids = CAT_CREATORS[lastCat].filter((id) => CREATORS.some((c) => c.id === id));
+    const srcSeg = h('div', { class: 'dt-cats', style: 'margin-bottom:6px;align-items:center' },
+      h('span', { style: 'font-size:13px;color:#9a9aa2;margin-right:4px' }, 'Visuals:'),
+      ...([['html', 'HTML'], ['photos', 'Photos & Video']] as const).map(([k, l]) => h('button', { class: 'dt-cat' + (visSrc() === k ? ' on' : ''), disabled: running ? 'true' : undefined, onclick: () => { if (visSrc() !== k) { ctx.p.visualSource = k; ctx.changed(); render(); } } }, l)));
     return h('div', { class: 'at-sec', style: 'margin-top:6px' },
+      srcSeg,
       catPills,
       h('div', { class: 'at-hint', style: 'margin:8px 0' }, 'Tap a template: the edit starts at once (visuals, motion graphics, punch-ins, colour). Captions stay as they are.'),
       h('div', { class: 'dt-grid lib' }, none, ...ids.map(tile)));
   }
   /** One-tap motion director (Antigravity, or the built-in rules offline): plans graphics from the transcript and puts them on the timeline. */
   function aiBar(): Node {
+    const one = visSrc() === 'html' ? h('div', { style: 'display:flex;gap:8px;margin-top:10px' },
+      h('select', { style: 'flex:1;min-height:44px;border-radius:10px;background:rgba(255,255,255,.08);color:#fff;border:0;padding:0 10px', onchange: (e: Event) => { oneType = (e.target as HTMLSelectElement).value as VisualType | 'auto'; } },
+        h('option', { value: 'auto', selected: oneType === 'auto' }, 'Auto: from what is said here'), ...VISUAL_TYPES.map((t) => h('option', { value: t, selected: oneType === t }, VISUAL_LABEL[t]))),
+      h('button', { class: 'btn', style: 'min-height:44px', disabled: busy || loadingTile ? 'true' : undefined, onclick: () => void addOneVisual() }, '+ Visual at playhead')) : (null as unknown as Node);
     return h('div', { class: 'dt-aibar' },
       h('button', { class: 'btn primary', style: 'width:100%;min-height:48px', disabled: busy || loadingTile ? 'true' : undefined, onclick: () => void runTemplate(motionLookFor(ctx.p.creator)) },
-        busy ? 'Working...' : `✨ Generate with Antigravity AI (${creatorOf(motionLookFor(ctx.p.creator)).name})`));
+        busy ? 'Working...' : `✨ Generate ${visSrc() === 'html' ? 'visuals' : 'with Antigravity AI'} (${creatorOf(motionLookFor(ctx.p.creator)).name})`), one);
   }
   /** Tap a look: the card shows a loading ring, then the look is on. None takes the whole look off (cards, B-roll, caption look). */
   let loadingTile: string | null = null;
@@ -731,7 +856,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
     }
     const kids = [...styleHead(list)];
     const bb = cur();
-    if (list.length) kids.push(...(tab === 'layout' ? renderLayout(bb) : tab === 'fonts' ? renderFonts(bb) : renderColors(bb)));
+    if (list.length) kids.push(...(bb && (bb.vis || bb.pending) ? renderVisualEditor(bb) : tab === 'layout' ? renderLayout(bb) : tab === 'fonts' ? renderFonts(bb) : renderColors(bb)));
     body.replaceChildren(...kids);
   }
   render();

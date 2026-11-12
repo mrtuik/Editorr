@@ -167,6 +167,7 @@ function frameImage(src: string, onLoad?: () => void): HTMLImageElement | undefi
 
 /** Draw `beat` at timeline time `ms` on a w x h canvas (clear it first). `onLoad` redraws when a Kallaway picture has just arrived. */
 export function drawDocuFrame(g: CanvasRenderingContext2D, beat: DocuBeat, ms: number, w: number, h: number, onLoad?: () => void): void {
+  if (beat.pending) return;
   if (beat.image) {
     // finished picture (no fade: the steps of a list follow each other without a flash).
     // The first moments of a Kallaway beat play baked motion pictures (pop, red wipe, count-up); they are all loaded ahead of time.
@@ -239,7 +240,7 @@ export function drawDocuFrame(g: CanvasRenderingContext2D, beat: DocuBeat, ms: n
 export function exportDocu(beats: DocuBeat[] | undefined, outW: number, outH: number) {
   const out: unknown[] = [];
   for (const b of beats ?? []) {
-    if (b.end - b.start < 300 || !b.headline.trim()) continue;
+    if (b.pending || b.end - b.start < 300 || !b.headline.trim()) continue;
     if (b.image && !b.image.path) continue; // a Kallaway picture that only exists in the browser cannot be exported
     const geo = b.type === 'split_screen' ? docuGeometry(b.layout === 'one' ? 'side' : b.layout, b.video_position, outW, outH, b.share) : null;
     out.push({

@@ -41,6 +41,10 @@ export interface DocuBeat {
   framesMs?: number;
   /** Kallaway beats keep the recipe of their picture so the sheet can redraw it (new side, size, full screen, words). All beats of one card share `gid`. */
   kw?: { spec: import('./kallaway').KallawaySpec; gid: string; gStart: number; gEnd: number };
+  /** HTML visual: the recipe of its picture (type, data, theme, motion), so it can be edited and redrawn. */
+  vis?: import('./visuals/types').Visual;
+  /** A slot waiting for its visual (grey block on the timeline). Never drawn, never exported. */
+  pending?: boolean;
 }
 
 export type DocuFont = 'inter' | 'oswald' | 'playfair' | 'jetbrains';
