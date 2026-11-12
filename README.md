@@ -272,4 +272,4 @@ Docu tab > Kallaway frame. Cards: Step list, Script card, Number (counts up), Qu
 ## v47 (HTML visuals fixes)
 - Motion presets are now the real open-motion data: `node scripts/port-open-motion.mjs <open-motion-main>` writes `src/core/visuals/motionPresets.json` (23 ported, 5 hand-written fillers). MIT notice: `THIRD_PARTY.md`.
 - Canvas 2D fallback (`src/core/visuals/fallback2d.ts`): used automatically if the WebView taints the foreignObject picture or fails to load it. Simpler layout, same card box, theme, motion and caption-safe zone. Check on a real device whether it ever triggers (`usingCanvasFallback()`).
-- `tsc` fix: `sync` and `analyze` are registered in `ScreenName` and `main.ts` (they were referenced but missing).
+- `src/screens/sync.ts` and `analyze.ts` are dead files that CI deletes before typecheck (workflow step `rm -f ...`). Do not register them in `ScreenName`/`main.ts`.

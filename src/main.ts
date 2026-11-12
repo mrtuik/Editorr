@@ -6,8 +6,6 @@ import { editorScreen } from './screens/editor';
 import { exportScreen } from './screens/export';
 import { settingsScreen } from './screens/settings';
 import { profileScreen } from './screens/profile';
-import { syncScreen } from './screens/sync';
-import { analyzeScreen } from './screens/analyze';
 import { initStorage, listProjects, loadSettings } from './core/store';
 import { pruneUnusedVideos } from './core/media';
 import { installRangeFill } from './ui';
@@ -24,8 +22,6 @@ const screens: Record<ScreenName, () => { el: HTMLElement; destroy?: () => void 
   export: exportScreen,
   settings: settingsScreen,
   profile: profileScreen,
-  sync: syncScreen,
-  analyze: analyzeScreen,
 };
 
 function go(name: ScreenName): void {
