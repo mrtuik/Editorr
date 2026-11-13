@@ -20,6 +20,18 @@ export const SAMPLE: Record<VisualType, VisualData> = {
   terminal: { lines: ['npm run build', 'done'] },
   post_card: { text: 'Small habits win', name: 'Someone', handle: '@someone' },
   receipt_card: { shop: 'Cafe', lines: ['Tea | 20', 'Toast | 40'], total: '60' },
+  highlight_card: { text: 'Small habits make big change', accent: 'big' },
+  stack_card: { items: ['Small', 'habits', 'big change'] },
+  frame_card: { title: 'Stay steady', accent: 'steady' },
+  title_stack: { title: 'The Perfect', accent: 'Solution', label: 'every time' },
+  pill_row: { title: 'Get it as', items: ['Video', 'MP3', 'Transcript'] },
+  flow_diagram: { title: 'Idea to reel', items: ['Idea', 'Edit', 'Post'] },
+  geo_title: { title: 'Big idea' },
+  cta_card: { title: 'Comment', accent: 'Guide', label: 'to get the link' },
+  before_after: { left: 'Raw clip', right: 'Final reel' },
+  arrow_callout: { title: 'Scroll up', trend: 'up' },
+  window_card: { title: 'Just paste a link', label: 'youtube.com', items: ['Download'] },
+  halftone_frame: { title: 'Who can edit' },
 };
 
 const cache = new Map<string, string>();

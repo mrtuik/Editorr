@@ -25,6 +25,10 @@ function linesOf(v: Visual, p: number): [string, 'head' | 'big' | 'body' | 'mute
     case 'terminal': case 'code_window': (d.lines ?? (d.code ?? '').split('\n')).slice(0, 6).forEach((s) => add(s, 'body')); break;
     case 'post_card': add(d.name, 'muted'); add(d.text ?? d.title, 'head'); break;
     case 'receipt_card': add(d.shop, 'head'); (d.lines ?? []).slice(0, 5).forEach((s) => add(s.replace('|', '   '), 'body')); add(d.total, 'big'); break;
+    case 'pill_row': case 'flow_diagram': add(d.title, 'head'); (d.items ?? []).forEach((x) => add(x, 'body')); break;
+    case 'title_stack': add(d.title, 'head'); add(d.label, 'body'); add(d.accent, 'big'); break;
+    case 'before_after': add(d.left, 'head'); add('>', 'muted'); add(d.right, 'head'); break;
+    case 'cta_card': add(d.title, 'head'); add(d.accent, 'big'); add(d.label, 'muted'); break;
     default: add(d.title ?? d.big ?? d.quote ?? d.term, 'head');
   }
   if (!out.length) add(d.title ?? d.big ?? d.text ?? v.type, 'head');
@@ -48,7 +52,7 @@ export function drawFallback(v: Visual, tMs: number, w: number, h: number): HTML
   ctx.translate(cx + mp.x * short, cy + mp.y * short); ctx.rotate((mp.r * Math.PI) / 180); ctx.scale(mp.s, mp.s); ctx.translate(-cx, -cy);
   if (mp.b > 0.0005) ctx.filter = `blur(${(mp.b * short).toFixed(1)}px)`;
   // card
-  ctx.fillStyle = theme.card; ctx.beginPath();
+  ctx.fillStyle = theme.cardSolid ?? theme.card; ctx.beginPath();
   const rr = (ctx as CanvasRenderingContext2D & { roundRect?: (...a: number[]) => void }).roundRect;
   if (rr) rr.call(ctx, box.x, box.y, box.w, box.h, r); else ctx.rect(box.x, box.y, box.w, box.h);
   ctx.fill();

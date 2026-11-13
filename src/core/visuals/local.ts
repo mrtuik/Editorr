@@ -4,11 +4,17 @@ import { getTheme } from './themes';
 import type { MotionSelection, TWord, VisualData, VisualSlot, VisualType } from './types';
 import { limitWords, words } from './templates/util';
 
-const NUM = /(?:[$€£₹]\s?)?\d[\d,]*(?:\.\d+)?\s?(?:%|percent|lakh|crore|million|billion|thousand|k\b|taka|rupees?|dollars?|টাকা|শতাংশ|লাখ|কোটি)?/gi;
+const NUM = /(?<![\p{L}\d])(?:[$€£₹]\s?)?\d[\d,]*(?:\.\d+)?\s?(?:%|percent|lakh|crore|million|billion|thousand|k\b|taka|rupees?|dollars?|টাকা|শতাংশ|লাখ|কোটি)?/giu;
 const RE_VS = /\b(vs\.?|versus|instead of|rather than|compared to)\b|বনাম|এর বদলে|के बजाय|बनाम/i;
-const RE_DEF = /\b(is an?|means|called|refers to|stands for)\b|মানে|বলা হয়|कहते हैं|मतलब/i;
+const RE_DEF = /\b(is an?|means|called|refers to|stands for|matlab|kehte hain|kehlata)\b|মানে|বলা হয়|कहते हैं|मतलब/i;
 const RE_CODE = /\b(code|function|api|html|css|javascript|python|bug|server|database|terminal|command|github|app)\b|কোড|कोड/i;
-const RE_LIST = /\b(first|second|third|step|steps|finally|then)\b|প্রথম|দ্বিতীয়|তৃতীয়|पहला|दूसरा/i;
+const RE_LIST = /\b(first|second|third|step|steps|finally|then|pehle|pahle|phir|fir|uske baad)\b|প্রথম|দ্বিতীয়|তৃতীয়|पहला|दूसरा/i;
+
+const RE_CTA = /\b(comment|follow|subscribe|dm me|link in bio|share this|save this)\b|कमेंट|ফলো/i;
+const RE_FLOW = /\bfrom\b.{2,40}\bto\b|\b(turns? into|convert(s|ed)? (to|into)|becomes?)\b|->|\u2192|\bse\b.{2,30}\btak\b/i;
+const RE_BA = /\b(before|pehle|pahle|earlier|used to)\b.{2,80}\b(after|now|ab|abhi|today|aaj)\b|\bfrom\b.{2,30}\bto\b.{2,30}\b(now)\b/i;
+const RE_ARROW = /\b(scroll up|upar|ऊपर|go up|goes up|rise|increase|badh|grow|go down|neeche|decrease|drop|fall|gir)\b/i;
+const RE_APP = /\b(app|website|site|software|tool|platform|login|click|paste|download|link|extension|plugin|dashboard)\b/i;
 
 interface Sentence { text: string; startMs: number; endMs: number }
 
@@ -28,18 +34,26 @@ const listParts = (s: string) => s.split(/,|;|\band\b|\bthen\b| এবং | আ�
 
 export function classify(s: string): VisualType {
   const n = numsOf(s);
+  if (RE_CTA.test(s)) return 'cta_card';
   if (RE_CODE.test(s)) return 'terminal';
   if (RE_VS.test(s)) return 'versus_card';
+  if (RE_BA.test(s)) return 'before_after';
+  if (RE_FLOW.test(s) && n.length === 0) return 'flow_diagram';
   if (n.length >= 2 && n.every(x => /\d/.test(x))) return 'bar_chart';
   if (n.length === 1) return /%|percent|শতাংশ/i.test(n[0]) ? 'progress_ring' : 'stat_counter';
+  if (listParts(s).length >= 3 && listParts(s).every(x => words(x).length <= 2)) return 'pill_row';
   if (RE_LIST.test(s) || listParts(s).length >= 3) return 'list_card';
+  if (RE_ARROW.test(s)) return 'arrow_callout';
+  if (RE_APP.test(s)) return 'window_card';
   if (RE_DEF.test(s)) return 'definition_card';
   return words(s).length <= 12 ? 'quote_card' : 'keyword_title';
 }
 
-const ALT: VisualType[] = ['keyword_title', 'quote_card', 'definition_card', 'list_card', 'stat_counter'];
+/** Sentences without numbers or structure get these text graphics; they rotate so a whole video is not one look. */
+const TEXTY: VisualType[] = ['title_stack', 'geo_title', 'quote_card', 'highlight_card', 'halftone_frame', 'stack_card', 'frame_card', 'keyword_title'];
+const ALT: VisualType[] = [...TEXTY, 'definition_card', 'list_card'];
 
-export function planLocal(ws: TWord[], durationMs: number): VisualSlot[] {
+export function planLocal(ws: TWord[], durationMs: number, mix: VisualType[] = []): VisualSlot[] {
   const ss = sentencesOf(ws).filter(s => s.endMs - s.startMs > 500 && words(s.text).length >= 2);
   const slots: VisualSlot[] = []; let cursor = 0;
   for (const s of ss) {
@@ -54,7 +68,11 @@ export function planLocal(ws: TWord[], durationMs: number): VisualSlot[] {
   const cap = Math.max(2, Math.ceil(slots.length * 0.3)), count: Partial<Record<VisualType, number>> = {};
   slots.forEach((sl, i) => {
     const bad = (t: VisualType) => t === slots[i - 1]?.type || (count[t] ?? 0) >= cap;
-    if (bad(sl.type)) sl.type = ALT.find(t => !bad(t)) ?? 'keyword_title';
+    if (TEXTY.includes(sl.type)) {
+      // text-only sentence: walk the text graphics (the creator's liked ones first) so neighbours differ
+      const pool = [...mix.filter(t => TEXTY.includes(t)), ...TEXTY.filter(t => !mix.includes(t))], start = i % pool.length;
+      sl.type = pool.map((_, k) => pool[(start + k) % pool.length]!).find(t => !bad(t)) ?? sl.type;
+    } else if (bad(sl.type)) sl.type = ALT.find(t => !bad(t)) ?? 'keyword_title';
     count[sl.type] = (count[sl.type] ?? 0) + 1;
   });
   return slots;
@@ -85,6 +103,36 @@ export function makeLocal(slot: VisualSlot, sentence: string, themeId: string, i
     if (term && mean && m.length >= 3) data = { term, meaning: limitWords(mean, 8) }; else asKeyword();
   } else if (type === 'terminal') {
     data = { lines: [limitWords(s, 6)] };
+  } else if (type === 'title_stack') {
+    const ws = words(s).slice(0, 7), hi = longest(s, 1)[0] ?? ws[ws.length - 1] ?? '', rest = ws.filter(w => w !== hi);
+    data = { title: rest.slice(0, 2).join(' ') || hi, accent: rest.length ? hi.replace(/[^\p{L}\p{N}]/gu, '') : '', label: rest.slice(2, 4).join(' ') };
+  } else if (type === 'geo_title') {
+    data = { title: longest(s, 2).join(' ') || limitWords(s, 2) };
+  } else if (type === 'halftone_frame') {
+    data = { title: limitWords(s, 4) };
+  } else if (type === 'cta_card') {
+    const q = s.match(/["\u201c\u2018']([^"\u201d\u2019']{2,24})["\u201d\u2019']/), after = s.match(/\b(?:comment|dm me|follow for)\b\s+([\p{L}\p{N}]+)/iu);
+    data = { title: /comment/i.test(s) ? 'Comment' : /follow/i.test(s) ? 'Follow' : /subscribe/i.test(s) ? 'Subscribe' : 'Share', accent: (q?.[1] ?? after?.[1] ?? '').slice(0, 20), label: 'to get it' };
+  } else if (type === 'flow_diagram') {
+    const m = s.match(/\bfrom\b\s+(.{2,30}?)\s+\bto\b\s+(.{2,30})/i) ?? s.match(/(.{2,30}?)\s+(?:turns? into|becomes?|->|\u2192)\s+(.{2,30})/i);
+    if (m) data = { title: '', items: [limitWords(m[1]!, 2), limitWords(m[2]!, 2)] }; else asKeyword();
+  } else if (type === 'before_after') {
+    const m = s.split(/\b(?:after|now|ab|abhi|today|aaj)\b/i);
+    if (m.length >= 2 && m[0]!.trim() && m[1]!.trim()) data = { left: limitWords(m[0]!.replace(/\b(before|pehle|pahle|earlier)\b/gi, '').trim().split(' ').slice(-3).join(' '), 3), right: limitWords(m[1]!.trim(), 3) }; else asKeyword();
+  } else if (type === 'arrow_callout') {
+    data = { title: limitWords(s, 4), trend: /down|neeche|decrease|drop|fall|gir/i.test(s) ? 'down' : 'up' };
+  } else if (type === 'window_card') {
+    const lk = s.match(/[\w-]+\.(?:com|co|in|io|app|ai)\b/i);
+    data = { title: limitWords(s, 5), label: lk?.[0] ?? 'link', items: [/download/i.test(s) ? 'Download' : /paste/i.test(s) ? 'Paste' : 'Open'] };
+  } else if (type === 'pill_row') {
+    const it = listParts(s).slice(0, 4); if (it.length >= 2) data = { title: '', items: it }; else asKeyword();
+  } else if (type === 'highlight_card') {
+    data = { text: limitWords(s, 10), accent: longest(s, 1)[0]?.replace(/[^\p{L}\p{N}]/gu, '') };
+  } else if (type === 'frame_card') {
+    data = { title: limitWords(s, 6), accent: longest(s, 1)[0]?.replace(/[^\p{L}\p{N}]/gu, '') };
+  } else if (type === 'stack_card') {
+    const ws = words(s).slice(0, 8), items: string[] = []; for (let i = 0; i < ws.length; i += 2) items.push(ws.slice(i, i + 2).join(' '));
+    if (items.length >= 2) data = { items }; else asKeyword();
   } else if (type === 'quote_card') {
     data = { quote: limitWords(s, 12), accent: longest(s, 1)[0]?.replace(/[^\p{L}\p{N}]/gu, '') };
   } else asKeyword();

@@ -39,6 +39,15 @@ export const VISUAL_THEMES: VisualTheme[] = [
   T({ id: 'minimal-dark', name: 'Minimal dark', bg: '#111113', card: '#111113', text: '#f4f4f5', muted: '#a1a1aa', accent: '#f4f4f5', highlight: '#f4f4f5',
     radius: 28, shadow: '0 16px 50px rgba(0,0,0,0.5)', border: 'none',
     motionSet: { in: ['slowFade', 'slideUp'], hold: ['none', 'float'], out: ['fadeOut'] , text: ['wave', 'blur']} }),
+  // reel looks, drawn after real short-form edits: dark + red box highlight, light + heavy red type, purple glass
+  T({ id: 'reel-dark', name: 'Reel dark', bg: '#050505', card: '#050505', text: '#ffffff', muted: '#8a8a92', accent: '#e5192b', highlight: '#ffffff',
+    radius: 0, shadow: 'none', border: 'none', motionSet: { in: ['fade', 'slideUp'], hold: ['none'], out: ['fadeOut'], text: ['kinetic', 'blur', 'wave'] } }),
+  T({ id: 'reel-light', name: 'Reel light', bg: '#ecebef', card: '#ecebef', text: '#1b1b1d', muted: '#7d7d84', accent: '#c1121f', highlight: '#c1121f',
+    radius: 0, shadow: 'none', border: 'none', motionSet: { in: ['scaleIn', 'slideUp'], hold: ['none'], out: ['fadeOut'], text: ['pop', 'kinetic', 'reveal'] } }),
+  T({ id: 'reel-purple', name: 'Reel purple', bg: '#120a2e',
+    card: 'repeating-linear-gradient(90deg, rgba(255,255,255,0.045) 0px, rgba(255,255,255,0.045) 2px, transparent 2px, transparent 24px), linear-gradient(165deg, #2a1a66 0%, #0c0824 55%, #3a2290 100%)',
+    cardSolid: '#160d38', text: '#ffffff', muted: '#b4a8e8', accent: '#8b5cf6', highlight: '#ffffff',
+    radius: 36, shadow: '0 20px 70px rgba(80,40,200,0.35)', border: '1px solid rgba(255,255,255,0.12)', motionSet: { in: ['blurReveal', 'scaleIn'], hold: ['float'], out: ['fadeOut'], text: ['blur', 'kinetic', 'wave'] } }),
 ];
 
 export const DEFAULT_THEME_ID = 'minimal-dark';

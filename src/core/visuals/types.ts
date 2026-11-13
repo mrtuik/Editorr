@@ -3,18 +3,24 @@
 export type VisualType =
   | 'stat_counter' | 'quote_card' | 'definition_card' | 'list_card' | 'versus_card'
   | 'bar_chart' | 'line_chart' | 'progress_ring' | 'timeline' | 'keyword_title'
-  | 'code_window' | 'terminal' | 'post_card' | 'receipt_card';
+  | 'code_window' | 'terminal' | 'post_card' | 'receipt_card'
+  | 'highlight_card' | 'stack_card' | 'frame_card'
+  | 'title_stack' | 'pill_row' | 'flow_diagram' | 'geo_title' | 'cta_card' | 'before_after' | 'arrow_callout' | 'window_card' | 'halftone_frame';
 
 export const VISUAL_TYPES: VisualType[] = [
   'stat_counter', 'quote_card', 'definition_card', 'list_card', 'versus_card',
   'bar_chart', 'line_chart', 'progress_ring', 'timeline', 'keyword_title',
   'code_window', 'terminal', 'post_card', 'receipt_card',
+  'highlight_card', 'stack_card', 'frame_card',
+  'title_stack', 'pill_row', 'flow_diagram', 'geo_title', 'cta_card', 'before_after', 'arrow_callout', 'window_card', 'halftone_frame',
 ];
 
 export const VISUAL_LABEL: Record<VisualType, string> = {
   stat_counter: 'Stat', quote_card: 'Quote', definition_card: 'Definition', list_card: 'List', versus_card: 'Versus',
   bar_chart: 'Bars', line_chart: 'Line', progress_ring: 'Ring', timeline: 'Timeline', keyword_title: 'Keyword',
   code_window: 'Code', terminal: 'Terminal', post_card: 'Post', receipt_card: 'Receipt',
+  highlight_card: 'Highlight', stack_card: 'Stack', frame_card: 'Frame',
+  title_stack: 'Title', pill_row: 'Pills', flow_diagram: 'Flow', geo_title: 'Shapes', cta_card: 'CTA', before_after: 'Before/After', arrow_callout: 'Arrow', window_card: 'Window', halftone_frame: 'Halftone',
 };
 
 /** All fields optional; each template reads only what it needs. Lists: list_card/timeline use `items`, bar_chart `labels`+`values`,
@@ -48,6 +54,8 @@ export interface VisualTheme {
   bg: string; card: string; text: string; muted: string; accent: string; highlight: string;
   font: string; serif: string; mono: string;
   radius: number; shadow: string; border: string; dot?: string;
+  /** plain colour for the Canvas 2D fallback when `card` is a gradient */
+  cardSolid?: string;
   /** several ids per slot so neighbouring visuals do not move the same way */
   motionSet: { in: string[]; hold: string[]; out: string[]; text?: string[] };
 }

@@ -71,7 +71,7 @@ export interface BakedVisual { frames: HTMLCanvasElement[]; framesMs: number[]; 
 export function settleMs(v: Visual): number {
   const d = v.data, text = d.quote ?? d.title ?? d.big ?? d.term ?? d.text ?? d.label ?? '';
   const t = isTextAnim(v.motion.text) ? textEndMs(v.motion.text, text) : 0;
-  return Math.round(Math.max(getPreset(v.motion.in).durationMs + 450, Math.min(2200, t + 150), v.type === 'bar_chart' || v.type === 'stat_counter' || v.type === 'progress_ring' || v.type === 'line_chart' ? 1500 : 0));
+  return Math.round(Math.max(getPreset(v.motion.in).durationMs + 450, Math.min(2200, t + 150), ['title_stack', 'pill_row', 'flow_diagram', 'cta_card', 'window_card'].includes(v.type) ? 2000 : v.type === 'highlight_card' ? 1900 : ['bar_chart', 'stat_counter', 'progress_ring', 'line_chart', 'stack_card', 'frame_card'].includes(v.type) ? 1500 : 0));
 }
 
 /** Entrance frames (about one per 55 ms, 18 to 30) plus one still for the hold. framesMs are relative to the visual's start. */

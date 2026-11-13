@@ -69,7 +69,7 @@ export interface AnimTextOpts {
   /** word (compared without punctuation, lower case) shown in the accent colour; or 'last' for the last word */
   accent?: string; accentColor?: string;
   /** extra delay in ms and a different animation than the card's */
-  delay?: number; anim?: TextAnimId;
+  delay?: number; anim?: TextAnimId; italic?: boolean;
 }
 const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 
@@ -82,7 +82,7 @@ export function animText(c: Ctx, text: string, size: number, o: AnimTextOpts = {
   const accWord = o.accent === 'last' ? norm(ws[nW - 1] ?? '') : norm(o.accent ?? '');
   const colorOf = (w: string, i: number) => (accWord && (o.accent === 'last' ? i === nW - 1 : norm(w) === accWord)) ? (o.accentColor ?? c.t.accent) : (o.color ?? c.t.text);
   const f = easeFn(sp.ease);
-  const frame = `font-size:${size}px;line-height:${o.lh ?? 1.18};font-weight:${o.weight ?? 700};font-family:${o.font ?? c.t.font};text-align:${o.align ?? 'left'};${o.nowrap ? 'white-space:pre;' : 'overflow-wrap:anywhere;'}`;
+  const frame = `${o.italic ? 'font-style:italic;' : ''}font-size:${size}px;line-height:${o.lh ?? 1.18};font-weight:${o.weight ?? 700};font-family:${o.font ?? c.t.font};text-align:${o.align ?? 'left'};${o.nowrap ? 'white-space:pre;' : 'overflow-wrap:anywhere;'}`;
   const tf = (e: number) => {
     const y = (sp.y ?? 0) * (1 - e), x = (sp.x ?? 0) * (1 - e), s = 1 + ((sp.s ?? 1) - 1) * (1 - e), r = (sp.r ?? 0) * (1 - e), b = (sp.b ?? 0) * (1 - e);
     return `opacity:${Math.max(0, Math.min(1, e * 1.6)).toFixed(3)};transform:translate(${x.toFixed(3)}em,${y.toFixed(3)}em) scale(${s.toFixed(3)}) rotate(${r.toFixed(2)}deg);${b > 0.002 ? `filter:blur(${b.toFixed(3)}em);` : ''}`;

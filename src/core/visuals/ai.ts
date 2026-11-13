@@ -23,6 +23,8 @@ Return ONE JSON object, no markdown:
 RULES
 1. A new visual every 2 to 4 seconds, never a gap over 3 s, never overlapping. Each lasts 2 to 5 s.
 2. Pick the type from what is said: number or money -> stat_counter / bar_chart / line_chart / progress_ring; steps -> list_card / timeline; two things compared -> versus_card; a definition -> definition_card; code or tech -> code_window / terminal; one strong line -> quote_card; one key word -> keyword_title.
+   Reel graphics: tags that light up one by one -> pill_row (items); a to-b process -> flow_diagram (2 or 3 items); before then after -> before_after (left,right); up or down -> arrow_callout (trend up|down); app, website, link, download -> window_card (title,label,items[0]=button); comment or follow call to action -> cta_card (title,accent,label); a bold title with an italic line and one boxed word -> title_stack (title,label,accent); one big word inside circles and squares -> geo_title; a portrait frame on a halftone circle -> halftone_frame.
+   Speech with no numbers or steps (feelings, stories, advice): rotate highlight_card (marker on the key word), stack_card (2 to 4 short lines), frame_card (a frame draws around the line), quote_card, keyword_title.
 3. Never the same type twice in a row. One type at most 30 percent of all slots.
 4. startMs starts at a sentence beginning, endMs ends at its punchline.
 5. Never invent facts, numbers, people or accounts.`;

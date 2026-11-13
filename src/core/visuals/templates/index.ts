@@ -130,6 +130,46 @@ const keyword_title: Template = (d, c) => {
     `<div style="align-self:center;">${trimLine(c, c.cw * 0.3, Math.max(4, c.body * 0.14), DELAY + timing(isTextAnim(c.anim) ? c.anim : 'kinetic', s).total * 0.6, 800)}</div>`, c.body * 0.5);
 };
 
+const lum = (hex: string) => { const m = /^#([0-9a-f]{6})$/i.exec(hex); if (!m) return 0; const n = parseInt(m[1]!, 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; };
+const key = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+
+/** Words kinetic in, then a marker sweeps behind the key word (a drawn shape that wipes in, like a trim path). */
+const highlight_card: Template = (d, c) => {
+  const t = limitWords(d.text ?? d.title ?? d.quote ?? '', 10), ws = t.split(/\s+/).filter(Boolean), acc = key(d.accent ?? '');
+  const size = fit(t, c.cw, c.ch, c.h * 0.09, c.head * 0.6), hit = ws.findIndex(w => key(w) === acc), mark = hit >= 0 ? hit : ws.length - 1;
+  const ink = lum(c.t.accent) > 0.6 ? '#0b0b0b' : '#ffffff';
+  const spans = ws.map((w, i) => {
+    const e = timed(c.ms, DELAY + i * Math.min(120, 900 / Math.max(1, ws.length)), 600, 'snappy');
+    const base = `display:inline-block;margin-right:0.28em;opacity:${Math.min(1, e * 1.6).toFixed(3)};transform:translateY(${((1 - e) * 0.7).toFixed(3)}em);`;
+    if (i !== mark) return `<span style="${base}">${esc(w)}</span>`;
+    const sw = timed(c.ms, DELAY + ws.length * 100 + 150, 600, 'ease-in-out');
+    return `<span style="${base}position:relative;"><span style="position:absolute;left:-0.12em;right:-0.12em;top:8%;bottom:2%;border-radius:0.16em;background:${c.t.accent};transform-origin:left center;transform:scaleX(${sw.toFixed(3)});"></span><span style="position:relative;color:${sw > 0.5 ? ink : c.t.text};">${esc(w)}</span></span>`;
+  }).join('');
+  return col(`<div style="font-size:${size}px;line-height:1.3;font-weight:800;font-family:${c.t.font};">${spans}</div>`);
+};
+
+/** Short lines stacked big, each sliding in from alternate sides (kineticText with direction), last line in the accent, a line draws under. */
+const stack_card: Template = (d, c) => {
+  let lines = (d.items ?? []).map(s => limitWords(s, 3)).filter(Boolean);
+  if (lines.length < 2) { const ws = (d.title ?? d.text ?? '').split(/\s+/).filter(Boolean).slice(0, 8); lines = []; for (let i = 0; i < ws.length; i += 2) lines.push(ws.slice(i, i + 2).join(' ')); }
+  lines = lines.slice(0, 4); const n = Math.max(1, lines.length);
+  const size = Math.max(c.min, Math.min(c.h * 0.1, Math.floor(c.ch / n / 1.35), ...lines.map(l => fit(l, c.cw, c.ch / n, c.h * 0.1, c.min))));
+  const rows = lines.map((l, i) => {
+    const e = timed(c.ms, DELAY + i * 140, 600, 'snappy'), dir = i % 2 ? 1 : -1;
+    return `<div style="opacity:${Math.min(1, e * 1.6).toFixed(3)};transform:translateX(${(dir * (1 - e) * 1.2).toFixed(3)}em);font-size:${size}px;line-height:1.15;font-weight:900;font-family:${c.t.font};color:${i === n - 1 ? c.t.accent : c.t.text};">${esc(l)}</div>`;
+  }).join('');
+  return col(rows + trimLine(c, c.cw * 0.22, Math.max(4, c.body * 0.14), DELAY + n * 140 + 200, 700), c.body * 0.3);
+};
+
+/** A frame draws itself around the text (stroke trim path on a rectangle), corners first. */
+const frame_card: Template = (d, c) => {
+  const t = limitWords(d.title ?? d.text ?? d.quote ?? '', 6), size = fit(t, c.cw * 0.86, c.ch * 0.7, c.h * 0.1, c.head * 0.7, 1.15);
+  const e = timed(c.ms, 0, 1000, 'ease-in-out'), W = 1000, H = 1000;
+  return `<div style="position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" width="100%" height="100%" style="position:absolute;inset:0;"><rect x="12" y="12" width="${W - 24}" height="${H - 24}" rx="0" fill="none" stroke="${c.t.accent}" stroke-width="10" vector-effect="non-scaling-stroke" pathLength="1" stroke-dasharray="1" stroke-dashoffset="${(1 - e).toFixed(4)}"/></svg>` +
+    `<div style="width:86%;">${animText(c, t, size, { weight: 900, align: 'center', lh: 1.15, accent: d.accent || 'last', delay: 250 })}</div></div>`;
+};
+
 const windowBar = (c: Ctx, title: string) => `<div style="display:flex;align-items:center;gap:${c.body * 0.3}px;margin-bottom:${c.body * 0.5}px;">` +
   ['#ff5f57', '#febc2e', '#28c840'].map(k => `<div style="width:${c.body * 0.35}px;height:${c.body * 0.35}px;border-radius:99px;background:${k};"></div>`).join('') + txt(c, title, c.min, { color: c.t.muted, font: c.t.mono, weight: 500 }) + `</div>`;
 
@@ -176,9 +216,145 @@ const receipt_card: Template = (d, c) => {
     lines.map((l, i) => row(l, i)).join('') + `<div style="border-top:3px dashed ${c.t.muted};opacity:${timed(c.ms, 300, 600, 'ease-out').toFixed(2)};"></div>` + row(`TOTAL | ${d.total ?? ''}`, n - 1, true), size * 0.4);
 };
 
+
+/* ---- reel graphics: shapes, pills, arrows, windows, flows (the look of short-form talking-head edits) ---- */
+const ink = (c: Ctx) => (lum(c.t.accent) > 0.6 ? '#0b0b0b' : '#ffffff');
+const hash2 = (a: number, b: number) => { let h = (a * 374761393 + b * 668265263) | 0; h = (h ^ (h >>> 13)) * 1274126177; return ((h ^ (h >>> 16)) >>> 0) / 4294967295; };
+/** a word on a solid accent box that wipes in from the left */
+const boxWord = (c: Ctx, w: string, size: number, at: number) => {
+  const sw = timed(c.ms, at, 500, 'ease-in-out'), e = timed(c.ms, at, 600, 'snappy');
+  return `<span style="display:inline-block;position:relative;padding:0 0.28em;margin:0 0.08em;font-size:${size}px;font-weight:900;font-family:${c.t.font};opacity:${Math.min(1, e * 2).toFixed(3)};transform:translateY(${((1 - e) * 0.6).toFixed(3)}em);">` +
+    `<span style="position:absolute;left:0;right:0;top:6%;bottom:2%;border-radius:0.12em;background:${c.t.accent};transform-origin:left center;transform:scaleX(${sw.toFixed(3)});"></span><span style="position:relative;color:${sw > 0.5 ? ink(c) : c.t.text};">${esc(w)}</span></span>`;
+};
+
+/** line 1 bold, a serif italic line, then the key word on a box */
+const title_stack: Template = (d, c) => {
+  const l1 = limitWords(d.title, 4), it = limitWords(d.label, 4), hi = limitWords(d.accent, 2);
+  const size = fit(`${l1} ${hi}`, c.cw, c.ch * 0.5, c.h * 0.1, c.head * 0.7, 1.15), n1 = timing(isTextAnim(c.anim) ? c.anim : 'kinetic', l1).total;
+  return col((l1 ? animText(c, l1, size, { weight: 900, align: 'center', lh: 1.1 }) : '') +
+    (it ? animText(c, it, size * 0.95, { font: c.t.serif, italic: true, weight: 500, align: 'center', lh: 1.1, delay: 150, color: c.t.text }) : '') +
+    (hi ? `<div style="text-align:center;line-height:1.2;">${boxWord(c, hi, size, DELAY + n1 * 0.7 + 200)}</div>` : ''), c.body * 0.2);
+};
+
+const iconShape = (c: Ctx, i: number, sz: number, color: string) => {
+  const k = i % 3;
+  if (k === 0) return `<div style="width:0;height:0;border-top:${sz * 0.5}px solid transparent;border-bottom:${sz * 0.5}px solid transparent;border-left:${sz * 0.85}px solid ${color};"></div>`;
+  if (k === 1) return `<div style="width:${sz}px;height:${sz}px;border-radius:99px;background:${color};"></div>`;
+  return `<div style="display:flex;flex-direction:column;gap:${sz * 0.18}px;width:${sz}px;">${[1, 0.75, 1].map(w => `<div style="height:${sz * 0.2}px;width:${w * 100}%;background:${color};border-radius:2px;"></div>`).join('')}</div>`;
+};
+/** tags that light up one after another */
+const pill_row: Template = (d, c) => {
+  const items = (d.items ?? []).slice(0, 4).map(x => limitWords(x, 2)), n = items.length, size = Math.min(c.body * 1.3, Math.floor(c.cw / Math.max(2, n) / 4.2));
+  const pills = items.map((s, i) => {
+    const at = DELAY + 500 + i * 450, on = timed(c.ms, at, 350, 'back'), act = c.ms >= at, appear = timed(c.ms, DELAY + i * 120, 500, 'snappy');
+    return `<div style="display:flex;align-items:center;gap:${size * 0.35}px;padding:${size * 0.4}px ${size * 0.7}px;border-radius:99px;font-family:${c.t.font};font-size:${size}px;font-weight:800;white-space:nowrap;` +
+      `color:${act ? ink(c) : c.t.muted};background:${act ? c.t.accent : 'rgba(127,127,127,0.18)'};transform:scale(${(act ? 0.9 + 0.1 * on : 1).toFixed(3)}) translateY(${((1 - appear) * size).toFixed(1)}px);opacity:${Math.min(1, appear * 2).toFixed(3)};">${iconShape(c, i, size * 0.7, act ? ink(c) : c.t.muted)}${esc(s)}</div>`;
+  }).join('');
+  return col((d.title ? animText(c, limitWords(d.title, 5), c.head * 0.8, { weight: 900, align: 'center' }) : '') + `<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:${size * 0.5}px;">${pills}</div>`, c.body * 0.9);
+};
+
+/** nodes (circle, square, diamond) joined by lines that draw themselves, with a dot travelling along */
+const flow_diagram: Template = (d, c) => {
+  const items = (d.items ?? []).slice(0, 3).map(x => limitWords(x, 2)), n = Math.max(2, items.length), ns = Math.min(c.cw / (n * 1.9), c.ch * 0.28), lab = Math.max(c.min * 0.9, ns * 0.3);
+  const shapes = ['border-radius:50%', `border-radius:${ns * 0.22}px`, `border-radius:${ns * 0.12}px;transform-origin:center`];
+  const parts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const at = DELAY + i * 500, pop = timed(c.ms, at, 450, 'back'), rot = i % 3 === 2 ? 45 : 0;
+    parts.push(`<div style="display:flex;flex-direction:column;align-items:center;gap:${lab * 0.5}px;flex:none;width:${ns}px;"><div style="width:${ns}px;height:${ns}px;${shapes[i % 3]};background:${i === n - 1 ? c.t.accent : 'rgba(127,127,127,0.22)'};border:3px solid ${c.t.accent};display:flex;align-items:center;justify-content:center;transform:scale(${pop.toFixed(3)}) rotate(${rot}deg);">` +
+      `<div style="font-size:${ns * 0.4}px;font-weight:900;font-family:${c.t.font};color:${i === n - 1 ? ink(c) : c.t.text};transform:rotate(${-rot}deg);">${esc((items[i] ?? String(i + 1)).charAt(0).toUpperCase())}</div></div>` +
+      `<div style="font-size:${lab}px;font-weight:700;font-family:${c.t.font};color:${c.t.text};text-align:center;opacity:${Math.min(1, pop * 1.4).toFixed(3)};">${esc(items[i] ?? '')}</div></div>`);
+    if (i < n - 1) {
+      const ln = timed(c.ms, at + 350, 500, 'ease-in-out'), dot = timed(c.ms, at + 400, 700, 'ease-in-out');
+      parts.push(`<div style="flex:1;position:relative;height:${ns}px;"><div style="position:absolute;left:0;right:0;top:50%;height:4px;margin-top:-2px;background:${c.t.accent};border-radius:99px;transform-origin:left center;transform:scaleX(${ln.toFixed(3)});"></div>` +
+        `<div style="position:absolute;top:50%;left:${(dot * 90).toFixed(1)}%;width:${ns * 0.16}px;height:${ns * 0.16}px;margin-top:-${ns * 0.08}px;border-radius:50%;background:${c.t.text};opacity:${ln > 0.05 && dot < 1 ? 1 : 0};"></div></div>`);
+    }
+  }
+  return col((d.title ? animText(c, limitWords(d.title, 5), c.head * 0.8, { weight: 900, align: 'center' }) : '') + `<div style="display:flex;align-items:flex-start;width:100%;">${parts.join('')}</div>`, c.body * 1.2);
+};
+
+/** a keyword inside drawing rings, a turning square, orbiting dots and flickering pixel blocks */
+const geo_title: Template = (d, c) => {
+  const t = limitWords(d.title ?? d.big ?? d.quote ?? '', 3), S = Math.min(c.cw, c.ch) * 0.98;
+  const ring = timed(c.ms, 0, 900, 'ease-in-out'), sq = timed(c.ms, 150, 800, 'ease-out'), a = c.ms * 0.02;
+  const blocks = [[8, 12, 6], [86, 20, 5], [14, 82, 5], [80, 78, 7], [50, 4, 4]].map(([x, y, z], i) => {
+    const on = hash2(i, Math.floor(c.ms / 110)) > 0.35 ? 1 : 0.15, vis = timed(c.ms, 200 + i * 90, 200, 'ease-out');
+    return `<rect x="${x}" y="${y}" width="${z}" height="${z}" fill="${c.t.accent}" opacity="${(on * vis).toFixed(2)}"/>`;
+  }).join('');
+  const orbit = [0, 1, 2].map(k => { const ang = c.ms * 0.0022 + k * 2.094, r = 46; return `<circle cx="${(50 + r * Math.cos(ang)).toFixed(2)}" cy="${(50 + r * Math.sin(ang)).toFixed(2)}" r="${(1.6 + k * 0.5) * timed(c.ms, 300, 300, 'back')}" fill="${k === 0 ? c.t.accent : c.t.text}"/>`; }).join('');
+  const size = fit(t, S * 0.62, S * 0.3, c.h * 0.1, c.head * 0.6, 1.1);
+  return `<div style="position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="${S}" height="${S}" style="position:absolute;">` +
+    `<circle cx="50" cy="50" r="38" fill="none" stroke="${c.t.accent}" stroke-width="1.6" pathLength="1" stroke-dasharray="1" stroke-dashoffset="${(1 - ring).toFixed(4)}" transform="rotate(-90 50 50)"/>` +
+    `<circle cx="50" cy="50" r="44" fill="none" stroke="${c.t.muted}" stroke-width="0.5" stroke-dasharray="1.2 2.2" transform="rotate(${a.toFixed(1)} 50 50)"/>` +
+    `<rect x="26" y="26" width="48" height="48" fill="none" stroke="${c.t.text}" stroke-width="0.7" opacity="${(0.5 * sq).toFixed(2)}" transform="rotate(${(45 * sq + a * 0.6).toFixed(1)} 50 50) scale(${(0.6 + 0.4 * sq).toFixed(3)})" style="transform-origin:50% 50%"/>${blocks}${orbit}</svg>` +
+    `<div style="width:62%;position:relative;">${animText(c, t, size, { weight: 900, align: 'center', lh: 1.1, accent: 'last', delay: 200 })}</div></div>`;
+};
+
+/** speech bubble with typing dots, then the call to action on a box */
+const cta_card: Template = (d, c) => {
+  const pop = timed(c.ms, 0, 500, 'back'), size = fit(`${d.title ?? ''} ${d.accent ?? ''}`, c.cw, c.ch * 0.3, c.h * 0.09, c.head * 0.6, 1.15), bs = c.body * 2.6;
+  const dots = [0, 1, 2].map(i => `<div style="width:${bs * 0.14}px;height:${bs * 0.14}px;border-radius:50%;background:${ink(c)};opacity:${(0.45 + 0.55 * Math.max(0, Math.sin(c.ms * 0.012 - i * 0.9))).toFixed(2)};"></div>`).join('');
+  return col(`<div style="align-self:center;position:relative;width:${bs}px;height:${bs * 0.78}px;border-radius:${bs * 0.22}px;background:${c.t.accent};display:flex;align-items:center;justify-content:center;gap:${bs * 0.08}px;transform:scale(${pop.toFixed(3)});">${dots}` +
+    `<div style="position:absolute;left:${bs * 0.2}px;bottom:-${bs * 0.12}px;width:0;height:0;border-left:${bs * 0.12}px solid transparent;border-right:${bs * 0.12}px solid transparent;border-top:${bs * 0.16}px solid ${c.t.accent};"></div></div>` +
+    animText(c, limitWords(d.title ?? 'Comment', 3), size, { weight: 900, align: 'center', delay: 200 }) +
+    (d.accent ? `<div style="text-align:center;line-height:1.2;">${boxWord(c, `“${limitWords(d.accent, 2)}”`, size, DELAY + 600)}</div>` : '') +
+    (d.label ? animText(c, limitWords(d.label, 6), size * 0.8, { font: c.t.serif, italic: true, weight: 500, align: 'center', delay: 700, color: c.t.muted }) : ''), c.body * 0.5);
+};
+
+/** two phone-shaped frames, the second one lit, an arrow drawing between them */
+const before_after: Template = (d, c) => {
+  const fw = Math.min(c.cw * 0.4, c.ch * 0.34), fh = fw * 1.55, lab = Math.max(c.min * 0.8, fw * 0.12);
+  const frame = (txt2: string, tag: string, on: boolean, at: number) => {
+    const e = timed(c.ms, at, 600, 'snappy'), glow = on ? timed(c.ms, at + 500, 500, 'ease-out') : 0;
+    return `<div style="flex:none;width:${fw}px;height:${fh}px;border-radius:${fw * 0.14}px;border:3px solid ${on ? c.t.accent : c.t.muted};background:${on ? 'rgba(127,127,127,0.18)' : 'rgba(127,127,127,0.1)'};position:relative;display:flex;align-items:center;justify-content:center;padding:${fw * 0.08}px;box-sizing:border-box;` +
+      `opacity:${Math.min(1, e * 1.6).toFixed(3)};transform:translateY(${((1 - e) * fw * 0.3).toFixed(1)}px) scale(${(1 + 0.05 * glow).toFixed(3)});${on ? `box-shadow:0 0 ${(fw * 0.25 * glow).toFixed(0)}px ${c.t.accent};` : ''}">` +
+      `<div style="position:absolute;top:-${lab * 0.9}px;left:${fw * 0.1}px;padding:${lab * 0.2}px ${lab * 0.7}px;border-radius:99px;font:800 ${lab}px ${c.t.font};background:${on ? c.t.accent : 'rgba(127,127,127,0.35)'};color:${on ? ink(c) : c.t.text};">${tag}</div>` +
+      `<div style="font:800 ${lab * 1.5}px ${c.t.font};text-align:center;color:${c.t.text};overflow-wrap:anywhere;">${esc(txt2)}</div></div>`;
+  };
+  const ar = timed(c.ms, DELAY + 350, 500, 'ease-in-out');
+  return `<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;gap:${fw * 0.12}px;">${frame(limitWords(d.left, 3), 'BEFORE', false, DELAY)}` +
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 20" width="${fw * 0.4}" height="${fw * 0.2}" style="flex:none;"><path d="M2 10 H34 M27 3 L35 10 L27 17" fill="none" stroke="${c.t.accent}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="${(1 - ar).toFixed(4)}"/></svg>` +
+    `${frame(limitWords(d.right, 3), 'AFTER', true, DELAY + 450)}</div>`;
+};
+
+/** a big arrow that draws itself, then bobs, with the line beside it */
+const arrow_callout: Template = (d, c) => {
+  const dir = d.trend === 'down' ? 180 : d.trend === 'flat' ? 90 : 0, S = Math.min(c.cw * 0.42, c.ch * 0.4), t = limitWords(d.title ?? d.label ?? '', 4);
+  const dr = timed(c.ms, 100, 700, 'ease-in-out'), head = timed(c.ms, 650, 300, 'back'), bob = c.ms > 1000 ? Math.sin((c.ms - 1000) * 0.006) * 3 : 0;
+  const size = fit(t, c.cw * 0.9, c.ch * 0.3, c.h * 0.09, c.head * 0.6, 1.15);
+  return col(`<div style="align-self:center;transform:rotate(${dir}deg) translateY(${bob.toFixed(1)}px);"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 80" width="${S * 0.75}" height="${S}">` +
+    `<path d="M30 76 V8" fill="none" stroke="${c.t.accent}" stroke-width="6" stroke-linecap="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="${(1 - dr).toFixed(4)}"/>` +
+    `<path d="M10 28 L30 6 L50 28" fill="none" stroke="${c.t.accent}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="${(1 - head).toFixed(4)}"/></svg></div>` +
+    animText(c, t, size, { weight: 900, align: 'center', accent: 'last', delay: 250 }), c.body * 0.6);
+};
+
+/** a browser window: bar, address, rows sliding in, a cursor that clicks the button */
+const window_card: Template = (d, c) => {
+  const W = Math.min(c.cw, c.ch * 0.95), H = W * 0.62, u = W / 100, btn = limitWords(d.items?.[0] ?? 'Go', 2), pop = timed(c.ms, 0, 600, 'snappy');
+  const click = timed(c.ms, 1250, 160, 'ease-out'), cur = timed(c.ms, 700, 600, 'ease-in-out');
+  const rows = [78, 62, 70].map((w, i) => { const e = timed(c.ms, 350 + i * 130, 500, 'snappy'); return `<div style="height:${u * 4.5}px;width:${(w * e).toFixed(1)}%;border-radius:99px;background:rgba(127,127,127,0.28);opacity:${Math.min(1, e * 2).toFixed(2)};"></div>`; }).join('');
+  const win = `<div style="align-self:center;width:${W}px;height:${H}px;border-radius:${u * 3.5}px;overflow:hidden;border:2px solid rgba(127,127,127,0.4);background:rgba(127,127,127,0.12);opacity:${Math.min(1, pop * 1.6).toFixed(3)};transform:translateY(${((1 - pop) * u * 6).toFixed(1)}px);position:relative;">` +
+    `<div style="display:flex;align-items:center;gap:${u * 1.6}px;padding:${u * 2.4}px ${u * 3}px;background:rgba(127,127,127,0.18);">${['#ff5f57', '#febc2e', '#28c840'].map(k => `<div style="width:${u * 2.4}px;height:${u * 2.4}px;border-radius:50%;background:${k};"></div>`).join('')}` +
+    `<div style="flex:1;margin-left:${u * 2}px;height:${u * 5.4}px;border-radius:99px;background:rgba(127,127,127,0.25);font:600 ${u * 3.4}px ${c.t.mono};color:${c.t.muted};display:flex;align-items:center;padding-left:${u * 2.4}px;">${esc(limitWords(d.label ?? 'link', 2))}</div></div>` +
+    `<div style="padding:${u * 5}px ${u * 6}px;display:flex;flex-direction:column;gap:${u * 3}px;">${rows}<div style="align-self:flex-start;margin-top:${u * 2}px;padding:${u * 2.6}px ${u * 6}px;border-radius:99px;background:${c.t.accent};color:${ink(c)};font:800 ${u * 4.4}px ${c.t.font};transform:scale(${(1 - 0.08 * click * (1 - click) * 4).toFixed(3)});box-shadow:0 0 ${(u * 8 * click).toFixed(0)}px ${c.t.accent};">${esc(btn)}</div></div>` +
+    `<div style="position:absolute;left:${(70 - 40 * cur + 22).toFixed(1)}%;top:${(88 - 30 * cur).toFixed(1)}%;width:0;height:0;border-left:${u * 2.6}px solid transparent;border-right:${u * 2.6}px solid transparent;border-bottom:${u * 6}px solid ${c.t.text};transform:rotate(-20deg);opacity:${cur > 0.02 ? 1 : 0};"></div></div>`;
+  return col((d.title ? animText(c, limitWords(d.title, 5), c.head * 0.8, { weight: 900, align: 'center', accent: 'last' }) : '') + win, c.body * 0.9);
+};
+
+/** a rounded frame in front of a pulsing halftone circle, heavy words over its edge */
+const halftone_frame: Template = (d, c) => {
+  const t = limitWords(d.title ?? d.text ?? '', 4), S = Math.min(c.cw * 0.9, c.ch * 0.62), e = timed(c.ms, 0, 800, 'ease-out'), pulse = 1 + 0.03 * Math.sin(c.ms * 0.006), size = fit(t, c.cw, c.ch * 0.3, c.h * 0.1, c.head * 0.6, 1.1);
+  const fr = timed(c.ms, 150, 700, 'snappy');
+  return col(`<div style="position:relative;align-self:center;width:${S}px;height:${S * 0.85}px;">` +
+    `<div style="position:absolute;left:50%;top:50%;width:${S * 1.1}px;height:${S * 1.1}px;margin:-${S * 0.55}px 0 0 -${S * 0.55}px;background-image:radial-gradient(${c.t.accent} 32%, transparent 36%);background-size:${S * 0.045}px ${S * 0.045}px;` +
+    `-webkit-mask-image:radial-gradient(circle, #000 25%, transparent 68%);mask-image:radial-gradient(circle, #000 25%, transparent 68%);opacity:${(0.9 * e).toFixed(3)};transform:scale(${((0.6 + 0.4 * e) * pulse).toFixed(3)});"></div>` +
+    `<div style="position:absolute;left:22%;right:22%;top:6%;bottom:6%;border-radius:${S * 0.08}px;border:4px solid ${c.t.accent};background:rgba(127,127,127,0.16);opacity:${Math.min(1, fr * 1.6).toFixed(3)};transform:translateY(${((1 - fr) * S * 0.12).toFixed(1)}px) scale(${(0.9 + 0.1 * fr).toFixed(3)});"></div></div>` +
+    `<div style="margin-top:-${S * 0.16}px;">${animText(c, t, size, { weight: 900, align: 'center', lh: 1.1, accent: 'last', delay: 250 })}</div>`, 0);
+};
+
 export const TEMPLATES: Record<VisualType, Template> = {
   stat_counter, quote_card, definition_card, list_card, versus_card, bar_chart, line_chart, progress_ring,
-  timeline, keyword_title, code_window, terminal, post_card, receipt_card,
+  timeline, keyword_title, code_window, terminal, post_card, receipt_card, highlight_card, stack_card, frame_card,
+  title_stack, pill_row, flow_diagram, geo_title, cta_card, before_after, arrow_callout, window_card, halftone_frame,
 };
 
 export function templateHtml(type: VisualType, d: VisualData, theme: VisualTheme, w: number, h: number, p = 1, ms = 99999, anim = 'kinetic'): string {

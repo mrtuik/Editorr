@@ -41,7 +41,7 @@ export async function runVisuals(o: RunOpts): Promise<RunResult> {
       try { slots = await withTimeout(planAi(o.words, o.durationMs, theme.name, o.mix), 45000); source = 'AI'; }
       catch (e) { note = `ERROR: Antigravity NOT working (${(e as Error).message || 'no answer'}). No AI was used, built-in rules made these.`; }
     }
-    if (!slots.length) slots = planLocal(toTWords(o.words), o.durationMs);
+    if (!slots.length) slots = planLocal(toTWords(o.words), o.durationMs, o.mix);
     if (o.fromMs && o.fromMs > 0) slots = slots.filter(s => s.startMs >= o.fromMs! - 200);
   }
   if (!slots.length) return { made: 0, failed: 0, planned: 0, source, note: note ?? 'Nothing to plan: no speech found.', aiMade: 0, aiFailed: 0 };
