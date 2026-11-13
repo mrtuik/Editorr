@@ -29,9 +29,9 @@ const MAP = {
   sinkExit: ['sinkExit', 'exit', -1], collapseDown: ['collapseDown', 'exit', -1], zoomOut: ['zoomOut', 'exit', -1],
   dissolve: ['dissolveOut', 'exit', -1],
 };
-const EASE = { linear: 'linear', ease: 'out', 'ease-in': 'inOut', 'ease-out': 'out', 'ease-in-out': 'inOut', 'ease-in-quad': 'inOut',
-  'ease-out-quad': 'out', 'ease-in-out-quad': 'inOut', 'ease-in-cubic': 'inOut', 'ease-out-cubic': 'out', 'ease-in-out-cubic': 'inOut',
-  bounce: 'back', back: 'back', elastic: 'elastic', snappy: 'expo', smooth: 'inOut', soft: 'inOut' };
+// open-motion preset names are kept as they are: src/core/visuals/ease.ts evaluates the same cubic-bezier table
+const EASE = Object.fromEntries(['linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out', 'ease-in-quad', 'ease-out-quad', 'ease-in-out-quad',
+  'ease-in-cubic', 'ease-out-cubic', 'ease-in-out-cubic', 'bounce', 'back', 'elastic', 'snappy', 'smooth', 'soft'].map((k) => [k, k]));
 const REF = 720, r3 = (n) => Math.round(n * 1000) / 1000, clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 
 function parseVal(v) {

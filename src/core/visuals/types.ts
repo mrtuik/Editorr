@@ -32,13 +32,15 @@ export type MotionGroup = 'entrance' | 'emphasis' | 'transition' | 'exit';
 
 /** Values at one keyframe. x/y are a share of the short side, s = scale, r = degrees, o = opacity, b = blur as a share of the short side. */
 export interface MotionProps { x: number; y: number; s: number; r: number; o: number; b: number }
-export type EaseName = 'linear' | 'out' | 'inOut' | 'back' | 'elastic' | 'expo';
+import type { EaseName } from './ease';
+export type { EaseName };
 
 export interface MotionPreset {
   id: string; group: MotionGroup; durationMs: number; delayMs: number; easing: EaseName;
   keyframes: { offset: number; properties: Partial<MotionProps> }[];
 }
-export interface MotionSelection { in: string; hold: string; out: string }
+/** in/hold/out = whole-card presets; text = how the words inside move (see textAnim.ts), optional so older beats still load */
+export interface MotionSelection { in: string; hold: string; out: string; text?: string }
 
 export interface VisualTheme {
   id: string; name: string;
@@ -47,7 +49,7 @@ export interface VisualTheme {
   font: string; serif: string; mono: string;
   radius: number; shadow: string; border: string; dot?: string;
   /** several ids per slot so neighbouring visuals do not move the same way */
-  motionSet: { in: string[]; hold: string[]; out: string[] };
+  motionSet: { in: string[]; hold: string[]; out: string[]; text?: string[] };
 }
 
 /** A visual on the timeline (timeline ms). */

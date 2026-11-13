@@ -7,3 +7,5 @@
 - ai: Antigravity plan + make-one prompts, every answer validated; local: offline planner (never 0 for speech)
 - creatorLook: visualTheme + visualMix for every creator; preview: live tile frames; chip: "Visual 3/11 | Pause | Stop"
 - UI is in screens/docuSheet.ts (Visuals: HTML | Photos & Video, + Visual at playhead, visual editor with Redo / Change style / Delete)
+
+- v50: ease.ts = open-motion's cubic-bezier easing table; textAnim.ts = open-motion text animators (kinetic, wave/range selector, blur, pop, wipe reveal, typewriter, decode); templates use counter / barGrow / lineDraw / pieSweep / trim-path timings driven by ms; bake length = settleMs(v). Visuals are HTML/CSS/JS only (Photos & Video source removed).

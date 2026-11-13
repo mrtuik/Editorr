@@ -13,3 +13,6 @@ export { visualLookFor } from './creatorLook';
 export { previewUrl, SAMPLE } from './preview';
 export { showChip } from './chip';
 export { planAi, makeAi, agyProblem } from './ai';
+export * from './ease';
+export { TEXT_ANIMS, TEXT_ANIM_LABEL, animText, pickText } from './textAnim';
+export { settleMs } from './render';

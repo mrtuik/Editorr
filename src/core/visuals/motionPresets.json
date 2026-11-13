@@ -4,7 +4,7 @@
   "group": "entrance",
   "durationMs": 800,
   "delayMs": 0,
-  "easing": "out",
+  "easing": "ease-out",
   "keyframes": [
    {
     "offset": 0,
@@ -31,7 +31,7 @@
   "group": "entrance",
   "durationMs": 700,
   "delayMs": 0,
-  "easing": "out",
+  "easing": "ease-out-cubic",
   "keyframes": [
    {
     "offset": 0,
@@ -147,7 +147,7 @@
   "group": "entrance",
   "durationMs": 900,
   "delayMs": 0,
-  "easing": "out",
+  "easing": "ease-out",
   "keyframes": [
    {
     "offset": 0,
@@ -192,7 +192,7 @@
   "group": "entrance",
   "durationMs": 900,
   "delayMs": 0,
-  "easing": "out",
+  "easing": "ease-out",
   "keyframes": [
    {
     "offset": 0,
@@ -237,7 +237,7 @@
   "group": "entrance",
   "durationMs": 600,
   "delayMs": 0,
-  "easing": "out",
+  "easing": "ease-out",
   "keyframes": [
    {
     "offset": 0,
@@ -265,7 +265,7 @@
   "group": "entrance",
   "durationMs": 600,
   "delayMs": 0,
-  "easing": "expo",
+  "easing": "snappy",
   "keyframes": [
    {
     "offset": 0,
@@ -293,7 +293,7 @@
   "group": "entrance",
   "durationMs": 900,
   "delayMs": 0,
-  "easing": "inOut",
+  "easing": "ease-in-out",
   "keyframes": [
    {
     "offset": 0,
@@ -330,7 +330,7 @@
   "group": "entrance",
   "durationMs": 500,
   "delayMs": 0,
-  "easing": "out",
+  "easing": "ease-out",
   "keyframes": [
    {
     "offset": 0,
@@ -358,7 +358,7 @@
   "group": "emphasis",
   "durationMs": 3200,
   "delayMs": 0,
-  "easing": "inOut",
+  "easing": "smooth",
   "keyframes": [
    {
     "offset": 0,
@@ -386,7 +386,7 @@
   "group": "emphasis",
   "durationMs": 1200,
   "delayMs": 0,
-  "easing": "inOut",
+  "easing": "ease-in-out",
   "keyframes": [
    {
     "offset": 0,
@@ -417,7 +417,7 @@
   "group": "emphasis",
   "durationMs": 1200,
   "delayMs": 0,
-  "easing": "expo",
+  "easing": "snappy",
   "keyframes": [
    {
     "offset": 0,
@@ -475,7 +475,7 @@
   "group": "emphasis",
   "durationMs": 4000,
   "delayMs": 0,
-  "easing": "inOut",
+  "easing": "smooth",
   "keyframes": [
    {
     "offset": 0,
@@ -534,7 +534,7 @@
   "group": "emphasis",
   "durationMs": 1600,
   "delayMs": 0,
-  "easing": "inOut",
+  "easing": "ease-in-out",
   "keyframes": [
    {
     "offset": 0,
@@ -579,7 +579,7 @@
   "group": "exit",
   "durationMs": 600,
   "delayMs": 0,
-  "easing": "inOut",
+  "easing": "ease-in",
   "keyframes": [
    {
     "offset": 0,
@@ -601,7 +601,7 @@
   "group": "exit",
   "durationMs": 500,
   "delayMs": 0,
-  "easing": "inOut",
+  "easing": "ease-in-quad",
   "keyframes": [
    {
     "offset": 0,
@@ -625,7 +625,7 @@
   "group": "exit",
   "durationMs": 480,
   "delayMs": 0,
-  "easing": "inOut",
+  "easing": "ease-in-quad",
   "keyframes": [
    {
     "offset": 0,
@@ -656,7 +656,7 @@
   "group": "exit",
   "durationMs": 520,
   "delayMs": 0,
-  "easing": "inOut",
+  "easing": "ease-in-cubic",
   "keyframes": [
    {
     "offset": 0,
@@ -687,7 +687,7 @@
   "group": "exit",
   "durationMs": 450,
   "delayMs": 0,
-  "easing": "inOut",
+  "easing": "ease-in",
   "keyframes": [
    {
     "offset": 0,
@@ -718,7 +718,7 @@
   "group": "exit",
   "durationMs": 600,
   "delayMs": 0,
-  "easing": "inOut",
+  "easing": "ease-in-out",
   "keyframes": [
    {
     "offset": 0,
@@ -749,7 +749,7 @@
   "group": "exit",
   "durationMs": 600,
   "delayMs": 0,
-  "easing": "inOut",
+  "easing": "smooth",
   "keyframes": [
    {
     "offset": 0,

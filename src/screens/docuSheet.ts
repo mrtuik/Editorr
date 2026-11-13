@@ -16,7 +16,7 @@ import {
 import { uid } from '../core/speaker';
 import { buildBrollPane, type BrollPane } from './brollSheet';
 import {
-  VISUAL_LABEL, VISUAL_THEMES, VISUAL_TYPES, classify, getTheme, makeLocal, motionIds, pickMotion, previewUrl, redrawVisualBeat, runVisuals, showChip, slotAtPlayhead, agyProblem,
+  TEXT_ANIMS, VISUAL_LABEL, VISUAL_THEMES, VISUAL_TYPES, classify, getTheme, makeLocal, motionIds, pickMotion, previewUrl, redrawVisualBeat, runVisuals, showChip, slotAtPlayhead, agyProblem,
   visualLookFor, type RunCtrl, type VisualType,
 } from '../core/visuals';
 import type { Project } from '../core/types';
@@ -178,7 +178,9 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
   // ------------------------------------------------------------ HTML visuals: one at a time
   let running = false;
   let oneType: VisualType | 'auto' = 'auto';
-  const visSrc = () => ctx.p.visualSource ?? 'html';
+  /** Visuals are always HTML/CSS/JS drawn; the old Photos & Video source is gone. */
+  const visSrc = () => 'html' as const;
+  ctx.p.visualSource = 'html';
   const sentenceAt = (a: number, b: number) => ctx.words().filter((w) => w.e > a - 100 && w.s < b + 100).map((w) => w.orig || w.w).join(' ').trim();
   const host = () => ({ aspect: ctx.p.aspect, getBeats: () => beats(), setBeats: (l: DocuBeat[]) => { ctx.p.docu = l; }, changed: ctx.changed, seek: ctx.seek });
 
@@ -277,6 +279,7 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
         h('div', { class: 'schips', style: 'flex-wrap:nowrap;overflow-x:auto' }, ...VISUAL_TYPES.map((t) => h('button', { class: 'chip' + (v.type === t ? ' on' : ''), onclick: () => { if (v.type !== t) changeType(t); } }, VISUAL_LABEL[t]))),
         ...Object.entries(v.data).map(([k, val]) => field(k, val)).filter(Boolean) as Node[],
         h('div', { class: 'schips', style: 'flex-wrap:nowrap;overflow-x:auto;margin-top:8px' }, ...VISUAL_THEMES.map((t) => h('button', { class: 'chip' + (v.themeId === t.id ? ' on' : ''), onclick: () => { if (v.themeId !== t.id) redraw({ themeId: t.id, motion: pickMotion(t, 0, v.motion.in) }, true); } }, t.name))),
+        sel2('Text animation', TEXT_ANIMS as string[], v.motion.text ?? 'kinetic', (id) => redraw({ motion: { ...v.motion, text: id } }, true)),
         sel2('Motion in', motionIds('entrance'), v.motion.in, (id) => redraw({ motion: { ...v.motion, in: id } }, true)),
         sel2('Motion out', motionIds('exit'), v.motion.out, (id) => redraw({ motion: { ...v.motion, out: id } }, true)),
         h('div', { style: 'display:flex;gap:8px;margin-top:12px' },
@@ -286,124 +289,11 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
     ];
   }
 
-  /** Auto edit in the way of one creator template: cards or typography beats, B-roll with its own pace and framing, captions, colour look.
-   *  Runs as a background task (progress dialog, Minimize, Cancel); a cancel or a failure puts the old edit back. */
+  /** One tap on a look: the visuals are always drawn with HTML/CSS/JS (no stock photos or clips). */
   async function runTemplate(id: CreatorId) {
     if (busy) return;
-    const words = ctx.words();
-    if (!words.length) { toast('No transcript yet. Make Auto captions first, then tap Auto edit.', 5000); return; }
-    if (visSrc() === 'html') { void runHtmlTemplate(id); return; }
-    const c = creatorOf(id), rc = c.recipe;
-    const before = { docu: ctx.p.docu, broll: ctx.p.broll, creator: ctx.p.creator, grade: ctx.p.grade };
-    let cancelled = false;
-    let punchAt: number[] | undefined;
-    let signal = { cancelled: false };
-    /** A slow AI answer must never freeze the edit: after `ms` the built-in rules take over. */
-    const withTimeout = <V,>(pr: Promise<V>, ms: number): Promise<V> => new Promise<V>((res, rej) => {
-      const t = window.setTimeout(() => rej(new Error('timeout')), ms);
-      pr.then((v) => { window.clearTimeout(t); res(v); }, (e) => { window.clearTimeout(t); rej(e); });
-    });
-    busy = true; loadingTile = id; render();
-    startTask('autoedit', `Auto edit: ${c.name}`, 3, { modal: true, cancel: () => { cancelled = true; signal.cancelled = true; } });
-    const restore = () => {
-      ctx.p.docu = before.docu; ctx.p.broll = before.broll; ctx.p.creator = before.creator; ctx.p.grade = before.grade;
-      ctx.changed();
-    };
-    try {
-      ctx.p.docu = []; ctx.p.broll = []; selBroll = undefined;
-      updateTask('autoedit', 'Planning the moments...', 8);
-      let made: DocuBeat[] = [];
-      const agyNotes: string[] = [];
-      if (rc.motion) {
-        // motion director: code cards, number counters, step cards and quotes, each with a punch-in at its start
-        const r = await withTimeout(planMotionGraphics(words, ctx.durationMs(), true), 60000).catch(async () => {
-          updateTask('autoedit', 'AI is slow, using the built-in rules...', 10);
-          return planMotionGraphics(words, ctx.durationMs(), false);
-        });
-        punchAt = r.punchAt;
-        for (let idx = 0; idx < r.picks.length; idx++) {
-          if (cancelled) break;
-          const pk = r.picks[idx]!;
-          const fullOk = ['loop', 'versus', 'stat', 'quote', 'steps', 'svg'].includes(pk.spec.kind);
-          const spec: KallawaySpec = { ...pk.spec, handle: kw.handle, share: kw.share ?? c.card?.share, theme: c.card, speaker: fullOk && idx % 4 === 3 ? 'none' : (kw.speaker === 'none' ? undefined : kw.speaker) };
-          try { made.push(...await makeKallawayBeats(ctx.p.aspect, spec, pk.start, pk.end)); } catch { /* one bad card never stops the edit */ }
-          updateTask('autoedit', `Drawing graphics ${idx + 1}/${r.picks.length}...`, 8 + 22 * (idx + 1) / Math.max(1, r.picks.length));
-        }
-        if (r.note) agyNotes.push(r.note);
-      } else if (rc.cards) {
-        let r = await withTimeout(planKallaway(words, ctx.durationMs(), true), 45000).catch(async () => {
-          updateTask('autoedit', 'AI is slow, using the built-in rules...', 10);
-          return planKallaway(words, ctx.durationMs(), false);
-        });
-        // this creator's favourite card kinds first (only when enough of them were found)
-        const want = c.cardKinds;
-        if (want) { const fav = r.picks.filter((pk) => want.includes(pk.spec.kind)); if (fav.length >= 2) r = { ...r, picks: fav }; }
-        for (let idx = 0; idx < r.picks.length; idx++) {
-          if (cancelled) break;
-          const pk = r.picks[idx]!;
-          const fullOk = ['loop', 'versus', 'stat', 'quote', 'steps'].includes(pk.spec.kind);
-          const spec: KallawaySpec = { ...pk.spec, handle: kw.handle, share: kw.share ?? c.card?.share, theme: c.card, speaker: fullOk && idx % 2 === 1 ? 'none' : (kw.speaker === 'none' ? undefined : kw.speaker) };
-          made.push(...await makeKallawayBeats(ctx.p.aspect, spec, pk.start, pk.end));
-          updateTask('autoedit', `Drawing cards ${idx + 1}/${r.picks.length}...`, 8 + 22 * (idx + 1) / Math.max(1, r.picks.length));
-        }
-      } else if (rc.docuBeats) {
-        const r = await withTimeout(planDocuBeats(words, ctx.p.aspect, ctx.durationMs(), true), 45000).catch(() => planDocuBeats(words, ctx.p.aspect, ctx.durationMs(), false));
-        made = r.beats;
-        if (r.note) agyNotes.push(r.note);
-      }
-      if (cancelled) { restore(); toast('Auto edit cancelled. Your old edit is back.', 3000); return; }
-      ctx.p.docu = made.sort((a, b) => a.start - b.start);
-      sel = made.find((x) => !x.kw)?.id ?? null;
-      ctx.changed();
-      updateTask('autoedit', 'Finding visuals...', 32);
-      let filled = 0, note = '';
-      try {
-        const asp = aspectValue(ctx.p.aspect);
-        const brollOpts = (ai: boolean) => ({
-          words, durationMs: ctx.durationMs(), lenMs: rc.lenMs, frame: rc.frame, coverage: rc.coverage, fillGaps: rc.fillGaps, maxBeats: rc.fillGaps ? 200 : 80,
-          busy: beats().map((d) => ({ start: d.start, end: d.end })), videoMode: rc.videoMode, aspect: asp > 0 ? asp : 9 / 16, useAntigravity: ai,
-          signal, onProgress: (dn: number, t: number) => updateTask('autoedit', `Visuals ${dn}/${t}...`, 32 + 58 * dn / Math.max(1, t)),
-        });
-        const gap = await withTimeout(autoBroll(brollOpts(true)), 150000).catch(async () => {
-          if (cancelled) throw new Error('cancelled');
-          signal.cancelled = true; signal = { cancelled: false };
-          updateTask('autoedit', 'AI is slow, finding visuals with the built-in rules...', 40);
-          return autoBroll(brollOpts(false));
-        });
-        if (cancelled) { restore(); toast('Auto edit cancelled. Your old edit is back.', 3000); return; }
-        let next = ctx.p.broll ?? [];
-        const fr = rc.frames?.length ? rc.frames : undefined;
-        const tl = rc.trans?.length ? rc.trans : undefined;
-        gap.beats.forEach((b, i) => { if (fr) b.frame = fr[i % fr.length]!; if (tl) b.trans = tl[i % tl.length]!; next = placeBroll(next, b); });
-        ctx.p.broll = next; filled = gap.beats.length; if (gap.note) agyNotes.push(gap.note);
-      } catch (e) { note = ` Visuals failed: ${(e as Error).message || 'error'}.`; }
-      if (cancelled) { restore(); toast('Auto edit cancelled. Your old edit is back.', 3000); return; }
-      if (!made.length && !filled) {
-        restore();
-        toast(`${c.name}: nothing could be generated${note ? note : ' (no usable moments or visuals found)'}. Your old edit is back. Try again with internet on.`, 7000);
-        return;
-      }
-      updateTask('autoedit', 'Styling visuals and colour...', 95);
-      applyCreator(ctx.p, id);
-      ctx.changed();
-      let extra = '';
-      if (ctx.punch) {
-        updateTask('autoedit', 'Punch-ins on key moments...', 96);
-        try { const z = ctx.punch(rc.punch ?? null, punchAt?.length ? punchAt : undefined); if (z) extra += ` ${z} punch-ins.`; } catch { /* the edit stays without punch-ins */ }
-      }
-      if (ctx.sound && rc.sound && !cancelled) {
-        updateTask('autoedit', 'Sound design...', 97);
-        try { const sn = await withTimeout(ctx.sound(rc.sound, (st) => updateTask('autoedit', st, 97)), 180000); if (sn) extra += ` ${sn[0]!.toUpperCase()}${sn.slice(1)}.`; } catch { extra += ' Sound skipped (slow or offline).'; }
-      }
-      const first = made[0]?.start ?? ctx.p.broll?.[0]?.start ?? 0;
-      ctx.seek(Math.max(0, first) + 200);
-      const modeWarn = ' NOTE: Visuals is set to Photos & Video, so these are stock pictures. Choose HTML at the top for motion graphics.';
-      const agyWarn = agyNotes.length ? ` ERROR: ${agyNotes.join(' ')}` : '';
-      toast(`${c.name} done: ${made.length} beats + ${filled} visual cuts.${extra}${note}${agyWarn}${modeWarn}`, 11000);
-    } catch (e) {
-      restore();
-      toast(`Auto edit failed, old edit restored: ${(e as Error).message || 'error'}`, 6000);
-    } finally { endTask('autoedit'); busy = false; loadingTile = null; render(); }
+    if (!ctx.words().length) { toast('No transcript yet. Make Auto captions first, then tap a template.', 5000); return; }
+    void runHtmlTemplate(id);
   }
 
   /** The director picks the moments and templates from the transcript; every card is drawn and put on the timeline. */
@@ -793,24 +683,19 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
     const catPills = h('div', { class: 'dt-cats' },
       ...TEMPLATE_CATS.map(([k, l]) => h('button', { class: 'dt-cat' + (lastCat === k ? ' on' : ''), onclick: () => { if (lastCat !== k) { lastCat = k; render(); } } }, l)));
     const ids = CAT_CREATORS[lastCat].filter((id) => CREATORS.some((c) => c.id === id));
-    const srcSeg = h('div', { class: 'dt-cats', style: 'margin-bottom:6px;align-items:center' },
-      h('span', { style: 'font-size:13px;color:#9a9aa2;margin-right:4px' }, 'Visuals:'),
-      ...([['html', 'HTML'], ['photos', 'Photos & Video']] as const).map(([k, l]) => h('button', { class: 'dt-cat' + (visSrc() === k ? ' on' : ''), disabled: running ? 'true' : undefined, onclick: () => { if (visSrc() !== k) { ctx.p.visualSource = k; ctx.changed(); render(); } } }, l)));
     return h('div', { class: 'at-sec', style: 'margin-top:6px' },
-      srcSeg,
       catPills,
       h('div', { class: 'at-hint', style: 'margin:8px 0' }, 'Tap a template: the edit starts at once (visuals, motion graphics, punch-ins, colour). Captions stay as they are.'),
       h('div', { class: 'dt-grid lib' }, none, ...ids.map(tile)));
   }
   /** One-tap motion director (Antigravity, or the built-in rules offline): plans graphics from the transcript and puts them on the timeline. */
   function aiBar(): Node {
-    const one = visSrc() === 'html' ? h('div', { style: 'display:flex;gap:8px;margin-top:10px' },
-      h('select', { style: 'flex:1;min-height:44px;border-radius:10px;background:rgba(255,255,255,.08);color:#fff;border:0;padding:0 10px', onchange: (e: Event) => { oneType = (e.target as HTMLSelectElement).value as VisualType | 'auto'; } },
-        h('option', { value: 'auto', selected: oneType === 'auto' }, 'Auto: from what is said here'), ...VISUAL_TYPES.map((t) => h('option', { value: t, selected: oneType === t }, VISUAL_LABEL[t]))),
-      h('button', { class: 'btn', style: 'min-height:44px', disabled: busy || loadingTile ? 'true' : undefined, onclick: () => void addOneVisual() }, '+ Visual at playhead')) : (null as unknown as Node);
+    const off = busy || loadingTile ? 'true' : undefined;
+    const pick = h('select', { class: 'dt-type', 'aria-label': 'Visual type', onchange: (e: Event) => { oneType = (e.target as HTMLSelectElement).value as VisualType | 'auto'; } },
+      h('option', { value: 'auto', selected: oneType === 'auto' }, 'Auto: from what is said here'), ...VISUAL_TYPES.map((t) => h('option', { value: t, selected: oneType === t }, VISUAL_LABEL[t])));
     return h('div', { class: 'dt-aibar' },
-      h('button', { class: 'btn primary', style: 'width:100%;min-height:48px', disabled: busy || loadingTile ? 'true' : undefined, onclick: () => void runTemplate(motionLookFor(ctx.p.creator)) },
-        busy ? 'Working...' : `✨ Generate ${visSrc() === 'html' ? 'visuals' : 'with Antigravity AI'} (${creatorOf(motionLookFor(ctx.p.creator)).name})`), one);
+      h('div', { class: 'dt-oneline' }, pick, h('button', { class: 'btn dt-one', disabled: off, onclick: () => void addOneVisual() }, '+ Visual at playhead')),
+      h('button', { class: 'btn primary dt-gen', disabled: off, onclick: () => void runTemplate(motionLookFor(ctx.p.creator)) }, busy ? 'Working...' : '\u2728 Generate visuals'));
   }
   /** Tap a look: the card shows a loading ring, then the look is on. None takes the whole look off (cards, B-roll, caption look). */
   let loadingTile: string | null = null;

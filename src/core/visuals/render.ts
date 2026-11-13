@@ -5,6 +5,7 @@
 import { drawFallback } from './fallback2d';
 import { visualFontCssNow } from './fonts';
 import { innerProgress, motionCss, visualMotionAt, getPreset } from './motion';
+import { isTextAnim, textEndMs } from './textAnim';
 import { cardBox, esc } from './templates/util';
 import { templateHtml } from './templates';
 import { getTheme } from './themes';
@@ -15,7 +16,7 @@ export function visualHtml(v: Visual, tMs: number, w: number, h: number): string
   const theme: VisualTheme = getTheme(v.themeId), dur = Math.max(300, v.endMs - v.startMs);
   const mp = visualMotionAt(v.motion, tMs, dur), p = innerProgress(v.motion, tMs);
   const box = cardBox(w, h), short = Math.min(w, h), pad = Math.round(short * 0.06);
-  const inner = templateHtml(v.type, v.data, theme, w, h, p);
+  const inner = templateHtml(v.type, v.data, theme, w, h, p, tMs, v.motion.text ?? 'kinetic');
   return `<div xmlns="http://www.w3.org/1999/xhtml" style="position:relative;width:${w}px;height:${h}px;overflow:hidden;font-family:${theme.font};">` +
     `<style>${visualFontCssNow()}</style>` +
     `<div style="position:absolute;left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px;box-sizing:border-box;padding:${pad}px;` +
@@ -66,9 +67,16 @@ export function canvasReadable(cv: HTMLCanvasElement): boolean {
 
 export interface BakedVisual { frames: HTMLCanvasElement[]; framesMs: number[]; still: HTMLCanvasElement }
 
-/** About 18 frames for the entrance plus one still for the hold. framesMs are relative to the visual's start. */
-export async function bakeVisual(v: Visual, w: number, h: number, entranceFrames = 18): Promise<BakedVisual> {
-  const inMs = getPreset(v.motion.in).durationMs + 450, n = Math.max(2, entranceFrames), frames: HTMLCanvasElement[] = [], framesMs: number[] = [];
+/** Time the picture needs to settle: the card entrance, the text animation and the charts (open-motion's longest piece is 1.2 s). */
+export function settleMs(v: Visual): number {
+  const d = v.data, text = d.quote ?? d.title ?? d.big ?? d.term ?? d.text ?? d.label ?? '';
+  const t = isTextAnim(v.motion.text) ? textEndMs(v.motion.text, text) : 0;
+  return Math.round(Math.max(getPreset(v.motion.in).durationMs + 450, Math.min(2200, t + 150), v.type === 'bar_chart' || v.type === 'stat_counter' || v.type === 'progress_ring' || v.type === 'line_chart' ? 1500 : 0));
+}
+
+/** Entrance frames (about one per 55 ms, 18 to 30) plus one still for the hold. framesMs are relative to the visual's start. */
+export async function bakeVisual(v: Visual, w: number, h: number): Promise<BakedVisual> {
+  const inMs = settleMs(v), n = Math.max(18, Math.min(30, Math.round(inMs / 55))), frames: HTMLCanvasElement[] = [], framesMs: number[] = [];
   for (let i = 0; i < n; i++) { const t = Math.round((i / (n - 1)) * inMs); framesMs.push(t); frames.push(await renderFrame(v, t, w, h)); }
   return { frames, framesMs, still: await renderFrame(v, inMs + 200, w, h) };
 }

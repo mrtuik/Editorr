@@ -5,18 +5,12 @@
  * (slideDown/Left/Right, slowFade, none); a ported id always wins.
  */
 import PORTED from './motionPresets.json';
+import { easeFn } from './ease';
+import { pickText } from './textAnim';
 import type { EaseName, MotionPreset, MotionProps, MotionSelection, VisualTheme } from './types';
 
-const bounce = (t: number) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
-const EASE: Record<EaseName, (t: number) => number> = {
-  linear: t => t,
-  out: t => 1 - Math.pow(1 - t, 3),
-  inOut: t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
-  back: bounce,
-  elastic: t => (t === 0 || t === 1 ? t : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * ((2 * Math.PI) / 3)) + 1),
-  expo: t => (t === 1 ? 1 : 1 - Math.pow(2, -10 * t)),
-};
-export const easeFn = (n: EaseName) => EASE[n];
+export { easeFn };
+const EASE = { get: (n: EaseName) => easeFn(n) };
 
 const NEUTRAL: MotionProps = { x: 0, y: 0, s: 1, r: 0, o: 1, b: 0 };
 type P = Partial<MotionProps>;
@@ -69,7 +63,7 @@ export const getPreset = (id: string): MotionPreset => BY_ID.get(id) ?? BY_ID.ge
 /** Props of a preset at `tMs` after its own start (delay included). Clamped: before = first keyframe, after = last. */
 export function sampleMotion(m: MotionPreset, tMs: number): MotionProps {
   const raw = (tMs - m.delayMs) / m.durationMs;
-  const u = EASE[m.easing](Math.max(0, Math.min(1, raw)));
+  const u = EASE.get(m.easing)(Math.max(0, Math.min(1, raw)));
   const kf = m.keyframes;
   let a = kf[0], b = kf[kf.length - 1];
   for (let i = 0; i < kf.length - 1; i++) if (u >= kf[i].offset && u <= kf[i + 1].offset) { a = kf[i]; b = kf[i + 1]; break; }
@@ -105,10 +99,10 @@ export const motionCss = (m: MotionProps, short: number) =>
   (m.b > 0.0005 ? `filter:blur(${(m.b * short).toFixed(1)}px);` : '');
 
 /** Pick in/hold/out from a theme's lists. `index` rotates; the entrance never repeats the previous visual's. */
-export function pickMotion(theme: VisualTheme, index: number, prevIn?: string): MotionSelection {
+export function pickMotion(theme: VisualTheme, index: number, prevIn?: string, prevText?: string): MotionSelection {
   const ins = theme.motionSet.in;
   let inn = ins[index % ins.length];
   if (inn === prevIn && ins.length > 1) inn = ins[(index + 1) % ins.length];
   const hs = theme.motionSet.hold, os = theme.motionSet.out;
-  return { in: inn, hold: hs[index % hs.length], out: os[index % os.length] };
+  return { in: inn, hold: hs[index % hs.length], out: os[index % os.length], text: pickText(theme.motionSet.text, index, prevText) };
 }

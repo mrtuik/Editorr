@@ -64,7 +64,7 @@ export async function runVisuals(o: RunOpts): Promise<RunResult> {
       if (aiOk || (o.useAi && o.slots)) {
         try {
           const r = await withTimeout(makeAi(slot, theme.name, sentence, prev), 30000);
-          data = r.data; const base = pickMotion(theme, i, prevIn); motion = { in: r.motion?.in ?? base.in, hold: r.motion?.hold ?? base.hold, out: r.motion?.out ?? base.out };
+          data = r.data; const base = pickMotion(theme, i, prevIn); motion = { in: r.motion?.in ?? base.in, hold: r.motion?.hold ?? base.hold, out: r.motion?.out ?? base.out, text: base.text };
           if (motion.in === prevIn) motion.in = base.in;
           aiMade++;
         } catch (e) { aiFailed++; aiError ??= (e as Error).message || 'no answer'; data = local.data; motion = local.motion; type = local.type; }

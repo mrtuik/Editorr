@@ -10,6 +10,8 @@ export const limitWords = (s: string | undefined, n: number) => (s ? words(s).sl
 
 export interface Ctx {
   t: VisualTheme; w: number; h: number; p: number;
+  /** ms since the visual started, and the text animation id (textAnim.ts) */
+  ms: number; anim: string;
   /** padding inside the card, and the card's own size */
   pad: number; cw: number; ch: number;
   /** smallest allowed text = 4.5% of frame height; body and headline sizes */
@@ -23,9 +25,9 @@ export function cardBox(w: number, h: number) {
   return { x: m, y: m, w: w - 2 * m, h: Math.round(h * (1 - free)) - m };
 }
 
-export function makeCtx(t: VisualTheme, w: number, h: number, p: number): Ctx {
+export function makeCtx(t: VisualTheme, w: number, h: number, p: number, ms = 99999, anim = 'kinetic'): Ctx {
   const box = cardBox(w, h), pad = Math.round(Math.min(w, h) * 0.06);
-  return { t, w, h, p, pad, cw: box.w - 2 * pad, ch: box.h - 2 * pad, min: Math.round(h * 0.045), body: Math.round(h * 0.05), head: Math.round(h * 0.085) };
+  return { t, w, h, p, ms, anim, pad, cw: box.w - 2 * pad, ch: box.h - 2 * pad, min: Math.round(h * 0.045), body: Math.round(h * 0.05), head: Math.round(h * 0.085) };
 }
 
 const isWide = (s: string) => /[\u0900-\u0DFF\u3040-\u9FFF]/.test(s);
