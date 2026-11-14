@@ -11,6 +11,8 @@ import { isNative, youtubeAvailable } from '../core/native';
 import { uid } from '../core/speaker';
 import type { Project } from '../core/types';
 import { fmtTime, h, icon, toast, slider as uiSlider, optionRow } from '../ui';
+import { buildMotionPane, type MotionPane } from './motionPane';
+import { deleteClip } from '../core/visuals';
 
 
 export interface BrollCtx {
@@ -40,8 +42,8 @@ function chipRow<T extends string>(label: string, opts: [T, string][], value: T,
   return optionRow(label, opts, value, onPick);
 }
 
-type SearchKind = 'photo' | 'video' | 'youtube' | 'article';
-const KIND_LABEL: Record<SearchKind, string> = { photo: 'Photos', video: 'Videos', youtube: 'YouTube', article: 'Article card' };
+type SearchKind = 'photo' | 'video' | 'youtube' | 'article' | 'motion';
+const KIND_LABEL: Record<SearchKind, string> = { photo: 'Photos', video: 'Videos', youtube: 'YouTube', article: 'Article card', motion: 'Motion' };
 
 /**
  * The B-roll tab of the Docu sheet: Auto B-roll (a clip, photo or card every ~2.5 s, picked by the 4-route engine), a free search with a
@@ -66,6 +68,8 @@ export function buildBrollPane(ctx: BrollCtx): BrollPane {
   let run: { cancelled: boolean } | null = null;
   let progress = '';
   let disposed = false;
+  let motionPane: MotionPane | null = null;
+  const motionBox = h('div', {});
 
   const cur = () => list().find((b) => b.id === sel);
   const autoBox = h('div', {});
@@ -119,9 +123,17 @@ export function buildBrollPane(ctx: BrollCtx): BrollPane {
 
   // ------------------------------------------------------------ search + grid
   function renderKinds() {
-    const kinds: SearchKind[] = ytOk ? ['photo', 'video', 'youtube', 'article'] : ['photo', 'video', 'article'];
+    const kinds: SearchKind[] = ytOk ? ['photo', 'video', 'youtube', 'article', 'motion'] : ['photo', 'video', 'article', 'motion'];
     if (!kinds.includes(searchKind)) searchKind = 'photo';
-    kindBox.replaceChildren(chipRow<SearchKind>('Search in', kinds.map((k) => [k, KIND_LABEL[k]] as [SearchKind, string]), searchKind, (v) => { searchKind = v; results = []; articles = []; searched = false; renderGrid(); }));
+    kindBox.replaceChildren(chipRow<SearchKind>('Search in', kinds.map((k) => [k, KIND_LABEL[k]] as [SearchKind, string]), searchKind, (v) => { searchKind = v; results = []; articles = []; searched = false; renderGrid(); renderMode(); }));
+  }
+
+  /** Motion replaces the search box, the grid and the concept card maker; the pane is built once and kept, so a running job survives a tab switch. */
+  function renderMode() {
+    const m = searchKind === 'motion';
+    searchRow.style.display = m ? 'none' : ''; gridBox.style.display = m ? 'none' : ''; cardBox.style.display = m ? 'none' : '';
+    motionBox.style.display = m ? '' : 'none';
+    if (m && !motionPane) { motionPane = buildMotionPane(ctx); motionBox.replaceChildren(motionPane.el); }
   }
 
   async function doSearch(qs: string) {
@@ -205,6 +217,7 @@ export function buildBrollPane(ctx: BrollCtx): BrollPane {
   }
 
   function renderGrid() {
+    if (searchKind === 'motion') { fill(gridBox); return; }
     if (searching) { fill(gridBox, h('div', { class: 'at-hint', style: 'margin-top:14px' }, 'Searching...')); return; }
     const none = searchKind === 'article' ? !articles.length : !results.length;
     if (none) {
@@ -284,12 +297,12 @@ export function buildBrollPane(ctx: BrollCtx): BrollPane {
         h('div', { class: 'br-acts' },
           h('button', { class: 'btn', onclick: () => { input.value = b.keyword || b.title; void doSearch(input.value); } }, icon('search', 18), 'Find similar'),
           h('button', { class: 'btn' + (replaceId ? ' primary' : ''), onclick: () => { replaceId = replaceId ? null : b.id; renderAll(); } }, icon('swap', 18), replaceId ? 'Swapping...' : 'Swap'),
-          h('button', { class: 'btn danger ico', 'aria-label': 'Delete beat', onclick: () => { ctx.p.broll = list().filter((x) => x.id !== b.id); sel = list()[0]?.id ?? null; replaceId = null; ctx.changed(); renderAll(); } }, icon('trash', 20))));
+          h('button', { class: 'btn danger ico', 'aria-label': 'Delete beat', onclick: () => { ctx.p.broll = list().filter((x) => x.id !== b.id); sel = list()[0]?.id ?? null; replaceId = null; if (b.motionSceneId && ctx.p.motion) { ctx.p.motion.renderedBeatIds = ctx.p.motion.renderedBeatIds.filter((i) => i !== b.id); } void deleteClip(ctx.p, b.path, b.id); ctx.changed(); renderAll(); } }, icon('trash', 20))));
     }
     if (all.length) {
       kids.push(h('div', { class: 'br-acts' },
         h('button', { class: 'btn', onclick: () => void copyCredits() }, icon('copy', 18), 'Copy credits'),
-        h('button', { class: 'btn danger', onclick: () => { ctx.p.broll = []; sel = null; replaceId = null; ctx.changed(); renderAll(); } }, icon('trash', 18), 'Clear all')));
+        h('button', { class: 'btn danger', onclick: () => { const gone = list().filter((x) => x.motionSceneId && x.path); ctx.p.broll = []; sel = null; replaceId = null; if (ctx.p.motion) ctx.p.motion.renderedBeatIds = []; for (const x of gone) void deleteClip(ctx.p, x.path, x.id); ctx.changed(); renderAll(); } }, icon('trash', 18), 'Clear all')));
     }
     beatsBox.replaceChildren(...kids);
   }
@@ -305,7 +318,7 @@ export function buildBrollPane(ctx: BrollCtx): BrollPane {
     catch { toast('Could not copy.'); }
   }
 
-  const renderAll = () => { renderAuto(); renderKinds(); renderGrid(); renderCard(); renderBeats(); };
+  const renderAll = () => { renderAuto(); renderKinds(); renderGrid(); renderCard(); renderBeats(); renderMode(); };
 
   const el = h('div', {},
     autoBox,
@@ -314,10 +327,10 @@ export function buildBrollPane(ctx: BrollCtx): BrollPane {
     chipRow<'every' | 'alternate'>('Auto coverage', [['every', 'Every beat'], ['alternate', 'Every other beat']], coverage, (v) => { coverage = v; }),
     chipRow<BrollMotion>('New photo motion', BROLL_MOTIONS.map((m) => [m, BROLL_MOTION_LABEL[m]] as [BrollMotion, string]), newMotion, (v) => { newMotion = v; }),
     chipRow<BrollFrame>('New photo frame', (Object.keys(BROLL_FRAME_LABEL) as BrollFrame[]).map((f) => [f, BROLL_FRAME_LABEL[f]] as [BrollFrame, string]), newFrame, (v) => { newFrame = v; }),
-    kindBox, searchRow, gridBox, cardBox, beatsBox);
+    kindBox, searchRow, gridBox, cardBox, motionBox, beatsBox);
   renderAll();
   return {
-    el, dispose: () => { disposed = true; if (run) run.cancelled = true; },
+    el, dispose: () => { disposed = true; if (run) run.cancelled = true; motionPane?.dispose(); },
     select: (id) => { if (list().some((b) => b.id === id)) { sel = id; replaceId = null; renderBeats(); } },
   };
 }
