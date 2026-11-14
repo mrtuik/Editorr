@@ -32,6 +32,8 @@ export const SAMPLE: Record<VisualType, VisualData> = {
   arrow_callout: { title: 'Scroll up', trend: 'up' },
   window_card: { title: 'Just paste a link', label: 'youtube.com', items: ['Download'] },
   halftone_frame: { title: 'Who can edit' },
+  radial_burst: { title: 'Big idea' },
+  bracket_focus: { title: 'Full quality', label: 'High quality', items: ['Download'] },
 };
 
 const cache = new Map<string, string>();

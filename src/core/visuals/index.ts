@@ -16,3 +16,5 @@ export { planAi, makeAi, agyProblem } from './ai';
 export * from './ease';
 export { TEXT_ANIMS, TEXT_ANIM_LABEL, animText, pickText } from './textAnim';
 export { settleMs } from './render';
+export { renderSceneToVideo, drawSceneFrame, outSize, pickAvc, RenderCancelled, NoEncoderError } from './encode';
+export { generateScenes, renderAndPlace, syncPlaceholders, scenesOf, ensureScript, needsRender, sweepClips, deleteClip, sceneTitle, isPending, dropStrayPlaceholders, motionPlaceholder } from './motionScript';

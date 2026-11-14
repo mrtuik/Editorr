@@ -7,19 +7,21 @@
  *   reveal    = textReveal    (clip-path wipe, ease-in-out)
  *   type      = typewriter    (linear, character by character, caret)
  *   scramble  = textScramble  (decoder reveal, letter-spacing 8 px -> 0, opacity .3 -> 1)
+ *   splitReveal = splitText   (upper and lower halves of the line slide in from opposite sides and meet; 1000 ms ease-out after a 200 ms delay)
+ *   glitchIn  = glitch        (600 ms linear: x-shake that dies out, flickering opacity, an accent-colour ghost)
  * Everything is a pure function of the time since the visual started, so a frame is always the same picture.
  */
 import { easeFn, timed, type EaseName } from './ease';
 import { esc, words, type Ctx } from './templates/util';
 
-export type TextAnimId = 'kinetic' | 'wave' | 'blur' | 'pop' | 'reveal' | 'type' | 'scramble';
-export const TEXT_ANIMS: TextAnimId[] = ['kinetic', 'wave', 'blur', 'pop', 'reveal', 'type', 'scramble'];
+export type TextAnimId = 'kinetic' | 'wave' | 'blur' | 'pop' | 'reveal' | 'type' | 'scramble' | 'splitReveal' | 'glitchIn';
+export const TEXT_ANIMS: TextAnimId[] = ['kinetic', 'wave', 'blur', 'pop', 'reveal', 'type', 'scramble', 'splitReveal', 'glitchIn'];
 export const TEXT_ANIM_LABEL: Record<TextAnimId, string> = {
-  kinetic: 'Kinetic words', wave: 'Wave (letters)', blur: 'Blur reveal', pop: 'Pop', reveal: 'Wipe reveal', type: 'Typewriter', scramble: 'Decode',
+  kinetic: 'Kinetic words', wave: 'Wave (letters)', blur: 'Blur reveal', pop: 'Pop', reveal: 'Wipe reveal', type: 'Typewriter', scramble: 'Decode', splitReveal: 'Split reveal', glitchIn: 'Glitch in',
 };
 
 interface Spec {
-  unit: 'word' | 'char' | 'block' | 'type' | 'scramble';
+  unit: 'word' | 'char' | 'block' | 'type' | 'scramble' | 'split' | 'glitch';
   /** time one unit takes, and the gap between neighbours (ms) */
   dur: number; stagger: number; ease: EaseName;
   /** start values, in em of the text size (b = blur) */
@@ -37,7 +39,11 @@ const SPECS: Record<TextAnimId, Spec> = {
   reveal: { unit: 'block', dur: 900, stagger: 0, ease: 'ease-in-out', x: -0.12, b: 0.06 },
   type: { unit: 'type', dur: 1100, stagger: 0, ease: 'linear' },
   scramble: { unit: 'scramble', dur: 1200, stagger: 0, ease: 'linear', ls: 0.25 },
+  splitReveal: { unit: 'split', dur: 1000, stagger: 0, ease: 'ease-out', x: 0.6 },
+  glitchIn: { unit: 'glitch', dur: 600, stagger: 0, ease: 'linear', x: 0.09 },
 };
+/** splitText waits 200 ms before the halves start to move */
+const SPLIT_DELAY = 200;
 export const isTextAnim = (s: string | undefined): s is TextAnimId => !!s && s in SPECS;
 
 /** words in Bengali / Hindi etc. are never cut into letters (a matra on its own would break the shape) */
@@ -49,7 +55,8 @@ const MAX_TOTAL = 1500;
 export function timing(id: TextAnimId, text: string): { stagger: number; dur: number; total: number } {
   const sp = SPECS[id], n = Math.max(1, words(text).length);
   const wide = isIndic(text), unit = wide && (sp.unit === 'char' || sp.unit === 'scramble' || sp.unit === 'type') ? 'word' : sp.unit;
-  if (unit === 'block') return { stagger: 0, dur: sp.dur, total: sp.dur };
+  if (unit === 'block' || unit === 'glitch') return { stagger: 0, dur: sp.dur, total: sp.dur };
+  if (unit === 'split') return { stagger: 0, dur: sp.dur, total: sp.dur + SPLIT_DELAY };
   if (unit === 'type' || unit === 'scramble' || unit === 'char') {
     const chars = unit === 'char' || unit === 'type' || unit === 'scramble' ? Math.max(1, text.replace(/\s/g, '').length) : n;
     const dur = Math.min(1500, Math.max(sp.dur, 500 + chars * 20));
@@ -82,7 +89,7 @@ export function animText(c: Ctx, text: string, size: number, o: AnimTextOpts = {
   const accWord = o.accent === 'last' ? norm(ws[nW - 1] ?? '') : norm(o.accent ?? '');
   const colorOf = (w: string, i: number) => (accWord && (o.accent === 'last' ? i === nW - 1 : norm(w) === accWord)) ? (o.accentColor ?? c.t.accent) : (o.color ?? c.t.text);
   const f = easeFn(sp.ease);
-  const frame = `${o.italic ? 'font-style:italic;' : ''}font-size:${size}px;line-height:${o.lh ?? 1.18};font-weight:${o.weight ?? 700};font-family:${o.font ?? c.t.font};text-align:${o.align ?? 'left'};${o.nowrap ? 'white-space:pre;' : 'overflow-wrap:anywhere;'}`;
+  const frame = `${o.italic ? 'font-style:italic;' : ''}font-size:${size}px;line-height:${o.lh ?? 1.18};font-weight:${o.weight ?? 700};font-family:${o.font ?? c.t.font};text-align:${o.align ?? 'left'};${c.t.textShadow ? `text-shadow:${c.t.textShadow};` : ''}${o.nowrap ? 'white-space:pre;' : 'overflow-wrap:anywhere;'}`;
   const tf = (e: number) => {
     const y = (sp.y ?? 0) * (1 - e), x = (sp.x ?? 0) * (1 - e), s = 1 + ((sp.s ?? 1) - 1) * (1 - e), r = (sp.r ?? 0) * (1 - e), b = (sp.b ?? 0) * (1 - e);
     return `opacity:${Math.max(0, Math.min(1, e * 1.6)).toFixed(3)};transform:translate(${x.toFixed(3)}em,${y.toFixed(3)}em) scale(${s.toFixed(3)}) rotate(${r.toFixed(2)}deg);${b > 0.002 ? `filter:blur(${b.toFixed(3)}em);` : ''}`;
@@ -93,6 +100,27 @@ export function animText(c: Ctx, text: string, size: number, o: AnimTextOpts = {
     const e = f(Math.max(0, Math.min(1, ms / tm.dur)));
     const spans = ws.map((w, i) => `<span style="color:${colorOf(w, i)};">${esc(w)}</span>`).join(' ');
     return `<div style="${frame}clip-path:inset(0 ${((1 - e) * 100).toFixed(2)}% 0 0);opacity:${Math.min(1, e * 3).toFixed(3)};transform:translateX(${((sp.x ?? 0) * (1 - e)).toFixed(3)}em);${(sp.b ?? 0) * (1 - e) > 0.002 ? `filter:blur(${((sp.b ?? 0) * (1 - e)).toFixed(3)}em);` : ''}">${spans}</div>`;
+  }
+
+
+  if (unit === 'split') {
+    // upper half from the left, lower half from the right, both ease-out; each half is the same text clipped at the middle of the line box
+    const e = f(Math.max(0, Math.min(1, (ms - SPLIT_DELAY) / sp.dur))), off = (sp.x ?? 0) * (1 - e), op = Math.min(1, e * 3).toFixed(3);
+    const spans = ws.map((w, i) => `<span style="color:${colorOf(w, i)};">${esc(w)}</span>`).join(' ');
+    const half = (clip: string, dx: number) => `<div style="${frame}position:absolute;left:0;right:0;top:0;clip-path:${clip};transform:translateX(${dx.toFixed(3)}em);opacity:${op};">${spans}</div>`;
+    return `<div style="position:relative;"><div style="${frame}visibility:hidden;">${spans}</div>${half('inset(0 0 50% 0)', -off)}${half('inset(50% 0 0 0)', off)}</div>`;
+  }
+
+  if (unit === 'glitch') {
+    // a deterministic shake: the offset comes from a hash of the 40 ms step, so a frame is always the same picture
+    const q = Math.max(0, Math.min(1, ms / sp.dur)), step = Math.floor(ms / 40), amp = 1 - q;
+    const r = (k: number) => (hash(step, k) % 1000) / 1000;
+    const spans = (color?: string) => ws.map((w, i) => `<span style="color:${color ?? colorOf(w, i)};">${esc(w)}</span>`).join(' ');
+    if (ms < 0) return `<div style="${frame}opacity:0;">${spans()}</div>`;
+    if (q >= 1) return `<div style="${frame}">${spans()}</div>`;
+    const dx = (r(1) - 0.5) * 2 * (sp.x ?? 0.09) * amp, on = r(2) < 0.35 + 0.65 * q ? 1 : 0.15;
+    const ghost = `<div style="${frame}position:absolute;left:0;right:0;top:0;transform:translateX(${(-dx * 1.8 - 0.05 * amp).toFixed(3)}em);opacity:${(0.75 * amp).toFixed(3)};">${spans(c.t.accent)}</div>`;
+    return `<div style="position:relative;">${ghost}<div style="${frame}position:relative;transform:translateX(${dx.toFixed(3)}em);opacity:${on};">${spans()}</div></div>`;
   }
 
   if (unit === 'word') {

@@ -18,15 +18,15 @@ export interface Ctx {
   min: number; body: number; head: number;
 }
 
-/** The card sits in the zone above the captions. Portrait keeps the bottom 30% free, landscape the bottom 24%. */
-export function cardBox(w: number, h: number) {
+/** The card sits in the zone above the captions. Portrait keeps the bottom 30% free, landscape the bottom 24%. `full` (captions off) uses the whole frame. */
+export function cardBox(w: number, h: number, full = false) {
   const short = Math.min(w, h), m = Math.round(short * 0.08);
-  const free = h > w ? 0.3 : 0.24;
+  const free = full ? 0 : h > w ? 0.3 : 0.24;
   return { x: m, y: m, w: w - 2 * m, h: Math.round(h * (1 - free)) - m };
 }
 
-export function makeCtx(t: VisualTheme, w: number, h: number, p: number, ms = 99999, anim = 'kinetic'): Ctx {
-  const box = cardBox(w, h), pad = Math.round(Math.min(w, h) * 0.06);
+export function makeCtx(t: VisualTheme, w: number, h: number, p: number, ms = 99999, anim = 'kinetic', full = false): Ctx {
+  const box = cardBox(w, h, full), pad = Math.round(Math.min(w, h) * 0.06);
   return { t, w, h, p, ms, anim, pad, cw: box.w - 2 * pad, ch: box.h - 2 * pad, min: Math.round(h * 0.045), body: Math.round(h * 0.05), head: Math.round(h * 0.085) };
 }
 

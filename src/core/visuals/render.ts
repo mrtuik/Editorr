@@ -11,16 +11,25 @@ import { templateHtml } from './templates';
 import { getTheme } from './themes';
 import type { Visual, VisualTheme } from './types';
 
+/** Thin progress line along the bottom of the card (paper-red look): a pure function of the time since the scene started. */
+const progressLine = (theme: VisualTheme, tMs: number, dur: number, pad: number, short: number) => {
+  if (!theme.progressLine) return '';
+  const k = Math.max(0, Math.min(1, tMs / dur)), th = Math.max(3, Math.round(short * 0.006)), inset = Math.round(pad * 0.45);
+  return `<div style="position:absolute;left:${inset}px;right:${inset}px;bottom:${inset}px;height:${th}px;border-radius:99px;background:${theme.progressLine}33;"><div style="width:${(k * 100).toFixed(2)}%;height:100%;border-radius:99px;background:${theme.progressLine};"></div></div>`;
+};
+
 /** The card with its motion applied, as XHTML (foreignObject needs well-formed markup). */
 export function visualHtml(v: Visual, tMs: number, w: number, h: number): string {
   const theme: VisualTheme = getTheme(v.themeId), dur = Math.max(300, v.endMs - v.startMs);
   const mp = visualMotionAt(v.motion, tMs, dur), p = innerProgress(v.motion, tMs);
-  const box = cardBox(w, h), short = Math.min(w, h), pad = Math.round(short * 0.06);
-  const inner = templateHtml(v.type, v.data, theme, w, h, p, tMs, v.motion.text ?? 'kinetic');
+  const box = cardBox(w, h, v.full), short = Math.min(w, h), pad = Math.round(short * 0.06);
+  const inner = templateHtml(v.type, v.data, theme, w, h, p, tMs, v.motion.text ?? 'kinetic', v.full);
   return `<div xmlns="http://www.w3.org/1999/xhtml" style="position:relative;width:${w}px;height:${h}px;overflow:hidden;font-family:${theme.font};">` +
     `<style>${visualFontCssNow()}</style>` +
+    (v.bleed ? `<div style="position:absolute;left:0;top:0;width:${w}px;height:${h}px;background:${theme.card};opacity:${Math.max(0, Math.min(1, mp.o)).toFixed(3)};"></div>` : '') +
     `<div style="position:absolute;left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px;box-sizing:border-box;padding:${pad}px;` +
-    `background:${theme.card};color:${theme.text};border-radius:${Math.round(theme.radius * short / 1080)}px;box-shadow:${theme.shadow};border:${theme.border};${motionCss(mp, short)}">${inner}</div></div>`;
+    (v.bleed ? `color:${theme.text};` : `background:${theme.card};color:${theme.text};border-radius:${Math.round(theme.radius * short / 1080)}px;box-shadow:${theme.shadow};border:${theme.border};`) +
+    `${motionCss(mp, short)}">${inner}${progressLine(theme, tMs, dur, pad, short)}</div></div>`;
 }
 
 export const svgOf = (html: string, w: number, h: number) =>
@@ -31,7 +40,7 @@ const cache = new Map<string, HTMLCanvasElement>();
 const CACHE_MAX = 48;
 
 export const frameKey = (v: Visual, tMs: number, w: number, h: number) =>
-  hash(JSON.stringify([v.type, v.data, v.themeId, v.motion, Math.round(v.endMs - v.startMs), Math.round(tMs / 8), w, h, visualFontCssNow().length > 0]));
+  hash(JSON.stringify([v.type, v.data, v.themeId, v.motion, Math.round(v.endMs - v.startMs), Math.round(tMs / 8), w, h, !!v.full, !!v.bleed, visualFontCssNow().length > 0]));
 
 /** HTML -> foreignObject picture -> canvas. If the picture fails to load or the canvas is tainted (a WebView that blocks it), Canvas 2D draws the card instead. */
 async function drawHtml(v: Visual, tMs: number, w: number, h: number): Promise<HTMLCanvasElement> {
@@ -71,7 +80,7 @@ export interface BakedVisual { frames: HTMLCanvasElement[]; framesMs: number[]; 
 export function settleMs(v: Visual): number {
   const d = v.data, text = d.quote ?? d.title ?? d.big ?? d.term ?? d.text ?? d.label ?? '';
   const t = isTextAnim(v.motion.text) ? textEndMs(v.motion.text, text) : 0;
-  return Math.round(Math.max(getPreset(v.motion.in).durationMs + 450, Math.min(2200, t + 150), ['title_stack', 'pill_row', 'flow_diagram', 'cta_card', 'window_card'].includes(v.type) ? 2000 : v.type === 'highlight_card' ? 1900 : ['bar_chart', 'stat_counter', 'progress_ring', 'line_chart', 'stack_card', 'frame_card'].includes(v.type) ? 1500 : 0));
+  return Math.round(Math.max(getPreset(v.motion.in).durationMs + 450, Math.min(2200, t + 150), ['title_stack', 'pill_row', 'flow_diagram', 'cta_card', 'window_card', 'radial_burst', 'bracket_focus'].includes(v.type) ? 2000 : v.type === 'highlight_card' ? 1900 : ['bar_chart', 'stat_counter', 'progress_ring', 'line_chart', 'stack_card', 'frame_card'].includes(v.type) ? 1500 : 0));
 }
 
 /** Entrance frames (about one per 55 ms, 18 to 30) plus one still for the hold. framesMs are relative to the visual's start. */

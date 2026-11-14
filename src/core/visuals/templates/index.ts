@@ -351,12 +351,56 @@ const halftone_frame: Template = (d, c) => {
     `<div style="margin-top:-${S * 0.16}px;">${animText(c, t, size, { weight: 900, align: 'center', lh: 1.1, accent: 'last', delay: 250 })}</div>`, 0);
 };
 
+/* ---- motion graphics: radial / circular geometry and camera-focus brackets (CREA MOTION look) ---- */
+const arcPath = (cx: number, cy: number, r: number, a0: number, a1: number) =>
+  `M${(cx + r * Math.cos(a0)).toFixed(3)} ${(cy + r * Math.sin(a0)).toFixed(3)} A${r} ${r} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${(cx + r * Math.cos(a1)).toFixed(3)} ${(cy + r * Math.sin(a1)).toFixed(3)}`;
+
+/** a keyword in the centre; thin radial lines and circles draw outward (open-motion lineDraw: 900 ms ease-in-out), a segmented ring fills, dots orbit */
+const radial_burst: Template = (d, c) => {
+  const t = limitWords(d.title ?? d.big ?? d.quote ?? '', 3), S = Math.min(c.cw, c.ch) * 0.98, N = 24;
+  const trim = (e: number) => `pathLength="1" stroke-dasharray="1" stroke-dashoffset="${(1 - e).toFixed(4)}"`;
+  const rays = Array.from({ length: N }, (_, i) => {
+    const a = (i / N) * Math.PI * 2, long = i % 3 === 0, r0 = 17, r1 = long ? 47 : 40, e = timed(c.ms, i * 22, 900, 'ease-in-out');
+    return `<line x1="${(50 + r0 * Math.cos(a)).toFixed(3)}" y1="${(50 + r0 * Math.sin(a)).toFixed(3)}" x2="${(50 + r1 * Math.cos(a)).toFixed(3)}" y2="${(50 + r1 * Math.sin(a)).toFixed(3)}" stroke="${long ? c.t.accent : c.t.muted}" stroke-width="${long ? 0.9 : 0.45}" stroke-linecap="round" ${trim(e)}/>`;
+  }).join('');
+  const rings = [22, 31, 41].map((r, i) =>
+    `<circle cx="50" cy="50" r="${r}" fill="none" stroke="${i === 1 ? c.t.accent : c.t.text}" stroke-width="${i === 1 ? 0.9 : 0.5}" opacity="${i === 1 ? 1 : 0.55}" transform="rotate(-90 50 50)" ${trim(timed(c.ms, i * 150, 900, 'ease-in-out'))}/>`).join('');
+  const segs = Array.from({ length: 12 }, (_, i) => {
+    const a0 = (i / 12) * Math.PI * 2 - Math.PI / 2, a1 = a0 + (Math.PI * 2 / 12) * 0.78, on = timed(c.ms, 350 + i * 70, 220, 'ease-out');
+    return `<path d="${arcPath(50, 50, 35.5, a0, a1)}" fill="none" stroke="${c.t.accent}" stroke-width="2.2" opacity="${on.toFixed(3)}"/>`;
+  }).join('');
+  const dots = [0, 1, 2].map(k => { const ang = c.ms * 0.0025 + k * 2.094; return `<circle cx="${(50 + 44 * Math.cos(ang)).toFixed(3)}" cy="${(50 + 44 * Math.sin(ang)).toFixed(3)}" r="${((1.3 + k * 0.4) * timed(c.ms, 400, 300, 'back')).toFixed(3)}" fill="${k === 0 ? c.t.accent : c.t.text}"/>`; }).join('');
+  const size = fit(t, S * 0.5, S * 0.26, c.h * 0.1, c.head * 0.6, 1.1);
+  return `<div style="position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="${S}" height="${S}" style="position:absolute;">${rays}${rings}${segs}${dots}</svg>` +
+    `<div style="width:${(S * 0.5).toFixed(0)}px;position:relative;">${animText(c, t, size, { weight: 900, align: 'center', lh: 1.1, accent: 'last', delay: 250 })}</div></div>`;
+};
+
+/** four corner brackets draw in around a headline (camera focus frame), a pill tag pops with the back easing, optional round download badge (items[0] = its label) */
+const bracket_focus: Template = (d, c) => {
+  const t = limitWords(d.title ?? d.big ?? d.quote ?? '', 4), tag = limitWords(d.label ?? '', 3), badge = limitWords(d.items?.[0] ?? '', 2);
+  const W = Math.round(c.cw * 0.96), H = Math.round(Math.min(c.ch * (badge ? 0.42 : 0.5), W * 0.62)), a = Math.round(Math.min(W, H) * 0.2), sw = Math.max(6, Math.round(c.min * 0.18)), i = sw / 2;
+  const corner = (dd: string, k: number) => `<path d="${dd}" fill="none" stroke="${c.t.accent}" stroke-width="${sw}" stroke-linecap="square" stroke-linejoin="miter" pathLength="1" stroke-dasharray="1" stroke-dashoffset="${(1 - timed(c.ms, k * 90, 700, 'ease-in-out')).toFixed(4)}"/>`;
+  const brackets = [
+    corner(`M${i} ${a + i} L${i} ${i} L${a + i} ${i}`, 0), corner(`M${W - a - i} ${i} L${W - i} ${i} L${W - i} ${a + i}`, 1),
+    corner(`M${W - i} ${H - a - i} L${W - i} ${H - i} L${W - a - i} ${H - i}`, 2), corner(`M${a + i} ${H - i} L${i} ${H - i} L${i} ${H - a - i}`, 3)].join('');
+  const size = fit(t, W * 0.78, H * 0.7, c.h * 0.1, c.head * 0.7, 1.1), pop = timed(c.ms, DELAY + 650, 450, 'back');
+  const pill = tag ? `<div style="align-self:center;padding:${c.body * 0.28}px ${c.body * 0.8}px;border-radius:99px;background:${c.t.accent};color:${ink(c)};font-family:${c.t.font};font-weight:800;font-size:${Math.round(c.body * 0.85)}px;letter-spacing:0.08em;text-transform:uppercase;white-space:nowrap;` +
+    `box-shadow:0 0 ${Math.round(c.body * 0.9 * pop)}px ${c.t.accent}88;transform:scale(${pop.toFixed(3)});opacity:${Math.min(1, pop * 2).toFixed(3)};">${esc(tag)}</div>` : '';
+  const bs = Math.round(c.body * 2.1), bp = timed(c.ms, DELAY + 1000, 450, 'back');
+  const badgeRow = badge ? `<div style="align-self:center;display:flex;align-items:center;gap:${c.body * 0.4}px;transform:scale(${bp.toFixed(3)});opacity:${Math.min(1, bp * 2).toFixed(3)};">` +
+    `<div style="width:${bs}px;height:${bs}px;border-radius:50%;background:${c.t.accent};display:flex;align-items:center;justify-content:center;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${bs * 0.55}" height="${bs * 0.55}"><path d="M12 4 V15 M6.5 10 L12 15.5 L17.5 10 M5 20 H19" fill="none" stroke="${ink(c)}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>` +
+    `<div style="font-family:${c.t.font};font-weight:800;font-size:${c.body}px;color:${c.t.text};">${esc(badge)}</div></div>` : '';
+  return col(pill + `<div style="position:relative;align-self:center;width:${W}px;height:${H}px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" style="position:absolute;left:0;top:0;">${brackets}</svg>` +
+    `<div style="position:absolute;left:${W * 0.11}px;right:${W * 0.11}px;top:0;bottom:0;display:flex;align-items:center;justify-content:center;">${animText(c, t, size, { weight: 900, align: 'center', lh: 1.1, accent: 'last', delay: 200 })}</div></div>` + badgeRow, c.body * 0.7);
+};
+
 export const TEMPLATES: Record<VisualType, Template> = {
   stat_counter, quote_card, definition_card, list_card, versus_card, bar_chart, line_chart, progress_ring,
   timeline, keyword_title, code_window, terminal, post_card, receipt_card, highlight_card, stack_card, frame_card,
   title_stack, pill_row, flow_diagram, geo_title, cta_card, before_after, arrow_callout, window_card, halftone_frame,
+  radial_burst, bracket_focus,
 };
 
-export function templateHtml(type: VisualType, d: VisualData, theme: VisualTheme, w: number, h: number, p = 1, ms = 99999, anim = 'kinetic'): string {
-  return (TEMPLATES[type] ?? keyword_title)(d, makeCtx(theme, w, h, clamp01(p), ms, anim));
+export function templateHtml(type: VisualType, d: VisualData, theme: VisualTheme, w: number, h: number, p = 1, ms = 99999, anim = 'kinetic', full = false): string {
+  return (TEMPLATES[type] ?? keyword_title)(d, makeCtx(theme, w, h, clamp01(p), ms, anim, full));
 }
