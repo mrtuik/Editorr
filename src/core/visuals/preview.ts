@@ -33,6 +33,12 @@ export const SAMPLE: Record<VisualType, VisualData> = {
   window_card: { title: 'Just paste a link', label: 'youtube.com', items: ['Download'] },
   halftone_frame: { title: 'Who can edit' },
   radial_burst: { title: 'Big idea' },
+  glass_card_hero: { badge: 'AI pipeline', title: 'Edit faster with AI', subtitle: 'cuts, captions, motion', stat: '14 hrs', trend: 'up' },
+  curved_arrow_callout: { arrowLabel: 'this is the part', title: 'Key takeaway' },
+  before_after_split: { left: 'Manual editing', right: 'One tap', badge: 'OLD WAY|NEW WAY' },
+  stat_pill_counter: { stat: '$120,400', badge: '+340%', label: 'this year', trend: 'up' },
+  workflow_steps: { items: ['Record', 'Auto edit', 'Publish'] },
+  command_palette: { title: 'make my reel', items: ['Cut silence', 'Add captions', 'Add motion'] },
   bracket_focus: { title: 'Full quality', label: 'High quality', items: ['Download'] },
 };
 

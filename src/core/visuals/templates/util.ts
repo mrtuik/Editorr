@@ -55,3 +55,12 @@ export const txt = (c: Ctx, s: string, size: number, o: { color?: string; weight
 
 /** Fade + rise for item i of n. */
 export const rise = (c: Ctx, i: number, n: number, span = 0.5) => { const e = easeOut(stg(c.p, i, n, span)); return { op: e, dy: (1 - e) * c.body * 0.5 }; };
+
+/** "#rrggbb" or "#rgb" + alpha -> rgba(); any other colour string gets a neutral grey so a template never breaks. */
+export const alpha = (col: string, a: number): string => {
+  let m = /^#([0-9a-f]{6})$/i.exec((col ?? '').trim());
+  if (!m) { const s = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec((col ?? '').trim()); if (s) m = [s[0], s[1]! + s[1]! + s[2]! + s[2]! + s[3]! + s[3]!] as unknown as RegExpExecArray; }
+  if (!m) return `rgba(128,128,128,${a})`;
+  const n = parseInt(m[1]!, 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
+};

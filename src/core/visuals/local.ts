@@ -36,21 +36,22 @@ export function classify(s: string): VisualType {
   const n = numsOf(s);
   if (RE_CTA.test(s)) return 'cta_card';
   if (RE_CODE.test(s)) return 'terminal';
-  if (RE_VS.test(s)) return 'versus_card';
-  if (RE_BA.test(s)) return 'before_after';
+  if (RE_VS.test(s)) return 'before_after_split';
+  if (RE_BA.test(s)) return 'before_after_split';
   if (RE_FLOW.test(s) && n.length === 0) return 'flow_diagram';
   if (n.length >= 2 && n.every(x => /\d/.test(x))) return 'bar_chart';
-  if (n.length === 1) return /%|percent|শতাংশ/i.test(n[0]) ? 'progress_ring' : 'stat_counter';
+  if (n.length === 1) return /%|percent|শতাংশ/i.test(n[0]) ? 'progress_ring' : 'stat_pill_counter';
+  if (RE_LIST.test(s) && listParts(s).length >= 2 && listParts(s).length <= 4 && listParts(s).every(x => words(x).length <= 3)) return 'workflow_steps';
   if (listParts(s).length >= 3 && listParts(s).every(x => words(x).length <= 2)) return 'pill_row';
   if (RE_LIST.test(s) || listParts(s).length >= 3) return 'list_card';
   if (RE_ARROW.test(s)) return 'arrow_callout';
-  if (RE_APP.test(s)) return 'window_card';
+  if (RE_APP.test(s)) return RE_CODE.test(s) ? 'window_card' : 'command_palette';
   if (RE_DEF.test(s)) return 'definition_card';
   return words(s).length <= 12 ? 'quote_card' : 'keyword_title';
 }
 
 /** Sentences without numbers or structure get these text graphics; they rotate so a whole video is not one look. */
-const TEXTY: VisualType[] = ['title_stack', 'geo_title', 'radial_burst', 'bracket_focus', 'quote_card', 'highlight_card', 'halftone_frame', 'stack_card', 'frame_card', 'keyword_title'];
+const TEXTY: VisualType[] = ['glass_card_hero', 'curved_arrow_callout', 'title_stack', 'geo_title', 'radial_burst', 'bracket_focus', 'quote_card', 'highlight_card', 'halftone_frame', 'stack_card', 'frame_card', 'keyword_title'];
 const ALT: VisualType[] = [...TEXTY, 'definition_card', 'list_card'];
 
 export function planLocal(ws: TWord[], durationMs: number, mix: VisualType[] = []): VisualSlot[] {
@@ -108,6 +109,22 @@ export function makeLocal(slot: VisualSlot, sentence: string, themeId: string, i
     data = { title: rest.slice(0, 2).join(' ') || hi, accent: rest.length ? hi.replace(/[^\p{L}\p{N}]/gu, '') : '', label: rest.slice(2, 4).join(' ') };
   } else if (type === 'geo_title') {
     data = { title: longest(s, 2).join(' ') || limitWords(s, 2) };
+  } else if (type === 'glass_card_hero') {
+    const k = longest(s, 1)[0]?.replace(/[^\p{L}\p{N}]/gu, '') ?? '';
+    data = { badge: limitWords(k.toUpperCase(), 1), title: limitWords(s, 6), ...(n[0] ? { stat: n[0], trend: 'up' as const } : {}) };
+  } else if (type === 'curved_arrow_callout') {
+    const ws = words(s), k = longest(s, 2); data = { arrowLabel: limitWords(ws.slice(0, 4).join(' '), 4), title: ws.filter(w => k.includes(w)).join(' ') || limitWords(s, 3) };
+  } else if (type === 'before_after_split') {
+    const m = s.split(RE_VS).filter((_, i) => i !== 1 && (_ ?? '').trim()), m2 = s.split(/\b(?:after|now|ab|abhi|today|aaj)\b/i);
+    const l = m.length >= 2 ? m[0]! : m2[0] ?? '', r = m.length >= 2 ? m[1]! : m2[1] ?? '';
+    if (l.trim() && r.trim()) data = { left: limitWords(l.replace(/\b(before|pehle|pahle|earlier)\b/gi, '').trim().split(' ').slice(-3).join(' '), 3), right: limitWords(r.trim(), 3) }; else asKeyword();
+  } else if (type === 'stat_pill_counter') {
+    if (!n.length) asKeyword();
+    else data = { stat: n[0]!, label: limitWords(s.replace(n[0]!, '').trim(), 5), trend: /down|decrease|drop|fall|gir|neeche/i.test(s) ? 'down' : 'up' };
+  } else if (type === 'workflow_steps') {
+    const it = listParts(s).slice(0, 4); if (it.length >= 2) data = { items: it }; else asKeyword();
+  } else if (type === 'command_palette') {
+    data = { title: limitWords(s, 6), items: listParts(s).slice(0, 3).length >= 2 ? listParts(s).slice(0, 3) : [] };
   } else if (type === 'radial_burst') {
     data = { title: longest(s, 2).join(' ') || limitWords(s, 2) };
   } else if (type === 'bracket_focus') {

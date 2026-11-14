@@ -6,7 +6,8 @@ export type VisualType =
   | 'code_window' | 'terminal' | 'post_card' | 'receipt_card'
   | 'highlight_card' | 'stack_card' | 'frame_card'
   | 'title_stack' | 'pill_row' | 'flow_diagram' | 'geo_title' | 'cta_card' | 'before_after' | 'arrow_callout' | 'window_card' | 'halftone_frame'
-  | 'radial_burst' | 'bracket_focus';
+  | 'radial_burst' | 'bracket_focus'
+  | 'glass_card_hero' | 'curved_arrow_callout' | 'before_after_split' | 'stat_pill_counter' | 'workflow_steps' | 'command_palette';
 
 export const VISUAL_TYPES: VisualType[] = [
   'stat_counter', 'quote_card', 'definition_card', 'list_card', 'versus_card',
@@ -15,6 +16,7 @@ export const VISUAL_TYPES: VisualType[] = [
   'highlight_card', 'stack_card', 'frame_card',
   'title_stack', 'pill_row', 'flow_diagram', 'geo_title', 'cta_card', 'before_after', 'arrow_callout', 'window_card', 'halftone_frame',
   'radial_burst', 'bracket_focus',
+  'glass_card_hero', 'curved_arrow_callout', 'before_after_split', 'stat_pill_counter', 'workflow_steps', 'command_palette',
 ];
 
 export const VISUAL_LABEL: Record<VisualType, string> = {
@@ -24,6 +26,7 @@ export const VISUAL_LABEL: Record<VisualType, string> = {
   highlight_card: 'Highlight', stack_card: 'Stack', frame_card: 'Frame',
   title_stack: 'Title', pill_row: 'Pills', flow_diagram: 'Flow', geo_title: 'Shapes', cta_card: 'CTA', before_after: 'Before/After', arrow_callout: 'Arrow', window_card: 'Window', halftone_frame: 'Halftone',
   radial_burst: 'Radial', bracket_focus: 'Focus',
+  glass_card_hero: 'Glass card', curved_arrow_callout: 'Curved arrow', before_after_split: 'Old vs new', stat_pill_counter: 'Stat pill', workflow_steps: 'Workflow', command_palette: 'Command bar',
 };
 
 /** All fields optional; each template reads only what it needs. Lists: list_card/timeline use `items`, bar_chart `labels`+`values`,
@@ -35,6 +38,8 @@ export interface VisualData {
   labels?: string[]; values?: number[]; percent?: number;
   lang?: 'html' | 'css' | 'javascript' | 'terminal'; code?: string; lines?: string[];
   text?: string; name?: string; handle?: string; shop?: string; total?: string;
+  /** glass cards: category pill, second line, big metric (only when spoken), text above a curved arrow */
+  badge?: string; subtitle?: string; stat?: string; arrowLabel?: string;
 }
 
 export type MotionGroup = 'entrance' | 'emphasis' | 'transition' | 'exit';

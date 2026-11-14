@@ -28,6 +28,12 @@ function linesOf(v: Visual, p: number): [string, 'head' | 'big' | 'body' | 'mute
     case 'pill_row': case 'flow_diagram': add(d.title, 'head'); (d.items ?? []).forEach((x) => add(x, 'body')); break;
     case 'title_stack': add(d.title, 'head'); add(d.label, 'body'); add(d.accent, 'big'); break;
     case 'before_after': add(d.left, 'head'); add('>', 'muted'); add(d.right, 'head'); break;
+    case 'glass_card_hero': add(d.badge, 'muted'); add(d.title, 'head'); add(d.subtitle, 'body'); add(d.stat, 'big'); break;
+    case 'curved_arrow_callout': add(d.arrowLabel, 'muted'); add(d.title, 'head'); break;
+    case 'before_after_split': add(d.left, 'head'); add('>', 'muted'); add(d.right, 'head'); break;
+    case 'stat_pill_counter': add(d.stat ?? d.big, 'big'); add(d.badge ?? d.label, 'muted'); break;
+    case 'workflow_steps': (d.items ?? []).forEach((x, i) => add(`${i + 1}. ${x}`, 'body')); break;
+    case 'command_palette': add(d.title, 'head'); (d.items ?? []).forEach((x) => add(x, 'body')); break;
     case 'bracket_focus': add(d.title, 'head'); add(d.label, 'muted'); break;
     case 'cta_card': add(d.title, 'head'); add(d.accent, 'big'); add(d.label, 'muted'); break;
     default: add(d.title ?? d.big ?? d.quote ?? d.term, 'head');

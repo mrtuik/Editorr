@@ -2,6 +2,7 @@
 import type { VisualData, VisualTheme, VisualType } from '../types';
 import { timed } from '../ease';
 import { DELAY, animText, isTextAnim, timing } from '../textAnim';
+import { glass_card_hero, curved_arrow_callout, before_after_split, stat_pill_counter, workflow_steps, command_palette } from './glass';
 import { Ctx, clamp01, col, easeOut, esc, fit, limitWords, makeCtx, rise, stg, txt } from './util';
 
 export type Template = (d: VisualData, c: Ctx) => string;
@@ -399,6 +400,7 @@ export const TEMPLATES: Record<VisualType, Template> = {
   timeline, keyword_title, code_window, terminal, post_card, receipt_card, highlight_card, stack_card, frame_card,
   title_stack, pill_row, flow_diagram, geo_title, cta_card, before_after, arrow_callout, window_card, halftone_frame,
   radial_burst, bracket_focus,
+  glass_card_hero, curved_arrow_callout, before_after_split, stat_pill_counter, workflow_steps, command_palette,
 };
 
 export function templateHtml(type: VisualType, d: VisualData, theme: VisualTheme, w: number, h: number, p = 1, ms = 99999, anim = 'kinetic', full = false): string {

@@ -9,7 +9,7 @@ const TYPES_JSON = VISUAL_TYPES.map(t => `"${t}"`).join('|');
 
 export function planPrompt(lines: string, seconds: number, theme: string, mix: VisualType[]): string {
   return `You are Editorr's visual director. Do NOT use any tools, do NOT read or write files.
-Plan clean, minimalist HTML/CSS visuals for a talking-head video. No photos, no videos.
+Plan studio-grade motion graphics for a talking-head video, in the style of top motion-design showreels: floating glass cards, curved arrows, metric pills, old-vs-new splits, workflow diagrams. HTML/CSS only. No photos, no videos.
 
 TRANSCRIPT (seconds):
 ${lines}
@@ -22,12 +22,14 @@ Return ONE JSON object, no markdown:
 
 RULES
 1. A new visual every 2 to 4 seconds, never a gap over 3 s, never overlapping. Each lasts 2 to 5 s.
-2. Pick the type from what is said: number or money -> stat_counter / bar_chart / line_chart / progress_ring; steps -> list_card / timeline; two things compared -> versus_card; a definition -> definition_card; code or tech -> code_window / terminal; one strong line -> quote_card; one key word -> keyword_title.
+2. Prefer the glass cards, they look best: a spoken number or money amount -> stat_pill_counter (stat, badge, label); a comparison or old-vs-new -> before_after_split (left,right); steps or a process of 2 to 4 things -> workflow_steps (items); one key takeaway -> curved_arrow_callout (arrowLabel,title) or glass_card_hero (badge,title,subtitle); a tool, app or prompt -> command_palette (title = the prompt, items = up to 3 results).
+   Older types: number or money -> stat_counter / bar_chart / line_chart / progress_ring; steps -> list_card / timeline; two things compared -> versus_card; a definition -> definition_card; code or tech -> code_window / terminal; one strong line -> quote_card; one key word -> keyword_title.
    Reel graphics: tags that light up one by one -> pill_row (items); a to-b process -> flow_diagram (2 or 3 items); before then after -> before_after (left,right); up or down -> arrow_callout (trend up|down); app, website, link, download -> window_card (title,label,items[0]=button); comment or follow call to action -> cta_card (title,accent,label); a bold title with an italic line and one boxed word -> title_stack (title,label,accent); one big word inside circles and squares -> geo_title; a portrait frame on a halftone circle -> halftone_frame; one big word with lines and circles growing outward from it -> radial_burst (title); a camera-focus frame of four corner brackets around a headline -> bracket_focus (title, label = short pill tag, items[0] = optional download badge).
    Speech with no numbers or steps (feelings, stories, advice): rotate highlight_card (marker on the key word), stack_card (2 to 4 short lines), frame_card (a frame draws around the line), quote_card, keyword_title.
 3. Never the same type twice in a row. One type at most 30 percent of all slots.
-4. startMs starts at a sentence beginning, endMs ends at its punchline.
-5. Never invent facts, numbers, people or accounts.`;
+4. Never plain text alone twice in a row; alternate cards, arrows, metrics and diagrams.
+5. startMs starts at a sentence beginning, endMs ends at its punchline.
+6. Never invent facts, numbers, people or accounts.`;
 }
 
 export function makePrompt(slot: VisualSlot, theme: string, sentence: string, prev?: { type: string; title: string }): string {
@@ -39,14 +41,15 @@ WHAT IS SAID IN THIS MOMENT (${slot.startMs}-${slot.endMs} ms): "${sentence}"
 PREVIOUS VISUAL: ${prev ? `${prev.type} "${prev.title}"` : 'none'}
 
 Return ONE JSON object only:
-{ "data": { "title"?: string, "big"?: string, "label"?: string, "quote"?: string, "accent"?: string,
+{ "data": { "badge"?: string, "subtitle"?: string, "stat"?: string, "arrowLabel"?: string, "trend"?: "up"|"down"|"flat",
+            "title"?: string, "big"?: string, "label"?: string, "quote"?: string, "accent"?: string,
             "term"?: string, "meaning"?: string, "items"?: string[], "left"?: string, "right"?: string,
             "labels"?: string[], "values"?: number[], "percent"?: number,
             "lang"?: "html"|"css"|"javascript"|"terminal", "code"?: string, "lines"?: string[] },
   "motion": { "in": "{id}", "hold": "{id}", "out": "{id}" } }
 
 RULES
-1. Max 12 words in total. Short, big, plain. No emoji.
+1. Max 16 words in total. Short, big, plain. No emoji. For the glass types fill the layers: badge = 1 to 3 word category tag (uppercase style, e.g. AI PIPELINE), title = punchy 3 to 6 words, subtitle = 4 to 8 words (optional), stat = a number or amount ONLY if it is spoken (e.g. +450%, $84,000), trend, arrowLabel = short text above a curved arrow, items = steps or results. before_after_split: left = the old way, right = the new way; badge may be "OLD WAY|NEW WAY" in the speaker's language.
 2. Use only what is said. Never invent a number, person, account or quote. If a number is not spoken, do not show one.
 3. Same language and script as the speaker (Bengali stays Bengali).
 4. Motion ids only from: ${motionIds().join(', ')}. Do not repeat the previous visual's "in".
@@ -105,7 +108,7 @@ export async function planAi(ws: CapWord[], durationMs: number, theme: string, m
   return out;
 }
 
-const TEXT_KEYS = ['title', 'big', 'label', 'quote', 'accent', 'term', 'meaning', 'left', 'right', 'text', 'name', 'handle', 'shop', 'total'] as const;
+const TEXT_KEYS = ['badge', 'subtitle', 'stat', 'arrowLabel', 'title', 'big', 'label', 'quote', 'accent', 'term', 'meaning', 'left', 'right', 'text', 'name', 'handle', 'shop', 'total'] as const;
 
 export async function makeAi(slot: VisualSlot, theme: string, sentence: string, prev?: { type: string; title: string }): Promise<{ data: VisualData; motion?: Partial<MotionSelection> }> {
   const raw = json(await ask(makePrompt(slot, theme, sentence, prev))) as { data?: Record<string, unknown>; motion?: Record<string, string> };
@@ -116,6 +119,7 @@ export async function makeAi(slot: VisualSlot, theme: string, sentence: string, 
   if (Array.isArray(d.values)) data.values = d.values.slice(0, 12).map(Number).filter(n => Number.isFinite(n));
   if (Array.isArray(d.lines)) data.lines = d.lines.slice(0, 6).map(x => String(x).slice(0, 40));
   if (typeof d.percent === 'number') data.percent = d.percent;
+  if (d.trend === 'up' || d.trend === 'down' || d.trend === 'flat') data.trend = d.trend;
   if (typeof d.code === 'string') data.code = d.code.split('\n').slice(0, 7).join('\n');
   if (typeof d.lang === 'string') data.lang = d.lang as VisualData['lang'];
   if (!Object.keys(data).length || !wordsOf(JSON.stringify(data)).length) throw new Error('empty visual');

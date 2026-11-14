@@ -6,7 +6,7 @@ import { drawFallback } from './fallback2d';
 import { visualFontCssNow } from './fonts';
 import { innerProgress, motionCss, visualMotionAt, getPreset } from './motion';
 import { isTextAnim, textEndMs } from './textAnim';
-import { cardBox, esc } from './templates/util';
+import { alpha, cardBox, esc } from './templates/util';
 import { templateHtml } from './templates';
 import { getTheme } from './themes';
 import type { Visual, VisualTheme } from './types';
@@ -26,7 +26,7 @@ export function visualHtml(v: Visual, tMs: number, w: number, h: number): string
   const inner = templateHtml(v.type, v.data, theme, w, h, p, tMs, v.motion.text ?? 'kinetic', v.full);
   return `<div xmlns="http://www.w3.org/1999/xhtml" style="position:relative;width:${w}px;height:${h}px;overflow:hidden;font-family:${theme.font};">` +
     `<style>${visualFontCssNow()}</style>` +
-    (v.bleed ? `<div style="position:absolute;left:0;top:0;width:${w}px;height:${h}px;background:${theme.card};opacity:${Math.max(0, Math.min(1, mp.o)).toFixed(3)};"></div>` : '') +
+    (v.bleed ? `<div style="position:absolute;left:0;top:0;width:${w}px;height:${h}px;background:radial-gradient(60% 38% at 14% 8%, ${alpha(theme.accent, 0.2)}, transparent 70%), radial-gradient(58% 40% at 92% 88%, ${alpha(theme.accent, 0.16)}, transparent 70%), ${theme.card};opacity:${Math.max(0, Math.min(1, mp.o)).toFixed(3)};"></div>` : '') +
     `<div style="position:absolute;left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px;box-sizing:border-box;padding:${pad}px;` +
     (v.bleed ? `color:${theme.text};` : `background:${theme.card};color:${theme.text};border-radius:${Math.round(theme.radius * short / 1080)}px;box-shadow:${theme.shadow};border:${theme.border};`) +
     `${motionCss(mp, short)}">${inner}${progressLine(theme, tMs, dur, pad, short)}</div></div>`;
@@ -76,11 +76,17 @@ export function canvasReadable(cv: HTMLCanvasElement): boolean {
 
 export interface BakedVisual { frames: HTMLCanvasElement[]; framesMs: number[]; still: HTMLCanvasElement }
 
+/** the glass cards animate longer than a plain card: counter + sparkline, step-by-step lighting, typing */
+const GLASS_SETTLE: Partial<Record<string, number>> = { glass_card_hero: 1600, curved_arrow_callout: 1500, before_after_split: 1700, stat_pill_counter: 1900, workflow_steps: 2400, command_palette: 2800 };
+
 /** Time the picture needs to settle: the card entrance, the text animation and the charts (open-motion's longest piece is 1.2 s). */
 export function settleMs(v: Visual): number {
   const d = v.data, text = d.quote ?? d.title ?? d.big ?? d.term ?? d.text ?? d.label ?? '';
   const t = isTextAnim(v.motion.text) ? textEndMs(v.motion.text, text) : 0;
-  return Math.round(Math.max(getPreset(v.motion.in).durationMs + 450, Math.min(2200, t + 150), ['title_stack', 'pill_row', 'flow_diagram', 'cta_card', 'window_card', 'radial_burst', 'bracket_focus'].includes(v.type) ? 2000 : v.type === 'highlight_card' ? 1900 : ['bar_chart', 'stat_counter', 'progress_ring', 'line_chart', 'stack_card', 'frame_card'].includes(v.type) ? 1500 : 0));
+  const base = ['title_stack', 'pill_row', 'flow_diagram', 'cta_card', 'window_card', 'radial_burst', 'bracket_focus'].includes(v.type) ? 2000
+    : v.type === 'highlight_card' ? 1900
+    : ['bar_chart', 'stat_counter', 'progress_ring', 'line_chart', 'stack_card', 'frame_card'].includes(v.type) ? 1500 : 0;
+  return Math.round(Math.max(getPreset(v.motion.in).durationMs + 450, Math.min(2200, t + 150), GLASS_SETTLE[v.type] ?? base));
 }
 
 /** Entrance frames (about one per 55 ms, 18 to 30) plus one still for the hold. framesMs are relative to the visual's start. */
@@ -90,4 +96,4 @@ export async function bakeVisual(v: Visual, w: number, h: number): Promise<Baked
   return { frames, framesMs, still: await renderFrame(v, inMs + 200, w, h) };
 }
 
-export const visualTitle = (v: Visual) => esc(v.data.title ?? v.data.big ?? v.data.term ?? v.data.quote ?? v.data.left ?? v.data.text ?? v.type);
+export const visualTitle = (v: Visual) => esc(v.data.title ?? v.data.big ?? v.data.stat ?? v.data.term ?? v.data.quote ?? v.data.left ?? v.data.text ?? v.type);
