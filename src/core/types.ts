@@ -226,6 +226,8 @@ export interface Project {
   grade?: import('./creators').Grade;
   /** B-roll photos (a still with a slow move) that cut in over the video, at timeline time. */
   broll?: import('./brollTypes').BrollBeat[];
+  /** Motion mode of the B-roll pane: scenes drawn with HTML/CSS/JS, rendered to short clips that sit in `broll` as full-frame video beats. */
+  motion?: MotionScript;
   /** the sound designer already ran on this project */
   autoSoundDone?: boolean;
   /** small jpeg data URL for Home */
@@ -271,4 +273,13 @@ export const resLabel = (r: number) => (r === 1440 ? '2K' : r === 2160 ? '4K' : 
 export function recommendedMbps(short: number, fps: number): number {
   const base = short >= 2160 ? 40 : short >= 1440 ? 22 : short >= 1080 ? 10 : short >= 720 ? 6 : 3;
   return Math.round(base * (fps > 30 ? 1.5 : 1));
+}
+
+/** The scenes of the Motion mode (B-roll pane). A scene is the visuals engine's own Visual; `renderedBeatIds` are the video beats placed from them. */
+export interface MotionScript {
+  id: string; createdAt: number; themeId: string;
+  scenes: import('./visuals/types').Visual[];
+  renderedBeatIds: string[];
+  /** captions are off: scenes may use the whole frame */
+  fullFrame?: boolean;
 }
