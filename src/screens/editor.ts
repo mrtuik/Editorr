@@ -684,13 +684,15 @@ export function editorScreen() {
     }
     loadRole(role);
   }
+  /** Silence / manual cuts: the preview jumps over them, which needs a preview copy with a key frame every 0.5 s (see makeProxy). */
+  const hasCuts = () => p.segments.length > 1 || (p.segments.length === 1 && (p.segments[0]!.startMs > 300 || p.segments[0]!.endMs < p.durationMs - 300));
   /** Check the file, then load it (or its preview copy). */
   function loadRole(role: Role) {
     const meta = role === 'host' ? p.host : p.constant;
     const flagged = role === 'host' ? p.proxyHost : p.proxyConst;
     const url = role === 'host' ? runtime.hostUrl! : runtime.constUrl!;
     const begin = () => {
-      if (isNative() && (flagged || needsProxy(meta))) useProxy(role); // before playing: no stall in the middle of a video
+      if (isNative() && (flagged || needsProxy(meta) || (role === 'host' && hasCuts()))) useProxy(role); // before playing: no stall in the middle of a video
       else setSource(role, url);
     };
     const path = role === 'host' ? runtime.hostPath : runtime.constPath;
