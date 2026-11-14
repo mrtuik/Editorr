@@ -786,6 +786,8 @@ public class EditorrNativePlugin extends Plugin {
         new File(cacheDir(), "proxy_" + name + ".mp4.tmp").delete();
         new File(previewDir(), "proxy_" + name + ".mp4").delete();
         new File(previewDir(), "proxy_" + name + ".mp4.tmp").delete();
+        new File(previewDir(), "proxyk_" + name + ".mp4").delete();
+        new File(previewDir(), "proxyk_" + name + ".mp4.tmp").delete();
         for (File dir : new File[] { cacheDir(), previewDir() }) {
             File[] cached = dir.listFiles();
             if (cached != null) for (File c : cached) if (c.getName().startsWith("thumb_" + name + "_")) c.delete();
@@ -1460,7 +1462,7 @@ public class EditorrNativePlugin extends Plugin {
             if (path != null) {
                 Transformer t = proxyJobs.remove(path);
                 if (t != null) { try { t.cancel(); } catch (Exception ignored) { } }
-                new File(previewDir(), "proxy_" + new File(path).getName() + ".mp4.tmp").delete();
+                new File(previewDir(), "proxyk_" + new File(path).getName() + ".mp4.tmp").delete();
                 PluginCall pc = proxyCalls.remove(path);
                 if (pc != null) pc.reject("Cancelled");
             }
@@ -1478,7 +1480,7 @@ public class EditorrNativePlugin extends Plugin {
         if (path == null) { call.reject("path missing"); return; }
         getActivity().runOnUiThread(() -> {
             try {
-                final File out = new File(previewDir(), "proxy_" + new File(path).getName() + ".mp4");
+                final File out = new File(previewDir(), "proxyk_" + new File(path).getName() + ".mp4");
                 if (out.exists() && out.length() > 0) {
                     JSObject o = new JSObject();
                     o.put("proxyPath", out.getAbsolutePath());
@@ -1498,9 +1500,16 @@ public class EditorrNativePlugin extends Plugin {
                 final ProgressHolder holder = new ProgressHolder();
                 final Runnable[] poll = new Runnable[1];
                 final Transformer[] self = new Transformer[1];
+                // A key frame every 0.5 s: the preview jumps over silence cuts with an exact seek, and an exact seek has to decode from the
+                // previous key frame. Phone videos can have 3-5 s between key frames = a 3-5 s freeze at every cut. Here a jump costs <= 0.5 s.
+                final DefaultEncoderFactory proxyEncoders = new DefaultEncoderFactory.Builder(getContext())
+                        .setRequestedVideoEncoderSettings(new VideoEncoderSettings.Builder().setiFrameIntervalSeconds(0.5f).build())
+                        .setEnableFallback(true)
+                        .build();
                 self[0] = new Transformer.Builder(getContext())
                         .setVideoMimeType(MimeTypes.VIDEO_H264)
                         .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                        .setEncoderFactory(proxyEncoders)
                         .addListener(new Transformer.Listener() {
                             @Override public void onCompleted(@NonNull Composition c, @NonNull ExportResult r) {
                                 main.removeCallbacks(poll[0]);
