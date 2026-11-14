@@ -5,7 +5,8 @@ export type VisualType =
   | 'bar_chart' | 'line_chart' | 'progress_ring' | 'timeline' | 'keyword_title'
   | 'code_window' | 'terminal' | 'post_card' | 'receipt_card'
   | 'highlight_card' | 'stack_card' | 'frame_card'
-  | 'title_stack' | 'pill_row' | 'flow_diagram' | 'geo_title' | 'cta_card' | 'before_after' | 'arrow_callout' | 'window_card' | 'halftone_frame';
+  | 'title_stack' | 'pill_row' | 'flow_diagram' | 'geo_title' | 'cta_card' | 'before_after' | 'arrow_callout' | 'window_card' | 'halftone_frame'
+  | 'radial_burst' | 'bracket_focus';
 
 export const VISUAL_TYPES: VisualType[] = [
   'stat_counter', 'quote_card', 'definition_card', 'list_card', 'versus_card',
@@ -13,6 +14,7 @@ export const VISUAL_TYPES: VisualType[] = [
   'code_window', 'terminal', 'post_card', 'receipt_card',
   'highlight_card', 'stack_card', 'frame_card',
   'title_stack', 'pill_row', 'flow_diagram', 'geo_title', 'cta_card', 'before_after', 'arrow_callout', 'window_card', 'halftone_frame',
+  'radial_burst', 'bracket_focus',
 ];
 
 export const VISUAL_LABEL: Record<VisualType, string> = {
@@ -21,6 +23,7 @@ export const VISUAL_LABEL: Record<VisualType, string> = {
   code_window: 'Code', terminal: 'Terminal', post_card: 'Post', receipt_card: 'Receipt',
   highlight_card: 'Highlight', stack_card: 'Stack', frame_card: 'Frame',
   title_stack: 'Title', pill_row: 'Pills', flow_diagram: 'Flow', geo_title: 'Shapes', cta_card: 'CTA', before_after: 'Before/After', arrow_callout: 'Arrow', window_card: 'Window', halftone_frame: 'Halftone',
+  radial_burst: 'Radial', bracket_focus: 'Focus',
 };
 
 /** All fields optional; each template reads only what it needs. Lists: list_card/timeline use `items`, bar_chart `labels`+`values`,
@@ -56,6 +59,8 @@ export interface VisualTheme {
   radius: number; shadow: string; border: string; dot?: string;
   /** plain colour for the Canvas 2D fallback when `card` is a gradient */
   cardSolid?: string;
+  /** soft shadow under big letters (CSS text-shadow), and the colour of a thin progress line along the bottom of the card */
+  textShadow?: string; progressLine?: string;
   /** several ids per slot so neighbouring visuals do not move the same way */
   motionSet: { in: string[]; hold: string[]; out: string[]; text?: string[] };
 }
@@ -64,6 +69,10 @@ export interface VisualTheme {
 export interface Visual {
   id: string; type: VisualType; data: VisualData; themeId: string; motion: MotionSelection;
   startMs: number; endMs: number;
+  /** Motion scenes only: use the whole frame instead of the caption-safe zone (captions are off) */
+  full?: boolean;
+  /** Docu-lane visuals: the card's background fills the whole frame (no video strips or black bars beside it); text stays in the caption-safe zone */
+  bleed?: boolean;
 }
 
 /** Step A result: one empty slot of the plan. */

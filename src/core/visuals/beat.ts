@@ -24,6 +24,7 @@ const plain = (s: string) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').repl
 export async function makeVisualBeat(v: Visual, aspect: Aspect): Promise<DocuBeat> {
   await loadVisualFonts();
   const { w, h } = kallawaySize(aspect);
+  v = { ...v, bleed: true }; // full-screen: the card's background fills the frame
   const baked = await bakeVisual(v, w, h);
   const tag = `${v.id}_${Date.now().toString(36)}`;
   const image = await savePng(baked.still, `vis_${tag}`);

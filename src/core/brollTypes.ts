@@ -45,6 +45,10 @@ export interface BrollBeat {
   radius: number;
   /** how a PHOTO beat comes in and goes out (video beats keep the plain cut). Missing = fade. */
   trans?: BrollTrans;
+  /** Motion mode: the scene (p.motion.scenes) this rendered clip comes from, the frame rate it was rendered at, and a signature of scene + size + fps (a changed scene is re-rendered) */
+  motionSceneId?: string;
+  renderFps?: number;
+  motionSig?: string;
 }
 
 export type BrollTrans = 'fade' | 'whip' | 'zoom' | 'slide';
@@ -62,6 +66,8 @@ export const isBrollVideo = (b: BrollBeat) => b.kind === 'video';
 export const BROLL_DEFAULT_MS = 2500;
 export const BROLL_MIN_MS = 1500;
 export const BROLL_MAX_MS = 4000;
+/** a Motion scene lasts 1.5 to 5 s */
+export const MOTION_MAX_MS = 5000;
 export const BROLL_DEFAULT_RADIUS = 20;
 export const BROLL_FADE_IN_MS = 160;
 export const BROLL_FADE_OUT_MS = 120;

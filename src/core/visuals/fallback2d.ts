@@ -28,6 +28,7 @@ function linesOf(v: Visual, p: number): [string, 'head' | 'big' | 'body' | 'mute
     case 'pill_row': case 'flow_diagram': add(d.title, 'head'); (d.items ?? []).forEach((x) => add(x, 'body')); break;
     case 'title_stack': add(d.title, 'head'); add(d.label, 'body'); add(d.accent, 'big'); break;
     case 'before_after': add(d.left, 'head'); add('>', 'muted'); add(d.right, 'head'); break;
+    case 'bracket_focus': add(d.title, 'head'); add(d.label, 'muted'); break;
     case 'cta_card': add(d.title, 'head'); add(d.accent, 'big'); add(d.label, 'muted'); break;
     default: add(d.title ?? d.big ?? d.quote ?? d.term, 'head');
   }
@@ -45,17 +46,20 @@ export function drawFallback(v: Visual, tMs: number, w: number, h: number): HTML
   const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
   const ctx = cv.getContext('2d')!, theme = getTheme(v.themeId), short = Math.min(w, h);
   const dur = Math.max(300, v.endMs - v.startMs), mp = visualMotionAt(v.motion, tMs, dur), p = innerProgress(v.motion, tMs);
-  const box = cardBox(w, h), pad = Math.round(short * 0.06), r = Math.round(theme.radius * short / 1080);
+  const box = cardBox(w, h, v.full), pad = Math.round(short * 0.06), r = Math.round(theme.radius * short / 1080);
   const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+  if (v.bleed) { ctx.save(); ctx.globalAlpha = clamp01(mp.o); ctx.fillStyle = theme.cardSolid ?? theme.card; ctx.fillRect(0, 0, w, h); ctx.restore(); }
   ctx.save();
   ctx.globalAlpha = clamp01(mp.o);
   ctx.translate(cx + mp.x * short, cy + mp.y * short); ctx.rotate((mp.r * Math.PI) / 180); ctx.scale(mp.s, mp.s); ctx.translate(-cx, -cy);
   if (mp.b > 0.0005) ctx.filter = `blur(${(mp.b * short).toFixed(1)}px)`;
   // card
   ctx.fillStyle = theme.cardSolid ?? theme.card; ctx.beginPath();
+  if (!v.bleed) {
   const rr = (ctx as CanvasRenderingContext2D & { roundRect?: (...a: number[]) => void }).roundRect;
   if (rr) rr.call(ctx, box.x, box.y, box.w, box.h, r); else ctx.rect(box.x, box.y, box.w, box.h);
   ctx.fill();
+  }
   // text, vertically centred, headline 8.5% of height, body 5%, nothing under 4.5%
   const sizes = { head: Math.round(h * 0.075), big: Math.round(h * 0.13), body: Math.round(h * 0.05), muted: Math.round(h * 0.045) };
   const colour = { head: theme.text, big: theme.accent, body: theme.text, muted: theme.muted };

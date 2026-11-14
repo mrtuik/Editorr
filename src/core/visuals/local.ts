@@ -50,7 +50,7 @@ export function classify(s: string): VisualType {
 }
 
 /** Sentences without numbers or structure get these text graphics; they rotate so a whole video is not one look. */
-const TEXTY: VisualType[] = ['title_stack', 'geo_title', 'quote_card', 'highlight_card', 'halftone_frame', 'stack_card', 'frame_card', 'keyword_title'];
+const TEXTY: VisualType[] = ['title_stack', 'geo_title', 'radial_burst', 'bracket_focus', 'quote_card', 'highlight_card', 'halftone_frame', 'stack_card', 'frame_card', 'keyword_title'];
 const ALT: VisualType[] = [...TEXTY, 'definition_card', 'list_card'];
 
 export function planLocal(ws: TWord[], durationMs: number, mix: VisualType[] = []): VisualSlot[] {
@@ -108,6 +108,10 @@ export function makeLocal(slot: VisualSlot, sentence: string, themeId: string, i
     data = { title: rest.slice(0, 2).join(' ') || hi, accent: rest.length ? hi.replace(/[^\p{L}\p{N}]/gu, '') : '', label: rest.slice(2, 4).join(' ') };
   } else if (type === 'geo_title') {
     data = { title: longest(s, 2).join(' ') || limitWords(s, 2) };
+  } else if (type === 'radial_burst') {
+    data = { title: longest(s, 2).join(' ') || limitWords(s, 2) };
+  } else if (type === 'bracket_focus') {
+    const k = longest(s, 3); data = { title: words(s).filter(w => k.includes(w)).join(' ') || limitWords(s, 3) };
   } else if (type === 'halftone_frame') {
     data = { title: limitWords(s, 4) };
   } else if (type === 'cta_card') {
