@@ -274,7 +274,11 @@ export function openDocuSheet(ctx: DocuCtx, startTab: DocuTab = 'templates', sta
       const i = VISUAL_THEMES.findIndex((t) => t.id === v.themeId), nt = VISUAL_THEMES[(i + 1) % VISUAL_THEMES.length]!;
       redraw({ themeId: nt.id, motion: pickMotion(nt, i + 1, v.motion.in) }, true);
     };
+    // why this card is here: the words spoken at that moment (review the card against them; the words and numbers below are editable)
+    const said = sentenceAt(b.start, b.end);
+    const why = said ? h('div', { class: 'at-hint', style: 'margin-top:10px' }, `Made from what you say here: \u201c${said.length > 140 ? said.slice(0, 137) + '...' : said}\u201d. Check the words and numbers below; change or delete the card if it is wrong.`) : null;
     return [
+      ...(why ? [why] : []),
       h('div', { class: 'at-sec', style: 'margin-top:10px' },
         h('div', { class: 'schips', style: 'flex-wrap:nowrap;overflow-x:auto' }, ...VISUAL_TYPES.map((t) => h('button', { class: 'chip' + (v.type === t ? ' on' : ''), onclick: () => { if (v.type !== t) changeType(t); } }, VISUAL_LABEL[t]))),
         ...Object.entries(v.data).map(([k, val]) => field(k, val)).filter(Boolean) as Node[],

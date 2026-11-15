@@ -1988,3 +1988,7 @@ html body input[type=range]:disabled { opacity: .4; }
 .mo-t { color: #9a9aa2; font-size: 12px; }
 .mo-x { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mo-s { color: #9a9aa2; font-size: 11px; white-space: nowrap; }
+
+/* Raw / Edited comparison: hold to see the source video */
+.raw-cmp { position: absolute; right: 8px; top: 8px; z-index: 8; min-width: 48px; min-height: 32px; padding: 0 12px; border-radius: 2px; border: 1.5px solid rgba(255,255,255,0.35); background: rgba(10,10,14,0.72); color: #fff; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.raw-cmp.on { background: #10B981; border-color: #10B981; color: #04120C; }

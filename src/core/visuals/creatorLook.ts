@@ -11,6 +11,8 @@ const KALLAWAY = L('kallaway', ['quote_card', 'list_card', 'stat_counter', 'time
 const REEL_D = L('reel-dark', ['title_stack', 'pill_row', 'window_card', 'arrow_callout', 'flow_diagram', 'cta_card']);
 const REEL_L = L('reel-light', ['title_stack', 'geo_title', 'halftone_frame', 'before_after', 'highlight_card']);
 const REEL_P = L('reel-purple', ['title_stack', 'before_after', 'pill_row', 'window_card', 'flow_diagram', 'geo_title']);
+// proof number, roadmap, old-vs-new, generic app-action window, topic pills, end call to action
+const JOSEPH = L('joseph', ['stat_pill_counter', 'workflow_steps', 'before_after_split', 'window_card', 'pill_row', 'cta_card']);
 const NOIR = L('noir', ['quote_card', 'keyword_title', 'timeline']);
 const KEYNOTE = L('keynote', ['stat_counter', 'list_card', 'progress_ring']);
 const SWISS = L('swiss', ['definition_card', 'versus_card', 'list_card']);
@@ -23,6 +25,6 @@ const MAP: Partial<Record<CreatorId, VisualLook>> = {
   vox: VOX, vox_split: VOX, noir: NOIR, cinedocu: NOIR, cinema: NOIR, aifilm: NOIR, monodocu: NOIR, breaking: NOIR,
   keynote: KEYNOTE, techcommercial: REEL_P, purpletech: REEL_P, purpleshowcase: REEL_P,
   swiss: SWISS, studio: SWISS, minimal: REEL_L,
-  cyber: CYBER, screentut: CYBER, tech_terminal: CYBER, code_revealer: CODE,
+  cyber: CYBER, screentut: CYBER, tech_terminal: CYBER, code_revealer: CODE, joseph_inspired: JOSEPH,
 };
 export const visualLookFor = (id: CreatorId | undefined): VisualLook => (id && MAP[id]) || MIN_D;

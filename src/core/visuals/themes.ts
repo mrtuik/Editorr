@@ -49,6 +49,10 @@ export const VISUAL_THEMES: VisualTheme[] = [
     card: 'repeating-linear-gradient(90deg, rgba(255,255,255,0.045) 0px, rgba(255,255,255,0.045) 2px, transparent 2px, transparent 24px), linear-gradient(165deg, #2a1a66 0%, #0c0824 55%, #3a2290 100%)',
     cardSolid: '#160d38', text: '#ffffff', muted: '#b4a8e8', accent: '#8b5cf6', highlight: '#ffffff',
     radius: 36, shadow: '0 20px 70px rgba(80,40,200,0.35)', border: '1px solid rgba(255,255,255,0.12)', motionSet: { in: ['blurReveal', 'scaleIn'], hold: ['float'], out: ['fadeOut'], text: ['blur', 'kinetic', 'wave'] } }),
+  // Joseph Inspired: dark, calm, one emerald accent (an editable default, not a verified colour of any reference). Slow fades, no glitch.
+  T({ id: 'joseph', name: 'Joseph Inspired', bg: '#07090a', card: 'rgba(14,19,17,0.9)', cardSolid: '#0e1311', text: '#f4f7f5', muted: '#8a9690', accent: '#10b981', highlight: '#10b981',
+    radius: 28, shadow: '0 22px 70px rgba(0,0,0,0.55)', border: '1px solid rgba(16,185,129,0.28)',
+    motionSet: { in: ['slowFade', 'slideUp'], hold: ['none', 'float'], out: ['fadeOut'], text: ['reveal', 'blur', 'kinetic'] } }),
   // CREA MOTION look: cream paper with faint speckles, deep red heavy type with a soft drop shadow, thin red progress line
   T({ id: 'paper-red', name: 'Paper red', bg: '#f3ead6',
     card: 'radial-gradient(rgba(120,70,40,0.16) 1px, transparent 1.6px) 0 0 / 23px 23px, radial-gradient(rgba(120,70,40,0.11) 1px, transparent 1.6px) 11px 13px / 37px 37px, radial-gradient(rgba(255,255,255,0.35) 1.5px, transparent 2.2px) 5px 7px / 53px 53px, #f3ead6',

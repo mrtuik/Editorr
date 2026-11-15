@@ -1,3 +1,17 @@
+# v55.1: progress bar redesigned (full width, flat, thin progress line, no spinner)
+
+# Editorr v55: Joseph Inspired template (from joseph_creator_template_spec.md)
+
+New creator template **Joseph Inspired** (`joseph_inspired`, Templates > Talking Head, first tile). An original look inspired by the editing grammar of a reference reel; no creator name, logo, wording or app screen is copied.
+- `core/creators.ts`: id, template (dark base, emerald accent as an editable default, neutral grade, safe-area caption y 0.74), card theme, calm fade/slide transitions, restrained 1.06 punch-in, music and SFX OFF by default, category entry. Existing ids untouched.
+- `core/visuals/themes.ts`: new `joseph` theme (slow fades, no glitch). `creatorLook.ts`: proof number, roadmap, old-vs-new, generic app window, topic pills, CTA.
+- `core/visuals/local.ts`: for this template only, posting steps (tag / location / upload / share) -> generic `window_card`; plain speech with nothing to prove stays a talking head. Other templates behave as before.
+- `core/visuals/ai.ts`: extra Joseph rules in the plan prompt (numbers only if spoken, no names/logos, no filler cards).
+- `screens/editor.ts` + `style.css`: **Raw** button on the preview. Hold = source video only (no cards, B-roll, texts, captions, grade, window move); release = edited. Same playhead and playback. Nothing in the project changes.
+- `screens/docuSheet.ts`: a card now shows the spoken words it was made from, so it can be checked against them.
+Not done (stay as they were): split-screen Raw/Edited export, per-edit accept/reject list, a CTA text field (the CTA card appears only when the speaker asks for a comment/follow, or you add it with + Visual), punch-in zooms are not hidden by Raw.
+Android code: not compiled or run here. `tsc` run without node_modules: no new errors compared with v54 (missing-module errors are the same).
+
 # Editorr v53: B-roll Motion mode
 
 New: B-roll > "Search in" > **Motion** (Live Canvas Monitor, Generate motion, + Scene at playhead, Render and place).

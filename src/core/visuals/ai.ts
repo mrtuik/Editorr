@@ -29,8 +29,19 @@ RULES
 3. Never the same type twice in a row. One type at most 30 percent of all slots.
 4. Never plain text alone twice in a row; alternate cards, arrows, metrics and diagrams.
 5. startMs starts at a sentence beginning, endMs ends at its punchline.
-6. Never invent facts, numbers, people or accounts.`;
+6. Never invent facts, numbers, people or accounts.${theme === 'Joseph Inspired' ? JOSEPH_RULES : ''}`;
 }
+
+/** Extra rules of the Joseph Inspired template (original look, inspired by a reference reel's editing grammar). */
+const JOSEPH_RULES = `
+7. JOSEPH INSPIRED: calm, premium, dark. Make the speech visible, do not decorate it. Only 1 card per spoken idea; leave plain talking head where nothing needs proof.
+   - A spoken result or amount -> stat_pill_counter, ONLY with the exact number the speaker said. No number said = no stat card.
+   - A learning path or 3 to 5 steps -> workflow_steps (one item per spoken step, in order).
+   - Value or old-vs-new contrast -> before_after_split (left = what was said first, right = the second). Never add prices that were not said.
+   - Posting, sharing, tagging, uploading steps -> window_card (generic app window, not a real platform screen).
+   - A list of topics or categories -> pill_row.
+   - A comment or follow request -> cta_card, only if the speaker says it.
+   - Never use a person's name, handle, logo or brand unless the speaker said it.`;
 
 export function makePrompt(slot: VisualSlot, theme: string, sentence: string, prev?: { type: string; title: string }): string {
   return `You are Editorr's visual director. Do NOT use any tools, do NOT read or write files.

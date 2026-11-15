@@ -14,6 +14,8 @@ const RE_CTA = /\b(comment|follow|subscribe|dm me|link in bio|share this|save th
 const RE_FLOW = /\bfrom\b.{2,40}\bto\b|\b(turns? into|convert(s|ed)? (to|into)|becomes?)\b|->|\u2192|\bse\b.{2,30}\btak\b/i;
 const RE_BA = /\b(before|pehle|pahle|earlier|used to)\b.{2,80}\b(after|now|ab|abhi|today|aaj)\b|\bfrom\b.{2,30}\bto\b.{2,30}\b(now)\b/i;
 const RE_ARROW = /\b(scroll up|upar|ऊपर|go up|goes up|rise|increase|badh|grow|go down|neeche|decrease|drop|fall|gir)\b/i;
+/** posting / sharing steps: a generic, platform-neutral action window (never a copy of a real app screen) */
+const RE_POSTSTEP = /\b(tag|tagging|location|audience|caption it|upload|uploading|post it|posting|schedule|share it|hashtags?)\b|ট্যাগ|লোকেশন|আপলোড/i;
 const RE_APP = /\b(app|website|site|software|tool|platform|login|click|paste|download|link|extension|plugin|dashboard)\b/i;
 
 interface Sentence { text: string; startMs: number; endMs: number }
@@ -32,7 +34,7 @@ export function sentencesOf(ws: TWord[]): Sentence[] {
 const numsOf = (s: string) => (s.match(NUM) ?? []).map(x => x.trim()).filter(x => /\d/.test(x));
 const listParts = (s: string) => s.split(/,|;|\band\b|\bthen\b| এবং | আর | और /i).map(x => limitWords(x.trim(), 4)).filter(x => x.length > 1);
 
-export function classify(s: string): VisualType {
+export function classify(s: string, themeId?: string): VisualType {
   const n = numsOf(s);
   if (RE_CTA.test(s)) return 'cta_card';
   if (RE_CODE.test(s)) return 'terminal';
@@ -45,6 +47,7 @@ export function classify(s: string): VisualType {
   if (listParts(s).length >= 3 && listParts(s).every(x => words(x).length <= 2)) return 'pill_row';
   if (RE_LIST.test(s) || listParts(s).length >= 3) return 'list_card';
   if (RE_ARROW.test(s)) return 'arrow_callout';
+  if (themeId === 'joseph' && RE_POSTSTEP.test(s) && !RE_CODE.test(s)) return 'window_card'; // only this template, so other looks do not change
   if (RE_APP.test(s)) return RE_CODE.test(s) ? 'window_card' : 'command_palette';
   if (RE_DEF.test(s)) return 'definition_card';
   return words(s).length <= 12 ? 'quote_card' : 'keyword_title';
@@ -54,7 +57,7 @@ export function classify(s: string): VisualType {
 const TEXTY: VisualType[] = ['glass_card_hero', 'curved_arrow_callout', 'title_stack', 'geo_title', 'radial_burst', 'bracket_focus', 'quote_card', 'highlight_card', 'halftone_frame', 'stack_card', 'frame_card', 'keyword_title'];
 const ALT: VisualType[] = [...TEXTY, 'definition_card', 'list_card'];
 
-export function planLocal(ws: TWord[], durationMs: number, mix: VisualType[] = []): VisualSlot[] {
+export function planLocal(ws: TWord[], durationMs: number, mix: VisualType[] = [], themeId?: string): VisualSlot[] {
   const ss = sentencesOf(ws).filter(s => s.endMs - s.startMs > 500 && words(s.text).length >= 2);
   const slots: VisualSlot[] = []; let cursor = 0;
   for (const s of ss) {
@@ -62,8 +65,13 @@ export function planLocal(ws: TWord[], durationMs: number, mix: VisualType[] = [
     const start = s.startMs, end = Math.min(durationMs, start + Math.max(2000, Math.min(5000, s.endMs - s.startMs)));
     const prev = slots[slots.length - 1];
     if (prev && start - prev.endMs <= 3000 && prev.endMs - prev.startMs < 5000) prev.endMs = Math.min(start, prev.startMs + 5000);
-    slots.push({ id: `v${slots.length + 1}`, startMs: start, endMs: end, type: classify(s.text), intent: limitWords(s.text, 10) });
+    slots.push({ id: `v${slots.length + 1}`, startMs: start, endMs: end, type: classify(s.text, themeId), intent: limitWords(s.text, 10) });
     cursor = end;
+  }
+  // Joseph Inspired: plain speech with nothing to prove stays a talking head (no filler text card); if that would leave nothing, keep all
+  if (themeId === 'joseph') {
+    const kept = slots.filter(sl => !TEXTY.includes(sl.type));
+    if (kept.length) { slots.length = 0; kept.forEach((k, i) => slots.push({ ...k, id: `v${i + 1}` })); }
   }
   // rotation: never the same type twice in a row; one type at most 30% of the slots
   const cap = Math.max(2, Math.ceil(slots.length * 0.3)), count: Partial<Record<VisualType, number>> = {};

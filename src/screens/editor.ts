@@ -100,6 +100,8 @@ export function editorScreen() {
   let textSel: string | null = null;
   /** the text / docu beat / B-roll beat picked on the timeline (white outline) */
   let laySel: { kind: 'text' | 'docu' | 'broll' | 'overlay'; id: string } | null = null;
+  /** Hold the Raw button: the preview shows the source without cards, B-roll, texts, captions, grade or the move into a card window. Nothing is changed in the project. */
+  let rawPreview = false;
   let capSel = -1;
   let textHandle: TextSheetHandle | null = null;
   let docuHandle: DocuSheetHandle | null = null;
@@ -195,7 +197,18 @@ export function editorScreen() {
   const dialogHost = h('div', { class: 'taskdialog-wrap' });
   const hudTimeBadge = h('div', { class: 'hud-time-badge' }, `${fmtClock(playMs)} / ${fmtClock(p.durationMs)}`);
   const playRipple = h('div', { class: 'preview-play-ripple' }, icon('play', 28));
-  const preview = h('div', { class: 'preview' }, stage, guideV, guideH, playRipple);
+  // Raw / Edited comparison: hold = source only, release = edited. Same playhead, same crop, same playback state (the video element is never touched).
+  const setRaw = (on: boolean) => {
+    if (rawPreview === on || destroyed) return;
+    rawPreview = on;
+    rawBtn.classList.toggle('on', on);
+    applyLayout(segmentAt(p.segments, playMs)); drawCaptionsPreview(); requestDraw();
+  };
+  const rawBtn = h('button', { class: 'raw-cmp', 'aria-label': 'Hold to see the raw video', title: 'Hold: raw video. Release: edited.',
+    onpointerdown: (e: Event) => { e.preventDefault(); setRaw(true); },
+    onpointerup: () => setRaw(false), onpointercancel: () => setRaw(false), onpointerleave: () => setRaw(false),
+    oncontextmenu: (e: Event) => e.preventDefault() }, 'Raw');
+  const preview = h('div', { class: 'preview' }, stage, guideV, guideH, playRipple, rawBtn);
 
   function triggerPlayRipple(isPlaying: boolean) {
     playRipple.replaceChildren(icon(isPlaying ? 'play' : 'pause', 28));
@@ -282,7 +295,7 @@ export function editorScreen() {
   /** The crop the preview draws: the clip's crop, plus the move into the window while a split typography beat plays. */
   function displayCrop(role: Role): CropState {
     const base = cropOf(role);
-    const b = splitBeatAt(p.docu, playMs);
+    const b = rawPreview ? undefined : splitBeatAt(p.docu, playMs);
     return b && (segmentAt(p.segments, playMs)?.main ?? 'host') === role ? docuCrop(base, b, aspectValue(p.aspect)) : base;
   }
   /** Same crop, ready to edit: the clip under the playhead gets its own copy first, so other clips stay as they are. */
@@ -371,7 +384,7 @@ export function editorScreen() {
     clip.style.boxSizing = 'border-box';
     // Mirroring only flips the picture, never the border.
     v.style.transform = mirrored ? 'scaleX(-1)' : '';
-    v.style.filter = gradeCss(p.grade);
+    v.style.filter = rawPreview ? '' : gradeCss(p.grade);
 
     if (cell) { cell.style.border = ''; cell.style.borderRadius = ''; }
     if (role === selClip) updateSelFrame();
@@ -2684,6 +2697,7 @@ export function editorScreen() {
     if (capCanvas.width !== w || capCanvas.height !== hh) { capCanvas.width = w; capCanvas.height = hh; }
     g.clearRect(0, 0, w, hh);
     previewHits = [];
+    if (rawPreview) { pauseBrollVideos(); return; }
     // B-roll photos sit under the documentary cards, captions and texts
     const brollBeat = brollBeatAt(p.broll, playMs);
     if (brollBeat) drawBrollFrame(g, brollBeat, playMs, w, hh, drawCaptionsPreview, playing);
