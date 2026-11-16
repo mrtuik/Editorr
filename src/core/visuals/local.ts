@@ -54,7 +54,7 @@ export function classify(s: string, themeId?: string): VisualType {
 }
 
 /** Sentences without numbers or structure get these text graphics; they rotate so a whole video is not one look. */
-const TEXTY: VisualType[] = ['glass_card_hero', 'curved_arrow_callout', 'title_stack', 'geo_title', 'radial_burst', 'bracket_focus', 'quote_card', 'highlight_card', 'halftone_frame', 'stack_card', 'frame_card', 'keyword_title'];
+const TEXTY: VisualType[] = ['glass_card_hero', 'curved_arrow_callout', 'title_stack', 'radial_burst', 'bracket_focus', 'quote_card', 'highlight_card', 'halftone_frame', 'stack_card', 'frame_card', 'keyword_title'];
 const ALT: VisualType[] = [...TEXTY, 'definition_card', 'list_card'];
 
 export function planLocal(ws: TWord[], durationMs: number, mix: VisualType[] = [], themeId?: string): VisualSlot[] {

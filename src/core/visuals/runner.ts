@@ -3,6 +3,7 @@
  * drawn, placed on the timeline and shown before the next starts. Stop keeps everything already made; a failed slot is skipped.
  */
 import type { CapWord } from '../captions';
+import { needsRoman, romanize } from '../romanize';
 import type { DocuBeat } from '../docuTypes';
 import type { Aspect } from '../types';
 import { makeAi, planAi, withTimeout } from './ai';
@@ -29,6 +30,16 @@ export const toTWords = (ws: CapWord[]): TWord[] => ws.map(w => ({ text: w.orig 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const sentenceIn = (ws: CapWord[], a: number, b: number) => ws.filter(w => w.e > a - 100 && w.s < b + 100).map(w => w.orig || w.w).join(' ').trim();
 const byStart = (l: DocuBeat[]) => l.sort((a, b) => a.start - b.start);
+
+/** Card text is never Devanagari or Bengali script: English stays, Hindi / Bengali words become Roman letters (offline, no AI). Code and numbers are untouched. */
+function romanData<T extends object>(d: T): T {
+  const r = (x: string) => (needsRoman(x) ? romanize(x) : x);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(d as Record<string, unknown>)) {
+    out[k] = k === 'code' || k === 'lang' ? v : typeof v === 'string' ? r(v) : Array.isArray(v) ? v.map(x => (typeof x === 'string' ? r(x) : x)) : v;
+  }
+  return out as T;
+}
 
 export async function runVisuals(o: RunOpts): Promise<RunResult> {
   const { host, ctrl } = o;
@@ -69,6 +80,7 @@ export async function runVisuals(o: RunOpts): Promise<RunResult> {
           aiMade++;
         } catch (e) { aiFailed++; aiError ??= (e as Error).message || 'no answer'; data = local.data; motion = local.motion; type = local.type; }
       } else { data = local.data; motion = local.motion; type = local.type; }
+      data = romanData(data);
       const v: Visual = { id: slot.id, type, data, themeId: o.themeId, motion, startMs: slot.startMs, endMs: slot.endMs };
       const beat = await makeVisualBeat(v, host.aspect);
       host.setBeats(byStart([...host.getBeats().filter(b => b.id !== slot.id), beat]));

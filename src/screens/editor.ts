@@ -2763,7 +2763,7 @@ export function editorScreen() {
       const data = await job.promise;
       if (!data.words.length) { toast('No clear speech found (Whistle only heard repeated sounds). Try the other language chip or check the audio source.', 8000); return false; }
       p.captions = data;
-      p.captionStyle ??= { ...DEFAULT_CAPTION_STYLE };
+      p.captionStyle ??= structuredClone(DEFAULT_CAPTION_STYLE);
       capVersion++;
       scheduleSave(); drawCaptionsPreview();
       toast(`Captions ready: ${data.words.length} words. Style them in Text.`);

@@ -29,12 +29,14 @@ RULES
 3. Never the same type twice in a row. One type at most 30 percent of all slots.
 4. Never plain text alone twice in a row; alternate cards, arrows, metrics and diagrams.
 5. startMs starts at a sentence beginning, endMs ends at its punchline.
-6. Never invent facts, numbers, people or accounts.${theme === 'Joseph Inspired' ? JOSEPH_RULES : ''}`;
+6. Never invent facts, numbers, people or accounts.
+7. Write every word of every field in English, or in Roman letters (Hinglish / Banglish). NEVER use Devanagari, Bengali or any other script.
+8. NEVER use geo_title (rings, orbiting dots, squares). Use a calmer type.${theme === 'Joseph Inspired' ? JOSEPH_RULES : ''}`;
 }
 
 /** Extra rules of the Joseph Inspired template (original look, inspired by a reference reel's editing grammar). */
 const JOSEPH_RULES = `
-7. JOSEPH INSPIRED: calm, premium, dark. Make the speech visible, do not decorate it. Only 1 card per spoken idea; leave plain talking head where nothing needs proof.
+9. JOSEPH INSPIRED: calm, premium, dark. Make the speech visible, do not decorate it. Only 1 card per spoken idea; leave plain talking head where nothing needs proof.
    - A spoken result or amount -> stat_pill_counter, ONLY with the exact number the speaker said. No number said = no stat card.
    - A learning path or 3 to 5 steps -> workflow_steps (one item per spoken step, in order).
    - Value or old-vs-new contrast -> before_after_split (left = what was said first, right = the second). Never add prices that were not said.

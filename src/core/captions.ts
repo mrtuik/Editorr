@@ -29,7 +29,8 @@ export interface CaptionStyle {
   /** dual writing: the original script on the main line and Banglish / Hinglish in small letters under it */
   dual?: boolean;
 }
-export const DEFAULT_CAPTION_STYLE: CaptionStyle = { look: 'karaoke', size: 0.055, y: 0.78, wordsPerLine: 3, upper: false, color: '#FFFFFF', highlight: '#FFD60A', roman: true };
+/** Default look (from the "final video" reference): calm medium sans, one key word per line in bold italic serif, centred in the lower middle, no heavy outline. */
+export const DEFAULT_CAPTION_STYLE: CaptionStyle = { look: 'minimal', size: 0.05, y: 0.66, wordsPerLine: 4, upper: false, color: '#FFFFFF', highlight: '#FFFFFF', roman: true, fx: { font: 'soft' }, pair: { font: 'editorial', mode: 'key', italic: true, color: '#FFFFFF' } };
 
 // ---------------------------------------------------------------------- per-word / per-text effects (Fx)
 export type FontId = 'sans' | 'condensed' | 'serif' | 'mono' | 'casual' | 'script' | 'heavy' | 'poppins' | 'soft' | 'editorial' | 'baskerville' | 'typewriter' | 'slab';
@@ -461,7 +462,8 @@ export function withOpacity(hex: string, a: number | undefined): string {
 }
 
 export function textStyleOf(t: TextItem): CaptionStyle {
-  return { ...DEFAULT_CAPTION_STYLE, look: t.look, size: t.size, y: t.y, color: withOpacity(t.color, t.opacity), wordsPerLine: 99, upper: false, roman: false };
+  const { fx: _fx, pair: _pair, ...base } = DEFAULT_CAPTION_STYLE; // a text overlay never inherits the caption font pairing
+  return { ...base, highlight: '#FFD60A', look: t.look, size: t.size, y: t.y, color: withOpacity(t.color, t.opacity), wordsPerLine: 99, upper: false, roman: false };
 }
 export function textPage(t: TextItem): CapPage {
   const words = t.text.trim().split(/\s+/).filter(Boolean).map((w) => ({ t: w, s: t.s, e: t.e }));

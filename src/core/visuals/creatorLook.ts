@@ -9,8 +9,8 @@ const CODE = L('code', ['code_window', 'terminal', 'stat_counter']);
 const VOX = L('vox', ['bar_chart', 'versus_card', 'definition_card']);
 const KALLAWAY = L('kallaway', ['quote_card', 'list_card', 'stat_counter', 'timeline']);
 const REEL_D = L('reel-dark', ['title_stack', 'pill_row', 'window_card', 'arrow_callout', 'flow_diagram', 'cta_card']);
-const REEL_L = L('reel-light', ['title_stack', 'geo_title', 'halftone_frame', 'before_after', 'highlight_card']);
-const REEL_P = L('reel-purple', ['title_stack', 'before_after', 'pill_row', 'window_card', 'flow_diagram', 'geo_title']);
+const REEL_L = L('reel-light', ['title_stack', 'halftone_frame', 'before_after', 'highlight_card']);
+const REEL_P = L('reel-purple', ['title_stack', 'before_after', 'pill_row', 'window_card', 'flow_diagram']);
 // proof number, roadmap, old-vs-new, generic app-action window, topic pills, end call to action
 const JOSEPH = L('joseph', ['stat_pill_counter', 'workflow_steps', 'before_after_split', 'window_card', 'pill_row', 'cta_card']);
 const NOIR = L('noir', ['quote_card', 'keyword_title', 'timeline']);

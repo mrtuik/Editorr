@@ -165,7 +165,7 @@ export const CREATORS: CreatorTemplate[] = [
   // ---- original template inspired by the visible editing grammar of a reference reel (spec: joseph_creator_template_spec.md). No creator name, logo, wording or UI is copied; all text comes from the user's own words.
   { id: 'joseph_inspired', name: 'Joseph Inspired', hint: 'Dark talking head, proof / roadmap / compare cards, quiet emphasis', swatch: ['#07090A', '#121715', '#10B981'],
     // emerald is an editable default, NOT a verified colour of the reference; safe-area aware (y 0.74 keeps clear of the app UI at the bottom)
-    caption: { look: 'pop', size: 0.052, y: 0.74, wordsPerLine: 3, upper: false, color: '#FFFFFF', highlight: '#10B981', fx: { font: 'sans' } },
+    caption: { look: 'minimal', size: 0.05, y: 0.66, wordsPerLine: 4, upper: false, color: '#FFFFFF', highlight: '#FFFFFF', fx: { font: 'soft' }, pair: { font: 'editorial', mode: 'key', italic: true, color: '#FFFFFF' } },
     docu: 'glass', zones: false, motions: ['slow_zoom', 'drift', 'zoom_in', 'slow_pan'],
     // cutaways are drawn cards only (no stock); grade is neutral: preserve source
     recipe: { cards: false, docuBeats: false, motion: true, lenMs: 2600, frame: 'card', coverage: 'alternate', videoMode: 'photos', fillGaps: false, grade: { contrast: 0, sat: 0, bright: 0 } },

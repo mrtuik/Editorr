@@ -1,3 +1,8 @@
+# v55.2
+- Shapes card (rings, orbiting dots, squares: `geo_title`) is never picked automatically any more (all templates, offline and AI). It stays in the manual picker only.
+- New default caption style (from the reference "final video"): calm medium sans, one key word per line in bold italic serif, centred lower-middle (y 0.66), no heavy outline. Also a caption template "Final Cut"; Joseph Inspired uses the same. Other templates do not inherit its font pairing.
+- Card text is never Hindi/Bengali script: AI prompt says English or Roman letters; offline text is romanized (visual cards, docu cards, Kallaway cards).
+
 # v55.1: progress bar redesigned (full width, flat, thin progress line, no spinner)
 
 # Editorr v55: Joseph Inspired template (from joseph_creator_template_spec.md)

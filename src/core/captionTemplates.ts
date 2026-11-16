@@ -10,6 +10,7 @@ export interface CaptionTemplate { id: string; name: string; hint: string; style
 const dark = (b: number, d = 0.07, a = 90) => ({ c: 'rgba(0,0,0,0.8)', b, d, a });
 
 export const CAPTION_TEMPLATES: CaptionTemplate[] = [
+  { id: 'finalcut', name: 'Final Cut', hint: 'Soft sans + bold italic serif key word', style: { look: 'minimal', size: 0.05, y: 0.66, wordsPerLine: 4, upper: false, color: '#FFFFFF', highlight: '#FFFFFF', fx: { font: 'soft' }, pair: { font: 'editorial', mode: 'key', italic: true, color: '#FFFFFF' } } },
   { id: 'kallaway', name: 'Kallaway', hint: 'Pop bounce, red word', style: { look: 'pop', size: 0.056, y: 0.78, wordsPerLine: 3, upper: false, color: '#FFFFFF', highlight: '#E5192B', fx: { font: 'heavy' } } },
   { id: 'hormozi', name: 'Hormozi', hint: 'Big caps, yellow word', style: { look: 'karaoke', size: 0.075, y: 0.58, wordsPerLine: 2, upper: true, color: '#FFFFFF', highlight: '#FFE600', fx: { font: 'heavy', stroke: { c: '#000000', w: 0.2 }, shadow: dark(0.2, 0.08) } } },
   { id: 'duo', name: 'Duo Serif', hint: 'Heavy + italic serif key word', style: { look: 'pop', size: 0.06, y: 0.7, wordsPerLine: 3, upper: false, color: '#FFFFFF', highlight: '#FFD60A', fx: { font: 'heavy' }, pair: { font: 'editorial', mode: 'key', italic: true, color: '#FFD60A' } } },
@@ -28,5 +29,6 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
 /** The captions' style after a template: its numbers, the person's writing choice kept, nothing left over from the old template. */
 export function applyCaptionTemplate(old: CaptionStyle | undefined, t: CaptionTemplate): CaptionStyle {
   const cur = old ?? DEFAULT_CAPTION_STYLE;
-  return { ...DEFAULT_CAPTION_STYLE, roman: cur.roman, ...(cur.dual ? { dual: true } : {}), ...structuredClone(t.style) } as CaptionStyle;
+  const { fx: _fx, pair: _pair, ...base } = DEFAULT_CAPTION_STYLE; // the default's own font pairing must not leak into other templates
+  return { ...base, roman: cur.roman, ...(cur.dual ? { dual: true } : {}), ...structuredClone(t.style) } as CaptionStyle;
 }

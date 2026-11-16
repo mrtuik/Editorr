@@ -6,6 +6,7 @@
  * shows through. The video underneath is shifted by `docuShift()` so the window shows the middle of the picture.
  */
 import { Capacitor } from '@capacitor/core';
+import { needsRoman, romanize } from './romanize';
 import { CARD_SHARE_SIDE, CARD_SHARE_UPDOWN, DOCU_FADE_MS, DEFAULT_CARD_RADIUS, DOCU_FONT_CSS, DOCU_FONT_WEIGHT, isGlass, type DocuBeat, type DocuLayout, type DocuPos } from './docuTypes';
 import { dotGrid, glassCard } from './glass';
 import type { CapZone } from './captions';
@@ -54,7 +55,7 @@ export const docuAlpha = (b: DocuBeat, ms: number) => Math.max(0, Math.min(1, (m
 const FONT = 'Roboto, "Noto Sans", Arial, sans-serif';
 
 function wrap(g: CanvasRenderingContext2D, text: string, maxW: number): string[] {
-  const words = text.trim().split(/\s+/).filter(Boolean);
+  const words = (needsRoman(text) ? romanize(text) : text).trim().split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let cur = '';
   for (const w of words) {

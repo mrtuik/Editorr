@@ -10,6 +10,7 @@
  * A step list becomes one beat per point, so the red bar follows what is being said.
  */
 import { Capacitor } from '@capacitor/core';
+import { needsRoman, romanize } from './romanize';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { docuGeometry } from './docuRenderer';
 import { glassCard } from './glass';
@@ -108,7 +109,7 @@ function rr(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: num
 
 
 function wrapLines(g: CanvasRenderingContext2D, text: string, maxW: number, maxLines: number): string[] {
-  const words = text.trim().split(/\s+/).filter(Boolean);
+  const words = (needsRoman(text) ? romanize(text) : text).trim().split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let cur = '';
   for (const w of words) {
