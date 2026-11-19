@@ -1,4 +1,5 @@
 # Remove BG: SAM 2 + RVM, preview and export
+- Fix: RVM now runs on the CPU only (the GPU backend failed on its Concat/AveragePool layers). SAM 2 falls back to the CPU if the GPU fails while running. The model download streams straight to disk (it was held 3 times in memory and could shut a weak phone off), stops with a message when the battery is low (SAM 2 below 25%, RVM below 12%, unless charging), and the screen is kept awake while it runs.
 - Tool **Remove BG** (main row, clip tools, segment tools). Sheet: engine (**SAM 2** or **RVM**), Host/Constant, quality, what goes behind the person (blur, black, white, green, custom), Restore original.
 - **SAM 2** (`core/bgremove/sam.ts`): sharpest cut of one person; uses the face scan for its prompt points. Models download once (~150 MB, SharpAI/sam2-hiera-tiny-onnx).
 - **RVM** (`core/bgremove/rvm.ts`): made for video, 4 recurrent tensors keep the edges steady, finds people by itself, no face scan. MobileNetV3 fp32 (~15 MB) is bundled by CI into `public/rvm` (GitHub release as fallback). GPL-3.0.

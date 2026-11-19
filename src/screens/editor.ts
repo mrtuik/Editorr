@@ -10,6 +10,7 @@ import { askRemoveBg } from './bgRemoveSheet';
 import { BgCutter, deleteMaskTrack, loadMaskTrack, saveMaskTrack, type BgCfg, type MaskTrack } from '../core/bgremove';
 import { MASK, Sam2, maskStats, type Prompt } from '../core/bgremove/sam';
 import { RVM_STORE_LONG, Rvm } from '../core/bgremove/rvm';
+import { checkBattery, keepAwake } from '../core/bgremove/ort';
 import { openCaptionSheet, type CaptionSheetHandle } from './captionSheet';
 import { openTextItemsSheet, type TextSheetHandle } from './textSheet';
 import { openDocuSheet, type DocuSheetHandle, type DocuTab } from './docuSheet';
@@ -2730,7 +2731,10 @@ export function editorScreen() {
     const name = rvm ? 'RVM' : 'SAM 2';
     startTask('bgremove', `Loading ${name}`, 0, { modal: true, cancel: () => { bgCancel = true; } });
     let sam: Sam2 | null = null, rv: Rvm | null = null;
+    let release: () => void = () => {};
     try {
+      await checkBattery(rvm ? 0.12 : 0.25, name);
+      release = await keepAwake();
       if (rvm) rv = await Rvm.load((msg, pct) => updateTask('bgremove', msg, pct), () => bgCancel);
       else sam = await Sam2.load((msg, pct) => updateTask('bgremove', msg, pct), () => bgCancel);
       const v = vid(r);
@@ -2782,7 +2786,7 @@ export function editorScreen() {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg !== 'cancelled') toast(`Remove BG failed: ${msg}`, 9000); else toast('Cancelled');
     } finally {
-      endTask('bgremove'); bgBusy = false; scanLock = false;
+      endTask('bgremove'); bgBusy = false; scanLock = false; release();
       void sam?.dispose(); void rv?.dispose();
       for (const rr of ['host', 'constant'] as Role[]) { const vv = vid(rr); try { vv.pause(); } catch { /* ignore */ } vv.playbackRate = 1; }
       updateVideoAudioMute();

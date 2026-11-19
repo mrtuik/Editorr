@@ -15,7 +15,10 @@ export function loadOrt(): Promise<any> {
   return ortP;
 }
 
-/** Download with progress, kept in the Cache Storage (so it happens once). `urls` are tried in order. */
+/**
+ * Model bytes, downloaded once. The file is streamed straight into the Cache Storage (never held in memory while it
+ * downloads), then read back once. `urls` are tried in order.
+ */
 export async function getModelBytes(cacheName: string, urls: string[], minBytes: number, onPct: (p: number) => void, cancelled: () => boolean): Promise<Uint8Array> {
   let cache: Cache | null = null;
   try { cache = await caches.open(cacheName); } catch { cache = null; }
@@ -23,29 +26,51 @@ export async function getModelBytes(cacheName: string, urls: string[], minBytes:
   for (const url of urls) {
     try {
       const hit = await cache?.match(url);
-      if (hit) { const b = new Uint8Array(await hit.arrayBuffer()); if (b.length >= minBytes) return b; }
-      const res = await fetch(url);
+      if (hit) { const b = new Uint8Array(await hit.arrayBuffer()); if (b.length >= minBytes) return b; await cache?.delete(url); }
+      const ac = new AbortController();
+      const res = await fetch(url, { signal: ac.signal });
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
       const total = Number(res.headers.get('content-length')) || 0;
-      const reader = res.body.getReader();
-      const parts: Uint8Array[] = [];
       let got = 0;
-      for (;;) {
-        if (cancelled()) { try { await reader.cancel(); } catch { /* ignore */ } throw new Error('cancelled'); }
-        const { done, value } = await reader.read();
-        if (done) break;
-        parts.push(value); got += value.length;
-        if (total) onPct(Math.min(99, (got / total) * 100));
+      const counter = new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, ctl) {
+          if (cancelled()) { ac.abort(); ctl.error(new Error('cancelled')); return; }
+          got += chunk.length;
+          if (total) onPct(Math.min(99, (got / total) * 100));
+          ctl.enqueue(chunk);
+        },
+      });
+      const body = res.body.pipeThrough(counter);
+      if (cache) {
+        await cache.put(url, new Response(body, { headers: { 'content-type': 'application/octet-stream' } }));
+        const back = await cache.match(url);
+        const b = new Uint8Array(await back!.arrayBuffer());
+        if (b.length < minBytes) { await cache.delete(url); throw new Error('file too small (not a model)'); }
+        return b;
       }
-      if (got < minBytes) throw new Error('file too small (not a model)');
-      const out = new Uint8Array(got);
-      let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
-      try { await cache?.put(url, new Response(out.slice(0))); } catch { /* storage full: downloaded again next time */ }
-      return out;
+      const b = new Uint8Array(await new Response(body).arrayBuffer());
+      if (b.length < minBytes) throw new Error('file too small (not a model)');
+      return b;
     } catch (e) {
-      if ((e as Error).message === 'cancelled') throw e;
+      if ((e as Error).message === 'cancelled' || (e as Error).name === 'AbortError') throw new Error('cancelled');
       lastErr = e;
     }
   }
   throw new Error(`Model download failed: ${(lastErr as Error)?.message ?? 'no connection'}`);
+}
+
+/** Heavy models can shut a nearly empty phone off: stop early with a clear message. */
+export async function checkBattery(minLevel: number, what: string): Promise<void> {
+  try {
+    const b = await (navigator as any).getBattery?.();
+    if (b && !b.charging && b.level < minLevel) throw new Error(`Battery is at ${Math.round(b.level * 100)}%. Charge to ${Math.round(minLevel * 100)}% or plug in the charger first. ${what} is heavy for the phone.`);
+  } catch (e) { if ((e as Error).message.startsWith('Battery')) throw e; }
+}
+
+/** Keeps the screen on while a long job runs (a locked screen pauses the WebView). Returns a release function. */
+export async function keepAwake(): Promise<() => void> {
+  try {
+    const lock = await (navigator as any).wakeLock?.request('screen');
+    return () => { try { void lock?.release(); } catch { /* ignore */ } };
+  } catch { return () => {}; }
 }

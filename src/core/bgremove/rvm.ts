@@ -35,12 +35,9 @@ export class Rvm {
     stage('Loading RVM', 0);
     const bytes = await getModelBytes(CACHE, URLS, 1_000_000, (p) => stage('Downloading RVM (first time only)', p), cancelled);
     stage('Starting RVM', 100);
-    const tries: { eps: string[]; name: string }[] = [{ eps: ['webgpu', 'wasm'], name: 'GPU' }, { eps: ['wasm'], name: 'CPU' }];
-    let last: unknown = null;
-    for (const t of tries) {
-      try { return new Rvm(ort, await ort.InferenceSession.create(bytes, { executionProviders: t.eps }), t.name); } catch (e) { last = e; }
-    }
-    throw last ?? new Error('RVM could not start');
+    // CPU (wasm) only: RVM's AveragePool / Concat layers are not supported by the WebGPU backend of onnxruntime-web
+    const sess = await ort.InferenceSession.create(bytes, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+    return new Rvm(ort, sess, 'CPU');
   }
 
   /** Forget the previous frames (call at the start of a video and after a jump in time). */

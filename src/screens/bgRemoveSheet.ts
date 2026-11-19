@@ -17,7 +17,7 @@ export function askRemoveBg(role: Role, current: { hostOn: boolean; constOn: boo
   return new Promise((resolve) => {
     const done = (v: BgAnswer) => { sheet.classList.add('out'); setTimeout(() => { box.remove(); resolve(v); }, 180); };
     const dl = h('span', { class: 'bg-sub' }, 'Checking model...');
-    void samDownloaded().then((ok) => { dl.textContent = ok ? 'Model is on this phone' : 'First use downloads about 150 MB'; });
+    void samDownloaded().then((ok) => { dl.textContent = ok ? 'Model is on this phone. Heavy: strong phone, battery above 25%' : 'Heavy. Downloads about 150 MB. Strong phone, battery above 25%'; });
     const card = (id: BgEngine, title: string, sub: string | HTMLElement, disabled: boolean) => {
       const b = h('button', { class: 'bg-eng' + (engine === id ? ' sel' : '') + (disabled ? ' off' : ''), disabled, onclick: () => {
         if (disabled) return; engine = id; engCards.forEach((c, k) => c.classList.toggle('sel', k === (id === 'sam' ? 0 : 1))); fillQuality();
@@ -59,7 +59,7 @@ export function askRemoveBg(role: Role, current: { hostOn: boolean; constOn: boo
         qualityBox,
         chips<BgFill>('Behind the person', 'Blur keeps the room but soft. Or pick a flat colour.',
           [['blur', 'Blur'], ['black', 'Black'], ['white', 'White'], ['green', 'Green'], ['color', 'Custom']], fill, (v) => { fill = v; if (v === 'color') colorIn.click(); }),
-        h('div', { class: 'at-hint' }, 'SAM 2 = sharpest cut on one person (uses the face scan). RVM = made for video, steadier edges, finds people by itself, quicker.'),
+        h('div', { class: 'at-hint' }, 'RVM = made for video, steadier edges, finds people by itself, light. Try RVM first. SAM 2 = sharper on one person but heavy: it can overheat or switch off a weak or low-battery phone.'),
         h('div', { class: 'at-sec' }, restore, colorIn)),
       h('div', { class: 'at-foot' }, h('button', { class: 'btn primary at-go', onclick: () => done({ engine, role: r, perSec, fill, color }) }, icon('removeBg', 20), 'Remove background')));
     const box = h('div', { class: 'at-scrim', onclick: (e: Event) => { if (e.target === box) done(null); } }, sheet);

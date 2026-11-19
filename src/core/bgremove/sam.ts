@@ -11,7 +11,7 @@ const CACHE = 'editorr-sam2-v1';
 const S = 1024;       // encoder input size
 export const MASK = 256; // decoder output size
 
-import { getModelBytes, loadOrt } from './ort';
+import { checkBattery, getModelBytes, loadOrt } from './ort';
 
 /** true when both model files are already on the phone */
 export async function samDownloaded(): Promise<boolean> {
@@ -27,25 +27,24 @@ export interface Embed { image_embed: any; high_res_feats_0: any; high_res_feats
 export interface Prompt { x: number; y: number }
 
 export class Sam2 {
-  private constructor(private ort: any, private enc: any, private dec: any, readonly provider: string) {}
+  private constructor(private ort: any, private enc: any, private dec: any, public provider: string, private encBytes: Uint8Array) {}
   private cv = document.createElement('canvas');
 
+  private static makeEnc(ort: any, bytes: Uint8Array, eps: string[]) {
+    return ort.InferenceSession.create(bytes, { executionProviders: eps, graphOptimizationLevel: 'disabled', enableCpuMemArena: false, enableMemPattern: false });
+  }
+
   static async load(stage: (msg: string, pct: number) => void, cancelled: () => boolean): Promise<Sam2> {
+    await checkBattery(0.25, 'SAM 2');
     const ort = await loadOrt();
     stage('Downloading SAM 2 (first time only)', 0);
     const encBytes = await getModel(SAM_ENCODER_URL, (p) => stage('Downloading SAM 2 (first time only)', p * 0.9), cancelled);
     const decBytes = await getModel(SAM_DECODER_URL, (p) => stage('Downloading SAM 2 (first time only)', 90 + p * 0.1), cancelled);
     stage('Starting SAM 2', 100);
-    const tries: { eps: string[]; name: string }[] = [{ eps: ['webgpu', 'wasm'], name: 'GPU' }, { eps: ['wasm'], name: 'CPU' }];
-    let last: unknown = null;
-    for (const t of tries) {
-      try {
-        const enc = await ort.InferenceSession.create(encBytes, { executionProviders: t.eps, graphOptimizationLevel: 'disabled' });
-        const dec = await ort.InferenceSession.create(decBytes, { executionProviders: ['wasm'] });
-        return new Sam2(ort, enc, dec, t.name);
-      } catch (e) { last = e; }
-    }
-    throw last ?? new Error('SAM 2 could not start');
+    let enc: any, name = 'GPU';
+    try { enc = await Sam2.makeEnc(ort, encBytes, ['webgpu', 'wasm']); } catch { enc = await Sam2.makeEnc(ort, encBytes, ['wasm']); name = 'CPU'; }
+    const dec = await ort.InferenceSession.create(decBytes, { executionProviders: ['wasm'] });
+    return new Sam2(ort, enc, dec, name, encBytes);
   }
 
   /** Picture (video frame or canvas) -> embedding. This is the slow step (seconds). */
@@ -61,7 +60,16 @@ export class Sam2 {
       data[plane + i] = (px[i * 4 + 1] / 255 - mean[1]) / std[1];
       data[2 * plane + i] = (px[i * 4 + 2] / 255 - mean[2]) / std[2];
     }
-    const out = await this.enc.run({ image: new this.ort.Tensor('float32', data, [1, 3, S, S]) });
+    const feeds = { image: new this.ort.Tensor('float32', data, [1, 3, S, S]) };
+    let out: any;
+    try { out = await this.enc.run(feeds); }
+    catch (e) {
+      // the GPU backend can fail on a layer at run time: start again on the CPU
+      if (this.provider !== 'GPU') throw e;
+      try { await this.enc.release(); } catch { /* ignore */ }
+      this.enc = await Sam2.makeEnc(this.ort, this.encBytes, ['wasm']); this.provider = 'CPU';
+      out = await this.enc.run(feeds);
+    }
     return { image_embed: out.image_embed, high_res_feats_0: out.high_res_feats_0, high_res_feats_1: out.high_res_feats_1 };
   }
 
