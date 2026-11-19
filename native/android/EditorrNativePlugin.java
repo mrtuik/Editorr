@@ -2629,6 +2629,89 @@ public class EditorrNativePlugin extends Plugin {
         }
     }
 
+    /** Remove BG export: joins the baked video pieces (same encoder settings) and copies the audio track of the original into one MP4. */
+    @PluginMethod
+    public void muxAudio(final PluginCall call) {
+        final JSArray vids = call.getArray("videoPaths");
+        final JSArray counts = call.getArray("frameCounts");
+        final int fps = Math.max(1, call.getInt("fps", 30));
+        final String audioPath = call.getString("audioPath");
+        final String outPath = call.getString("outPath");
+        if (vids == null || vids.length() == 0 || counts == null || outPath == null) { call.reject("bad arguments"); return; }
+        new Thread(() -> {
+            android.media.MediaMuxer mx = null;
+            MediaExtractor ae = null;
+            boolean ok = false;
+            try {
+                File outF = new File(outPath);
+                if (outF.getParentFile() != null) outF.getParentFile().mkdirs();
+                if (outF.exists()) outF.delete();
+                mx = new android.media.MediaMuxer(outPath, android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+                // video format from the first piece
+                MediaExtractor first = new MediaExtractor();
+                first.setDataSource(vids.getString(0));
+                int fv = -1;
+                for (int i = 0; i < first.getTrackCount(); i++) { String m = first.getTrackFormat(i).getString(MediaFormat.KEY_MIME); if (m != null && m.startsWith("video/")) { fv = i; break; } }
+                if (fv < 0) throw new Exception("baked video has no video track");
+                final int vTrack = mx.addTrack(first.getTrackFormat(fv));
+                first.release();
+                int aTrack = -1, ai = -1;
+                if (audioPath != null && !audioPath.isEmpty()) {
+                    ae = new MediaExtractor();
+                    ae.setDataSource(audioPath);
+                    for (int i = 0; i < ae.getTrackCount(); i++) { String m = ae.getTrackFormat(i).getString(MediaFormat.KEY_MIME); if (m != null && m.startsWith("audio/")) { ai = i; break; } }
+                    if (ai >= 0) aTrack = mx.addTrack(ae.getTrackFormat(ai));
+                }
+                mx.start();
+                ByteBuffer buf = ByteBuffer.allocate(2 * 1024 * 1024);
+                MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+                long cumFrames = 0;
+                for (int k = 0; k < vids.length(); k++) {
+                    MediaExtractor ve = new MediaExtractor();
+                    ve.setDataSource(vids.getString(k));
+                    int vi = -1;
+                    for (int i = 0; i < ve.getTrackCount(); i++) { String m = ve.getTrackFormat(i).getString(MediaFormat.KEY_MIME); if (m != null && m.startsWith("video/")) { vi = i; break; } }
+                    if (vi < 0) { ve.release(); throw new Exception("a baked piece has no video"); }
+                    ve.selectTrack(vi);
+                    long offUs = cumFrames * 1_000_000L / fps;
+                    while (true) {
+                        buf.clear();
+                        int n = ve.readSampleData(buf, 0);
+                        if (n < 0) break;
+                        info.set(0, n, ve.getSampleTime() + offUs, (ve.getSampleFlags() & MediaExtractor.SAMPLE_FLAG_SYNC) != 0 ? MediaCodec.BUFFER_FLAG_KEY_FRAME : 0);
+                        mx.writeSampleData(vTrack, buf, info);
+                        ve.advance();
+                    }
+                    ve.release();
+                    cumFrames += counts.getInt(k);
+                }
+                if (aTrack >= 0) {
+                    ae.selectTrack(ai);
+                    while (true) {
+                        buf.clear();
+                        int n = ae.readSampleData(buf, 0);
+                        if (n < 0) break;
+                        info.set(0, n, ae.getSampleTime(), (ae.getSampleFlags() & MediaExtractor.SAMPLE_FLAG_SYNC) != 0 ? MediaCodec.BUFFER_FLAG_KEY_FRAME : 0);
+                        mx.writeSampleData(aTrack, buf, info);
+                        ae.advance();
+                    }
+                }
+                mx.stop();
+                ok = true;
+                for (int k = 0; k < vids.length(); k++) { try { new File(vids.getString(k)).delete(); } catch (Exception ignored) { } }
+                JSObject res = new JSObject();
+                res.put("path", outPath);
+                call.resolve(res);
+            } catch (Throwable e) {
+                try { new File(outPath).delete(); } catch (Exception ignored) { }
+                call.reject("Could not join the video and sound: " + e.getMessage());
+            } finally {
+                try { if (mx != null) mx.release(); } catch (Exception ignored) { }
+                try { if (ae != null) ae.release(); } catch (Exception ignored) { }
+            }
+        }).start();
+    }
+
     @PluginMethod
     public void exportProject(PluginCall call) {
         try {

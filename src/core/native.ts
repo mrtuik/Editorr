@@ -146,6 +146,8 @@ export interface EditorrNativePlugin {
   cancelProxy(opts: { path: string }): Promise<void>;
   /** Save a chunk (base64) of a file in the app files folder; returns the full path. */
   writeBytes(opts: { name: string; data: string; append?: boolean }): Promise<{ path: string }>;
+  /** Remove BG export: joins the baked video pieces and copies the original sound into one MP4. Deletes the pieces. */
+  muxAudio(opts: { videoPaths: string[]; frameCounts: number[]; fps: number; audioPath: string; outPath: string }): Promise<{ path: string }>;
   cancelExport(): Promise<void>;
   /** Optional YouTube module: enabled only in builds made with the flag (see README). */
   youtubeEnabled(): Promise<{ enabled: boolean }>;

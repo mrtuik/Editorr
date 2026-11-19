@@ -309,3 +309,19 @@ export interface Runtime {
 export interface DenoiseCache { source: Float32Array; values: Map<number, Float32Array> }
 
 export const runtime: Runtime = {};
+
+
+/** Small key/value rows in the 'kv' store (used for the Remove BG mask tracks; values may hold typed arrays). */
+export async function kvGet<T>(key: string): Promise<T | undefined> {
+  try {
+    await writes;
+    const row = await run<{ key: string; value: T }>('kv', 'readonly', (tx) => tx.objectStore('kv').get(key));
+    return row?.value;
+  } catch { return undefined; }
+}
+export function kvPut(key: string, value: unknown): Promise<void> {
+  return queueWrite(async () => { await run('kv', 'readwrite', (tx) => tx.objectStore('kv').put({ key, value })); }).catch(() => {});
+}
+export function kvDelete(key: string): Promise<void> {
+  return queueWrite(async () => { await run('kv', 'readwrite', (tx) => { tx.objectStore('kv').delete(key); }); }).catch(() => {});
+}

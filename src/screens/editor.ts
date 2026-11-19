@@ -6,6 +6,10 @@ import { motionToActivity } from '../core/motion';
 import { cropForFace, FACE_SAMPLE_MS, faceBetween, lastReport, motionFromScan, pickTrack, scanFaces, speakerRuns, type FaceReport, type FaceScan } from '../core/faces';
 import { pickFace } from './facePick';
 import { askFaceOptions } from './faceOptions';
+import { askRemoveBg } from './bgRemoveSheet';
+import { BgCutter, deleteMaskTrack, loadMaskTrack, saveMaskTrack, type BgCfg, type MaskTrack } from '../core/bgremove';
+import { MASK, Sam2, maskStats, type Prompt } from '../core/bgremove/sam';
+import { RVM_STORE_LONG, Rvm } from '../core/bgremove/rvm';
 import { openCaptionSheet, type CaptionSheetHandle } from './captionSheet';
 import { openTextItemsSheet, type TextSheetHandle } from './textSheet';
 import { openDocuSheet, type DocuSheetHandle, type DocuTab } from './docuSheet';
@@ -331,6 +335,16 @@ export function editorScreen() {
   hostCell.append(hostRing); constCell.append(constRing);
   const shapedRect: Record<Role, { l: number; t: number; w: number; h: number } | null> = { host: null, constant: null };
 
+  /** Remove BG: the live cut-out canvas of each video (exists once masks were made). */
+  const cutters: Partial<Record<Role, BgCutter>> = {};
+  function syncCutter(role: Role) {
+    const c = cutters[role];
+    if (!c) return;
+    const mirrored = role === 'host' ? p.mirrorHost : p.mirrorConst;
+    c.setShown(!rawPreview);
+    c.mirrorFilter(mirrored ? 'scaleX(-1)' : '', rawPreview ? '' : gradeCss(p.grade));
+  }
+
   /** Crop = zoom + move inside the frame. Uniform scale, zero distortion. */
   function applyCrop(role: Role) {
     const c = displayCrop(role);
@@ -387,6 +401,7 @@ export function editorScreen() {
     v.style.filter = rawPreview ? '' : gradeCss(p.grade);
 
     if (cell) { cell.style.border = ''; cell.style.borderRadius = ''; }
+    syncCutter(role);
     if (role === selClip) updateSelFrame();
   }
   applyCrop('host'); applyCrop('constant');
@@ -2654,6 +2669,132 @@ export function editorScreen() {
     return out;
   }
 
+
+  // ======================================================================= Remove BG (SAM 2 now, RVM next)
+  const bgFor = (r: Role) => p.bgRemove?.[r];
+  const bgLast = () => { const c = p.bgRemove?.host ?? p.bgRemove?.constant; return { perSec: c?.perSec ?? 2, fill: c?.fill ?? 'blur', color: c?.color ?? '#101828' } as const; };
+
+  function attachCutter(role: Role, track: MaskTrack) {
+    cutters[role]?.dispose();
+    cutters[role] = new BgCutter(vid(role), role === 'host' ? hostClip : constClip, track,
+      () => bgFor(role) ?? { engine: 'sam', fill: 'blur', color: '#101828', perSec: 2, count: 0 }, () => (role === 'host' ? 0 : p.offsetMs));
+    applyCrop(role);
+  }
+  async function restoreCutters() {
+    for (const r of ['host', 'constant'] as Role[]) {
+      if (!bgFor(r)) continue;
+      const t = await loadMaskTrack(p.id, r);
+      if (t && !destroyed) attachCutter(r, t);
+    }
+  }
+  void restoreCutters();
+
+  function removeBgOf(role: Role) {
+    cutters[role]?.dispose(); delete cutters[role];
+    if (p.bgRemove) { delete p.bgRemove[role]; if (!p.bgRemove.host && !p.bgRemove.constant) delete p.bgRemove; }
+    void deleteMaskTrack(p.id, role);
+    applyCrop(role); scheduleSave(); requestDraw();
+  }
+
+  function seekTo(v: HTMLVideoElement, sec: number): Promise<void> {
+    return new Promise((resolve) => {
+      let done = false;
+      const fin = () => { if (done) return; done = true; v.removeEventListener('seeked', fin); clearTimeout(to); resolve(); };
+      const to = window.setTimeout(fin, 3000);
+      v.addEventListener('seeked', fin);
+      try { v.currentTime = sec; } catch { fin(); }
+    });
+  }
+
+  let bgBusy = false, bgCancel = false;
+  /** "Remove BG" tool: ask engine / video / quality / background, then cut the person out. */
+  async function doRemoveBg(role?: Role) {
+    if (bgBusy || scanning) return;
+    const start = role ?? segmentAt(p.segments, playMs)?.main ?? 'host';
+    const a = await askRemoveBg(start, { hostOn: !!bgFor('host'), constOn: !!bgFor('constant') }, bgLast());
+    if (!a) return;
+    if (a.restore) { removeBgOf(a.role); toast('Original background is back.'); return; }
+    const r = a.role, rvm = a.engine === 'rvm';
+    // SAM 2 needs to know who to cut out (the face scan gives that); RVM finds people by itself
+    let track: ReturnType<typeof pickTrack>;
+    if (!rvm) {
+      const fr = await ensureFaces();
+      if (fr === 'busy') return;
+      if (fr === 'cancel') { toast('Cancelled'); return; }
+      const scan = faceScanOf(r);
+      if (fr === 'fail' || !scan?.tracks.length) { toast('No face found in this video, so SAM 2 does not know who to cut out. Try RVM, or the Faces tool first.', 6000); return; }
+      track = pickTrack(scan, r === 'host' ? p.faceHost : p.faceConst);
+    }
+    bgBusy = true; bgCancel = false; scanLock = true; setPlaying(false);
+    const savedMs = playMs;
+    const name = rvm ? 'RVM' : 'SAM 2';
+    startTask('bgremove', `Loading ${name}`, 0, { modal: true, cancel: () => { bgCancel = true; } });
+    let sam: Sam2 | null = null, rv: Rvm | null = null;
+    try {
+      if (rvm) rv = await Rvm.load((msg, pct) => updateTask('bgremove', msg, pct), () => bgCancel);
+      else sam = await Sam2.load((msg, pct) => updateTask('bgremove', msg, pct), () => bgCancel);
+      const v = vid(r);
+      v.style.visibility = ''; v.muted = true; v.pause();
+      const startMs = r === 'host' ? 0 : p.offsetMs;
+      // RVM keeps its masks small; a long video gets fewer masks per second so the saved data stays under about 120 MB
+      let perSec = a.perSec;
+      if (rvm) {
+        const sz = Rvm.sizeFor(v.videoWidth || 16, v.videoHeight || 9, RVM_STORE_LONG), per = sz.w * sz.h;
+        const cap = Math.max(3, Math.floor(120e6 / per / Math.max(1, p.durationMs / 1000)));
+        if (cap < perSec) { perSec = cap; toast(`Long video: ${perSec} cut-outs per second so it fits in memory.`, 4500); }
+      }
+      const step = 1000 / perSec;
+      const total = Math.max(2, Math.ceil(p.durationMs / step) + 1);
+      const times: number[] = [], masks: Uint8Array[] = [];
+      let mw = MASK, mh = MASK;
+      let prev: { cx: number; cy: number } | null = null;
+      const t0 = performance.now();
+      for (let i = 0; i < total; i++) {
+        if (bgCancel) throw new Error('cancelled');
+        const tl = Math.min(p.durationMs, i * step);
+        await seekTo(v, Math.max(0, (startMs + tl) / 1000));
+        if (rv) {
+          const m = await rv.matte(v, v.videoWidth, v.videoHeight);
+          mw = m.w; mh = m.h; times.push(tl); masks.push(m.alpha);
+        } else if (sam) {
+          const f = faceBetween(track, FACE_SAMPLE_MS, tl - 250, tl + 250);
+          const pts: Prompt[] = f
+            ? [{ x: f.cx, y: Math.min(0.98, f.cy + f.h * 0.3) }, { x: f.cx, y: Math.min(0.97, f.cy + f.h * 1.7) }]
+            : prev ? [{ x: prev.cx, y: prev.cy }, { x: prev.cx, y: Math.min(0.97, prev.cy + 0.1) }] : [{ x: 0.5, y: 0.5 }];
+          const emb = await sam.embed(v);
+          const m = await sam.segment(emb, pts);
+          const st = maskStats(m.alpha);
+          // a mask that is nearly empty or covers everything is a miss: keep the last good one
+          if (st.area < 0.03 || st.area > 0.95) { times.push(tl); masks.push(masks.length ? masks[masks.length - 1] : m.alpha); }
+          else { times.push(tl); masks.push(m.alpha); prev = st; }
+        }
+        const done = i + 1, eta = ((performance.now() - t0) / done) * (total - done) / 1000;
+        updateTask('bgremove', `Cutting out the person (${done}/${total}) ${(rv ?? sam)!.provider}${eta > 5 ? `, about ${Math.ceil(eta / 60)} min left` : ''}`, (done / total) * 100);
+      }
+      const trackData: MaskTrack = { w: mw, h: mh, times, masks };
+      await saveMaskTrack(p.id, r, trackData);
+      const cfg: BgCfg = { engine: a.engine, fill: a.fill, color: a.color, perSec, count: masks.length, stamp: Date.now() };
+      p.bgRemove = { ...(p.bgRemove ?? {}), [r]: cfg };
+      attachCutter(r, trackData);
+      scheduleSave();
+      toast(`Background removed on ${roleName(r)}. Hold Raw to compare. It is added to the video when you export.`, 6000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg !== 'cancelled') toast(`Remove BG failed: ${msg}`, 9000); else toast('Cancelled');
+    } finally {
+      endTask('bgremove'); bgBusy = false; scanLock = false;
+      void sam?.dispose(); void rv?.dispose();
+      for (const rr of ['host', 'constant'] as Role[]) { const vv = vid(rr); try { vv.pause(); } catch { /* ignore */ } vv.playbackRate = 1; }
+      updateVideoAudioMute();
+      if (!destroyed) {
+        playMs = savedMs;
+        for (const rr of ['host', 'constant'] as Role[]) { const vv = vid(rr); if (!proxying[rr] && curUrl[rr] && (vv.error || vv.readyState === 0)) setSource(rr, curUrl[rr]); }
+        syncHost(true); syncConst(true);
+        refresh(); requestDraw();
+      }
+    }
+  }
+
   /** One tap: find the faces, cut to whoever speaks like Auto switch does, and frame that person in every clip. */
   async function doAutoframe() {
     if (scanning || !needAudio()) return;
@@ -3376,6 +3517,7 @@ export function editorScreen() {
         tool('volume', 'Audio', openAudioGroup),
         tool('crop', 'Crop', () => openPanel('crop')),
         tool('mask', 'Mask', () => openPanel('mask')),
+        tool('removeBg', 'Remove BG', () => void doRemoveBg()),
         tool('mirror', 'Mirror', toggleMirrorForScreen),
         tool('ratio', 'Ratio', () => openPanel('ratio')),
       );
@@ -3385,6 +3527,7 @@ export function editorScreen() {
         tool('undo', 'Reset crop', () => { if (selClip) resetCrop(selClip); }),
         tool('crop', 'Crop', () => { cropRole = selClip!; openPanel('crop'); }),
         tool('mask', 'Mask', () => { const r = selClip!; openPanel('mask'); cropRole = r; renderPanel(); }),
+        tool('removeBg', 'Remove BG', () => void doRemoveBg(selClip!)),
         tool('mirror', 'Mirror', () => { if (selClip) toggleMirror(selClip); }),
         tool('volume', 'Audio', openAudioGroup));
       if (selClip === 'constant') rows.push(tool('sync', 'Sync', () => openPanel('sync')));
@@ -3397,6 +3540,7 @@ export function editorScreen() {
         tool('volume', 'Audio', openAudioGroup),
         tool('crop', 'Crop', () => openPanel('crop')),
         tool('mask', 'Mask', () => openPanel('mask')),
+        tool('removeBg', 'Remove BG', () => void doRemoveBg()),
         tool('mirror', 'Mirror', toggleMirrorForScreen),
         tool('merge', 'Merge', doMerge),
         tool('trash', 'Delete', doDelete),
@@ -4524,6 +4668,7 @@ export function editorScreen() {
     el,
     destroy: () => {
       destroyed = true;
+      (['host', 'constant'] as Role[]).forEach((r) => cutters[r]?.dispose());
       denoiseRun++;
       cancelDenoiseJob();
       endTask('denoise');
@@ -4532,7 +4677,7 @@ export function editorScreen() {
       ovEls.forEach((e) => { try { e.v.removeAttribute('src'); e.v.load(); } catch { /* ignore */ } });
       hostStrip?.cancel(); constStrip?.cancel();
       offTasks();
-      endTask('audio'); endTask('sync'); endTask('switch'); endTask('proxy-host'); endTask('proxy-constant'); endTask('faces'); scanCancel = true; closeListSheet();
+      endTask('audio'); endTask('sync'); endTask('switch'); endTask('proxy-host'); endTask('proxy-constant'); endTask('faces'); endTask('bgremove'); scanCancel = true; bgCancel = true; closeListSheet();
       try { actx?.close(); } catch { /* ignore */ }
       window.removeEventListener('resize', onResize);
       document.removeEventListener('visibilitychange', onVisible);

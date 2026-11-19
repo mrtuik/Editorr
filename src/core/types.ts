@@ -196,6 +196,8 @@ export interface Project {
   cropConst: CropState;
   mirrorHost: boolean;
   mirrorConst: boolean;
+  /** Remove BG tool: what was applied to each video (the masks themselves live in IndexedDB, see core/bgremove). */
+  bgRemove?: { host?: import('./bgremove').BgCfg; constant?: import('./bgremove').BgCfg };
   /** Which person to follow in each video (a point on the frame, 0..1). Missing = the main person. */
   faceHost?: { x: number; y: number };
   faceConst?: { x: number; y: number };

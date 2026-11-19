@@ -112,6 +112,9 @@ jobs:
       - name: Get face model and MediaPipe files (offline Autoframe)
         run: npm run face-assets
 
+      - name: Copy onnxruntime-web wasm files (offline Remove BG)
+        run: npm run ort-assets
+
       - name: Remove stale v8 screens
         run: rm -f src/screens/sync.ts src/screens/analyze.ts
 

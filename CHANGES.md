@@ -1,3 +1,12 @@
+# Remove BG: SAM 2 + RVM, preview and export
+- Tool **Remove BG** (main row, clip tools, segment tools). Sheet: engine (**SAM 2** or **RVM**), Host/Constant, quality, what goes behind the person (blur, black, white, green, custom), Restore original.
+- **SAM 2** (`core/bgremove/sam.ts`): sharpest cut of one person; uses the face scan for its prompt points. Models download once (~150 MB, SharpAI/sam2-hiera-tiny-onnx).
+- **RVM** (`core/bgremove/rvm.ts`): made for video, 4 recurrent tensors keep the edges steady, finds people by itself, no face scan. MobileNetV3 fp32 (~15 MB) is bundled by CI into `public/rvm` (GitHub release as fallback). GPL-3.0.
+- Both write the same mask track (IndexedDB `bgmask:<project>:<role>`); `BgCutter` draws person-over-background on a canvas over the video in the preview (hold **Raw** to compare). RVM keeps its saved masks under ~120 MB (long videos get fewer masks per second).
+- **Export**: `core/bgremove/bake.ts` renders each cut-out video to an H.264 file (WebCodecs, 60 s pieces) before exporting; new native `muxAudio` (EditorrNativePlugin.java) joins the pieces and copies the original sound; the exporter then uses that file for that video. The file is reused until the cut-out changes. If the WebView cannot play the original (4K, HEVC) a small H.264 copy (`makeProxy`) supplies the pictures. Progress is the first 40% of the export bar.
+- New dependency `onnxruntime-web@1.20.1`; CI step `npm run ort-assets` (wasm files + RVM model).
+- Not compiled or run on a phone here; `tsc` shows only the old missing-module errors, `muxAudio` (Java) is unchecked. Baking is slow (seeks every frame): roughly 1 to 3 min per minute of video.
+
 # v55.2
 - Shapes card (rings, orbiting dots, squares: `geo_title`) is never picked automatically any more (all templates, offline and AI). It stays in the manual picker only.
 - New default caption style (from the reference "final video"): calm medium sans, one key word per line in bold italic serif, centred lower-middle (y 0.66), no heavy outline. Also a caption template "Final Cut"; Joseph Inspired uses the same. Other templates do not inherit its font pairing.

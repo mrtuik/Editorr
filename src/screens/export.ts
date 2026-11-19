@@ -5,6 +5,8 @@ import { confirmDialog, h, icon, iconButton, toast } from '../ui';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { outputSize, resLabel } from '../core/types';
 import { estimateMb, resolveExport } from '../core/exportOpts';
+import { loadMaskTrack } from '../core/bgremove';
+import { bakeCutout, sweepBaked } from '../core/bgremove/bake';
 
 /** Share targets on the done screen. Several package names per app (TikTok has regional builds). */
 const TARGETS: { label: string; pkgs: string[]; svg: string }[] = [
@@ -26,6 +28,7 @@ export function exportScreen() {
   // Values come from the export settings sheet in the editor (resolution, frame rate, bitrate), never above the source.
   const { res, fps, mbps } = resolveExport(p, st);
   let running = false;
+  let bakeSlice = 0, bakeCancel = false;
 
   const sizeMb = () => estimateMb(p, mbps);
 
@@ -81,23 +84,45 @@ export function exportScreen() {
       overall = 0; lastShown = -1; t0 = Date.now();
       setOverall(0);
 
+      // Remove BG: render each cut-out video to a file the exporter can read (reused when nothing changed)
+      let expHost = hostUri, expConst = constUri;
+      const bgRoles = (['host', 'constant'] as const).filter((r) => !!p.bgRemove?.[r]);
+      bakeSlice = bgRoles.length ? 40 : 0;
+      const baked: string[] = [];
+      for (let k = 0; k < bgRoles.length; k++) {
+        const role = bgRoles[k], cfg = p.bgRemove![role]!, ref = role === 'host' ? p.host : p.constant;
+        const track = await loadMaskTrack(p.id, role);
+        if (!track || !ref?.uri) { toast(`Remove BG on ${role === 'host' ? 'Host' : 'Constant'} was skipped: its cut-out data is missing. Run Remove BG again.`, 6000); continue; }
+        const path = await bakeCutout({
+          projectId: p.id, role, srcPath: ref.uri, srcFps: ref.fps, srcWidth: ref.width, srcHeight: ref.height,
+          track, cfg, startMs: role === 'host' ? 0 : Math.round(p.offsetMs || 0), durationMs: Math.round(p.durationMs),
+          onProgress: (x, label) => { status.textContent = label; setOverall(((k * 100 + x) / bgRoles.length) * bakeSlice / 100); },
+          cancelled: () => bakeCancel,
+        });
+        baked.push(path);
+        if (role === 'host') expHost = path; else expConst = path;
+      }
+      if (baked.length) void sweepBaked(p.id, baked);
+      status.textContent = 'Exporting...';
+      setOverall(bakeSlice);
+
       const xl = await EditorrNative.addListener('exportProgress', (e: { percent: number }) => {
-        setOverall(noiseSlice + (e.percent / 100) * (100 - noiseSlice));
+        setOverall(bakeSlice + noiseSlice + (e.percent / 100) * (100 - bakeSlice - noiseSlice));
       });
       exportListener = xl;
       let cleanAudioUri: string | undefined;
       if (noiseStrength > 0) {
         const dl = await EditorrNative.addListener('denoiseProgress', (e: { percent: number }) => {
-          setOverall((e.percent / 100) * noiseSlice);
+          setOverall(bakeSlice + (e.percent / 100) * noiseSlice);
         });
         denoiseListener = dl;
         try {
           const path = p.mainAudio === 'host' ? hostUri : constUri;
           cleanAudioUri = (await EditorrNative.prepareDenoiseAudio({ path, strength: noiseStrength })).audioUri;
         } finally { await dl.remove(); denoiseListener = undefined; }
-        setOverall(noiseSlice);
+        setOverall(bakeSlice + noiseSlice);
       }
-      const request = toExportRequest(p, hostUri, constUri, res, fps, mbps);
+      const request = toExportRequest(p, expHost, expConst, res, fps, mbps);
       request.cleanAudioUri = cleanAudioUri;
       const out = await EditorrNative.exportProject(request);
       await xl.remove(); exportListener = undefined;
@@ -124,6 +149,7 @@ export function exportScreen() {
   }
 
   async function cancel() {
+    bakeCancel = true;
     try { await EditorrNative.cancelExport(); } catch { /* ignore */ }
     running = false;
     app.go('editor');
